@@ -185,4 +185,5 @@ def build_metric_vector(
         robustness=min(per_context_coverage.values()),
         manufacturability=manufacturability(qc),
         discrimination_margin=min(margins) if margins else None,
+        pfs_preference=qc.pfs_preference,
     )

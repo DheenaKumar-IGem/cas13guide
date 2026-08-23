@@ -1,0 +1,233 @@
+"""Built-in target presets (FR1.3), and the geometry problem they expose.
+
+These are the five miRNAs PanCRISP designs against, carried here so a run can
+be reproduced from a preset id alone rather than from a pasted sequence whose
+provenance nobody recorded. Every entry carries its miRBase accession, and
+:data:`PRESET_SOURCE` records the exact file the sequences were taken from --
+NFR4 and DR4 both want the database version on the record, and "we typed them
+in from a paper" is not a database version.
+
+Why a mature miRNA is an awkward Cas13 target
+---------------------------------------------
+A mature miRNA is 22-24 nt. An LwaCas13a spacer is canonically 28 nt. You
+cannot tile a 28-mer across a 24-mer, so with the canonical geometry these
+presets yield **zero** candidates -- not a poor design, no design at all.
+
+There is no way to make that go away by choosing better software defaults,
+because it is a property of the molecule. What the package does instead is make
+the trade-off explicit:
+
+* the spacer length is configurable within each ortholog's tolerated range
+  (``EffectorParams.spacer_length_range``), so a 22 nt spacer against a 24 nt
+  miRNA is expressible;
+* a length outside the ortholog's *canonical* set is reported out-of-domain, so
+  the activity model's bounds widen and the gate raises an R3 REVIEW rather
+  than handing back a confident number for a geometry nobody validated;
+* :func:`designability` says up front how many windows a preset can even yield,
+  so "1 candidate" is a stated fact rather than a surprising empty table.
+
+For a real diagnostic the usual answer is to detect an **amplicon** -- RT-RPA
+product, or the pre-miRNA -- rather than the bare mature strand, which restores
+a normal-length target and normal tiling. :func:`amplicon_target` builds that
+target from a preset plus the flanking adapter/primer context, and is the
+recommended path for anything past a geometry smoke-test.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ..util.seq import normalize, windows
+from .effectors import EFFECTORS
+from .enums import Effector, TargetClass, Universe
+from .spec import TargetSpec
+
+#: Exactly where the sequences below came from. Recorded rather than described:
+#: a preset whose provenance is "miRBase" is not reproducible, one whose
+#: provenance is a release, a URL and a checksum is.
+PRESET_SOURCE: dict[str, str] = {
+    "database": "miRBase",
+    "release": "23 (Aug 2026)",
+    "url": "https://www.mirbase.org/download/mature.fa",
+    "sha256": "dcebb6d21b6e17a0b0b26dbf40bb5eaf20c938cb44d5bb7a17797971bd832ef1",
+    "retrieved": "2026-08-23",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class TargetPreset:
+    """One named, accessioned target sequence."""
+
+    preset_id: str
+    display_name: str
+    accession: str
+    sequence: str
+    #: What the sequence *is*, since it changes how it should be targeted.
+    kind: str = "mature_mirna"
+    biotype: Universe = Universe.NCRNA
+    note: str = ""
+
+    @property
+    def length(self) -> int:
+        return len(self.sequence)
+
+    def to_target_spec(
+        self,
+        target_id: str | None = None,
+        target_class: TargetClass = TargetClass.REQUIRED,
+        expression: float | None = None,
+    ) -> TargetSpec:
+        return TargetSpec(
+            target_id=target_id or self.preset_id,
+            sequence=self.sequence,
+            target_class=target_class,
+            gene=self.display_name,
+            biotype=self.biotype,
+            expression=expression,
+        )
+
+
+def _preset(preset_id: str, name: str, accession: str, sequence: str, **kw) -> TargetPreset:
+    return TargetPreset(
+        preset_id=preset_id,
+        display_name=name,
+        accession=accession,
+        sequence=normalize(sequence),
+        **kw,
+    )
+
+
+#: The five PanCRISP miRNA targets, verbatim from :data:`PRESET_SOURCE`.
+MIRNA_PRESETS: dict[str, TargetPreset] = {
+    p.preset_id: p
+    for p in (
+        _preset("hsa-miR-21-5p", "hsa-miR-21-5p", "MIMAT0000076",
+                "UAGCUUAUCAGACUGAUGUUGACU"),
+        _preset("hsa-miR-23a-3p", "hsa-miR-23a-3p", "MIMAT0000078",
+                "AUCACAUUGCCAGGGAUUUCCAA"),
+        _preset("hsa-miR-216a-5p", "hsa-miR-216a-5p", "MIMAT0000273",
+                "UAAUCUCAGCUGGCAACUGUGA"),
+        _preset("hsa-miR-23b-3p", "hsa-miR-23b-3p", "MIMAT0000418",
+                "AUCACAUUGCCAGGGAUUACCAC",
+                note="differs from hsa-miR-23a-3p only near the 3' end; "
+                     "guides against either will cross-react, and the pair is "
+                     "a discrimination task, not two independent targets"),
+        _preset("hsa-miR-29c-3p", "hsa-miR-29c-3p", "MIMAT0000681",
+                "UAGCACCAUUUGAAAUCGGUUA"),
+    )
+}
+
+
+def preset_ids() -> tuple[str, ...]:
+    return tuple(MIRNA_PRESETS)
+
+
+def get_preset(preset_id: str) -> TargetPreset:
+    try:
+        return MIRNA_PRESETS[preset_id]
+    except KeyError:
+        raise KeyError(
+            f"unknown preset {preset_id!r}; available: {', '.join(preset_ids())}"
+        ) from None
+
+
+@dataclass(frozen=True, slots=True)
+class Designability:
+    """How many guides a target can yield, and whether it is a normal design."""
+
+    preset_id: str
+    target_length: int
+    spacer_length: int
+    windows: int
+    canonical_length: bool
+    note: str
+
+    @property
+    def designable(self) -> bool:
+        return self.windows > 0
+
+
+def designability(
+    preset: TargetPreset, effector: Effector, spacer_length: int | None = None, step: int = 1
+) -> Designability:
+    """State up front what tiling this target can support.
+
+    Called before a design run so an empty or one-row result is a predicted
+    outcome rather than a mystery.
+    """
+    params = EFFECTORS[effector]
+    length = spacer_length if spacer_length is not None else params.preferred_spacer_length
+    n = len(list(windows(preset.sequence, length, step))) if length <= preset.length else 0
+    canonical = params.is_canonical_length(length)
+
+    if n == 0:
+        note = (
+            f"{preset.length} nt target cannot hold a {length} nt spacer. "
+            f"{effector.value} tolerates {params.spacer_length_range[0]}-"
+            f"{params.spacer_length_range[1]} nt; try a shorter spacer, or "
+            "design against an amplicon (see amplicon_target)."
+        )
+    elif n < 5:
+        note = (
+            f"only {n} window(s): a mature miRNA is barely longer than the "
+            "spacer, so there is almost nothing to choose between. An amplicon "
+            "target restores normal tiling."
+        )
+    else:
+        note = f"{n} windows available."
+    if not canonical:
+        note += (
+            f" {length} nt is outside {effector.value}'s canonical "
+            f"{params.spacer_lengths}, so activity will be reported "
+            "out-of-domain (R3 REVIEW) rather than as a validated prediction."
+        )
+    return Designability(
+        preset_id=preset.preset_id,
+        target_length=preset.length,
+        spacer_length=length,
+        windows=n,
+        canonical_length=canonical,
+        note=note,
+    )
+
+
+def largest_designable_spacer_length(
+    preset: TargetPreset, effector: Effector, min_windows: int = 1
+) -> int | None:
+    """Longest tolerated spacer that still yields ``min_windows`` windows.
+
+    Longest rather than shortest because a longer spacer is the more specific
+    one; there is no reason to give away duplex length that the target can
+    actually accommodate. Returns ``None`` when even the shortest tolerated
+    spacer does not fit.
+    """
+    low, high = EFFECTORS[effector].spacer_length_range
+    for length in range(min(high, preset.length), low - 1, -1):
+        if preset.length - length + 1 >= min_windows:
+            return length
+    return None
+
+
+def amplicon_target(
+    preset: TargetPreset,
+    five_prime_context: str,
+    three_prime_context: str,
+    target_id: str | None = None,
+    target_class: TargetClass = TargetClass.REQUIRED,
+) -> TargetSpec:
+    """The preset embedded in its amplification context.
+
+    The recommended shape for a real assay: an RT-RPA product or pre-miRNA is a
+    normal-length transcript, so it tiles normally, keeps the canonical spacer
+    length, and stays inside the activity model's validated domain. The
+    flanking context is supplied by the caller because it is a property of the
+    assay design, not of the miRNA.
+    """
+    sequence = normalize(five_prime_context) + preset.sequence + normalize(three_prime_context)
+    return TargetSpec(
+        target_id=target_id or f"{preset.preset_id}__amplicon",
+        sequence=sequence,
+        target_class=target_class,
+        gene=preset.display_name,
+        biotype=preset.biotype,
+    )

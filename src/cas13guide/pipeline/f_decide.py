@@ -52,6 +52,30 @@ def gate(
         detail.append(
             f"required_coverage {metrics.required_coverage:.3f} < {t.required_coverage_min:.3f}"
         )
+        # Attribute the cause. Coverage is read at a lower bound, so *missing
+        # evidence* and *demonstrated absence of activity* both drive it to
+        # zero and produce the same verdict -- but they are completely
+        # different findings, and reporting an unvalidated design as
+        # "required target missed" tells the user their guide is bad when in
+        # fact nothing has been measured. The verdict stays FAIL either way:
+        # an uncertifiable design must not certify.
+        intended = [e for e in evidence if e.is_intended]
+        if intended and all(not e.domain_ok for e in intended):
+            fail.append(ReasonCode.MODEL_OUT_OF_DOMAIN)
+            detail.append(
+                "every intended-target pair is outside the activity model's "
+                "declared domain, so the bound is maximally wide and coverage "
+                "cannot be demonstrated -- this is missing validation, not a "
+                "demonstrated miss"
+            )
+        elif intended and all(e.activity.ood for e in intended):
+            fail.append(ReasonCode.CALIBRATION_UNSUPPORTED)
+            detail.append(
+                "every intended-target pair fell back to an out-of-domain "
+                "calibration stratum, so the bound is too wide to clear the "
+                "floor -- more calibration data in this regime, not a "
+                "different guide, is what closes this"
+            )
 
     forbidden = [
         e
@@ -229,6 +253,10 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "cumulative_burden": 1.0,
     "robustness": 1.5,
     "manufacturability": 0.5,
+    # The soft PFS bias. Weighted below coverage and hazard on purpose: it is a
+    # real efficacy signal, but it is a base-composition prior, and it must not
+    # be able to outrank evidence about whether the guide hits its target.
+    "pfs_preference": 1.0,
     # Only present in the objective set for allele/SNV tasks, so this weight is
     # inert for every other task. Omitting it did not make the margin a pure
     # constraint -- the gate already enforces tau -- it made the one metric the

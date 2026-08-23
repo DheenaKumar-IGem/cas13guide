@@ -60,11 +60,32 @@ def qc_candidate(candidate: Candidate, spec: ResolvedDesignSpec) -> QCResult:
     flags: list[QCFlag] = []
     spacer = candidate.spacer
 
-    if candidate.length not in params.spacer_lengths:
-        flags.append(QCFlag.SPACER_LENGTH_UNSUPPORTED)
+    warnings: list[QCFlag] = []
 
+    # Length outside what the ortholog can physically accommodate is a hard
+    # incompatibility. Length merely outside its *canonical* set is not: it is
+    # unvalidated, which the activity model's domain check already reports as
+    # out-of-domain so the bounds widen and the gate raises an R3 REVIEW.
+    # Failing it here as well made the window length un-configurable and, for a
+    # 22-24 nt mature miRNA against 28 nt LwaCas13a spacers, made the target
+    # undesignable rather than merely unusual.
+    if not params.supports_length(candidate.length):
+        flags.append(QCFlag.SPACER_LENGTH_UNSUPPORTED)
+    elif not params.is_canonical_length(candidate.length):
+        warnings.append(QCFlag.SPACER_LENGTH_NONCANONICAL)
+
+    # Hard PFS requirement (e.g. PspCas13b's 5' constraint) fails the guide.
     if not params.pfs.check(candidate.five_prime_flank, candidate.three_prime_flank):
         flags.append(QCFlag.PFS_INCOMPATIBLE)
+
+    # Soft PFS preference (e.g. the LwaCas13a 3' H bias) only deprioritizes.
+    # Treating it as a hard exclusion deleted every G-flanked candidate from
+    # the design, which is not what a reported base preference supports.
+    pfs_preference = params.pfs.preference(
+        candidate.five_prime_flank, candidate.three_prime_flank
+    )
+    if pfs_preference < 1.0:
+        warnings.append(QCFlag.PFS_DISFAVOURED)
 
     gc = gc_fraction(spacer)
     if not (GC_MIN <= gc <= GC_MAX):
@@ -99,6 +120,8 @@ def qc_candidate(candidate: Candidate, spec: ResolvedDesignSpec) -> QCResult:
         max_homopolymer=homo,
         self_fold_score=float(self_stem),
         manufacturability=manufacturability,
+        warnings=tuple(warnings),
+        pfs_preference=pfs_preference,
     )
 
 

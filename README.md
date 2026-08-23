@@ -29,7 +29,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 277 tests
+python -m unittest discover -s tests -t tests    # 302 tests
 pytest                              # same suite under pytest
 ```
 
@@ -95,6 +95,62 @@ returning a number that would look fine and mean nothing.
 transcript groups, calibration transcripts, grouped CV skill, held-out skill,
 and conformal coverage — reporting each measured value so a rejection says
 *which* property failed.
+
+## Built-in targets, and the miRNA geometry problem
+
+`contract/presets.py` ships the five miRNA targets, each with its miRBase
+accession, and records exactly where the sequences came from — release, URL and
+checksum — because a preset whose provenance is "miRBase" is not reproducible:
+
+| preset | accession | length |
+|---|---|---|
+| hsa-miR-21-5p | MIMAT0000076 | 24 nt |
+| hsa-miR-23a-3p | MIMAT0000078 | 23 nt |
+| hsa-miR-216a-5p | MIMAT0000273 | 22 nt |
+| hsa-miR-23b-3p | MIMAT0000418 | 23 nt |
+| hsa-miR-29c-3p | MIMAT0000681 | 22 nt |
+
+**A mature miRNA is 22–24 nt and an LwaCas13a spacer is canonically 28 nt.** You
+cannot tile a 28-mer across a 24-mer, so at the canonical geometry these presets
+yield *zero* candidates — not a poor design, no design at all. No choice of
+software default makes that untrue; it is a property of the molecule. So the
+package makes the trade-off explicit instead of hiding it:
+
+- spacer length is configurable within each ortholog's tolerated range
+  (`EffectorParams.spacer_length_range`), so a 24 nt spacer is expressible;
+- a length outside the ortholog's *canonical* set is reported out-of-domain, so
+  the bounds widen and the gate refuses to certify rather than inventing
+  confidence for a geometry nobody validated;
+- `designability()` states up front how many windows a target can yield, so
+  "1 candidate" is a prediction rather than a surprise.
+
+```python
+designability(get_preset("hsa-miR-21-5p"), Effector.LWA_CAS13A).note
+# "24 nt target cannot hold a 28 nt spacer. LwaCas13a tolerates 20-28 nt;
+#  try a shorter spacer, or design against an amplicon (see amplicon_target)."
+```
+
+For a real assay the answer is to detect an **amplicon** — an RT-RPA product or
+the pre-miRNA — which restores a normal-length target, normal tiling and the
+canonical spacer length. `amplicon_target()` builds it.
+
+### Hard constraints vs. soft preferences
+
+Two rules were modelled as hard exclusions when the evidence only supports a
+bias, and both silently deleted candidates:
+
+| | was | now |
+|---|---|---|
+| LwaCas13a 3′ H preference | `PFS_INCOMPATIBLE` → deterministic FAIL | `PFS_DISFAVOURED` warning + a `pfs_preference` ranking objective |
+| Non-canonical spacer length | `SPACER_LENGTH_UNSUPPORTED` → FAIL | `SPACER_LENGTH_NONCANONICAL` warning; out-of-*range* still fails |
+
+A hard PFS requirement (PspCas13b's 5′ constraint) still excludes — the
+distinction is now `PFSPolicy.*_allowed` (requirement) vs `*_preferred` (bias).
+
+And when coverage fails *because* the evidence was out-of-domain or
+uncalibrated, the gate now says so: the verdict is still FAIL, but the reason
+distinguishes "nothing has been measured" from "this guide misses its target",
+which point at completely different fixes.
 
 ## Choosing a search index
 
@@ -190,7 +246,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-277 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+302 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -259,6 +315,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_candidates_qc.py` | tiling, dedup, PFS policy, composition filters |
 | `test_benchmark.py` | skill/coverage regression gates, wet-lab → calibration |
 | `test_suffixarray.py` | SA-IS vs brute force, edge cases, deliberate recursion-path coverage |
+| `test_presets.py` | miRBase accessions and provenance, mature-miRNA geometry, the amplicon path |
 | `test_ingest.py` | direction flip exactness, fatal vs survivable data problems |
 | `test_acceptance.py` | each criterion measured, rejection names the failure |
 | `test_training.py` | IRLS vs sklearn oracle, grouped splitting, the measured split-bias regimes, unpenalized intercept |

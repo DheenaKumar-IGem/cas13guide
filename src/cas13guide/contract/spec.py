@@ -190,15 +190,32 @@ class EffectorAssayProfile(_Frozen):
     def params(self) -> EffectorParams:
         return EFFECTORS[self.effector]
 
+    @property
+    def spacer_length_is_canonical(self) -> bool:
+        """True when the chosen length is one the ortholog is published at.
+
+        A non-canonical length is legal but unvalidated: the activity model's
+        domain is derived from the canonical set, so such a design is reported
+        out-of-domain, the calibration widens, and the gate raises an R3
+        REVIEW. That is the honest handling -- the alternative was refusing the
+        design outright, which made the window length un-configurable and, for
+        a 21-23 nt mature miRNA against 28 nt LwaCas13a spacers, made the
+        target undesignable rather than merely unusual.
+        """
+        assert self.spacer_length is not None
+        return self.params.is_canonical_length(self.spacer_length)
+
     @model_validator(mode="after")
     def _resolve(self):
         p = EFFECTORS[self.effector]
         if self.spacer_length is None:
             object.__setattr__(self, "spacer_length", p.preferred_spacer_length)
-        elif self.spacer_length not in p.spacer_lengths:
+        elif not p.supports_length(self.spacer_length):
+            low, high = p.spacer_length_range
             raise ValueError(
                 f"{self.effector.value} does not support spacer length "
-                f"{self.spacer_length}; supported: {p.spacer_lengths}"
+                f"{self.spacer_length}; tolerated range is {low}-{high} nt "
+                f"(canonical: {p.spacer_lengths})"
             )
         if self.collateral_is_hazard is None:
             hazard = self.assay is not AssayType.IN_VITRO_DETECTION

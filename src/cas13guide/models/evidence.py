@@ -39,11 +39,18 @@ class Candidate:
 class QCResult:
     guide_id: str
     passed: bool
+    #: Hard incompatibilities. Non-empty means ``passed`` is False and the gate
+    #: FAILs the guide.
     flags: tuple[QCFlag, ...] = ()
     gc: float = 0.0
     max_homopolymer: int = 0
     self_fold_score: float = 0.0
     manufacturability: float = 1.0
+    #: Soft findings. Recorded and surfaced, but never fail a guide.
+    warnings: tuple[QCFlag, ...] = ()
+    #: PFS preference score in ``(0, 1]``; 1.0 when the flanking bases sit in
+    #: the ortholog's preferred set. Feeds the ranking, not the gate.
+    pfs_preference: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +118,9 @@ class MetricVector:
     manufacturability: float
     #: None when the task does not require allele discrimination.
     discrimination_margin: float | None = None
+    #: Ortholog PFS *preference* in ``(0, 1]``. A soft efficacy signal, so it
+    #: ranks rather than gates -- see ``contract/effectors.py``.
+    pfs_preference: float = 1.0
 
     def objectives(self) -> dict[str, float]:
         """Metrics oriented so that larger is always better, for Pareto."""
@@ -121,6 +131,7 @@ class MetricVector:
             "cumulative_burden": -self.cumulative_burden,
             "robustness": self.robustness,
             "manufacturability": self.manufacturability,
+            "pfs_preference": self.pfs_preference,
         }
         if self.discrimination_margin is not None:
             out["discrimination_margin"] = self.discrimination_margin

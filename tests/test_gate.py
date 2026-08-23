@@ -328,5 +328,60 @@ class TestBothHazardBudgetsAreReported(unittest.TestCase):
 
 
 
+
+class TestCoverageFailureNamesItsCause(unittest.TestCase):
+    """Missing evidence and demonstrated absence both zero the LCB.
+
+    They produce the same verdict -- correctly, since neither can be certified
+    -- but they are opposite findings. Reporting an unvalidated geometry as
+    "required target missed" tells the user their guide is bad when in fact
+    nothing has been measured, and points them at redesigning instead of at
+    validating.
+    """
+
+    def _metrics_with_zero_coverage(self, evidence):
+        spec = make_spec()
+        return build_metric_vector({"reference": evidence}, clean_qc(), spec), spec
+
+    def test_out_of_domain_evidence_is_named_as_such(self):
+        evidence = (
+            make_evidence(0.0, 1.0, target_id="t1", target_class=TargetClass.REQUIRED,
+                          domain_ok=False, ood=True),
+        )
+        metrics, spec = self._metrics_with_zero_coverage(evidence)
+        result = gate(metrics, clean_qc(), evidence, exhaustive_bound(4), frozenset(), spec)
+
+        self.assertIs(result.verdict, Verdict.FAIL)     # still refuses to certify
+        self.assertIn(ReasonCode.REQUIRED_TARGET_MISSED, result.reasons)
+        self.assertIn(ReasonCode.MODEL_OUT_OF_DOMAIN, result.reasons)
+        self.assertIn("missing validation", " ".join(result.detail))
+
+    def test_uncalibrated_evidence_is_named_as_such(self):
+        evidence = (
+            make_evidence(0.0, 1.0, target_id="t1", target_class=TargetClass.REQUIRED,
+                          domain_ok=True, ood=True),
+        )
+        metrics, spec = self._metrics_with_zero_coverage(evidence)
+        result = gate(metrics, clean_qc(), evidence, exhaustive_bound(4), frozenset(), spec)
+
+        self.assertIs(result.verdict, Verdict.FAIL)
+        self.assertIn(ReasonCode.CALIBRATION_UNSUPPORTED, result.reasons)
+        self.assertIn("calibration", " ".join(result.detail))
+
+    def test_a_genuine_miss_is_not_relabelled_as_a_domain_problem(self):
+        """In-domain, calibrated, and simply inactive: that IS a missed target."""
+        evidence = (
+            make_evidence(0.02, 0.08, target_id="t1", target_class=TargetClass.REQUIRED,
+                          domain_ok=True, ood=False),
+        )
+        metrics, spec = self._metrics_with_zero_coverage(evidence)
+        result = gate(metrics, clean_qc(), evidence, exhaustive_bound(4), frozenset(), spec)
+
+        self.assertIs(result.verdict, Verdict.FAIL)
+        self.assertIn(ReasonCode.REQUIRED_TARGET_MISSED, result.reasons)
+        self.assertNotIn(ReasonCode.MODEL_OUT_OF_DOMAIN, result.reasons)
+        self.assertNotIn(ReasonCode.CALIBRATION_UNSUPPORTED, result.reasons)
+
+
 if __name__ == "__main__":
     unittest.main()

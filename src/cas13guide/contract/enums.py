@@ -137,11 +137,24 @@ class ReasonCode(str, Enum):
 
 
 class QCFlag(str, Enum):
+    """Deterministic QC findings.
+
+    Members appear in :attr:`QCResult.flags` (hard incompatibilities, which the
+    gate turns into a FAIL) or :attr:`QCResult.warnings` (soft findings, which
+    only deprioritize). ``PFS_DISFAVOURED`` is the only soft member today.
+    """
+
     GC_OUT_OF_RANGE = "gc_out_of_range"
     HOMOPOLYMER_RUN = "homopolymer_run"
     POLY_U_TERMINATOR = "poly_u_terminator"
     SPACER_SELF_FOLDING = "spacer_self_folding"
     DR_SPACER_INTERACTION = "dr_spacer_interaction"
     PFS_INCOMPATIBLE = "pfs_incompatible"
+    #: Soft: the flanking base is outside the ortholog's preferred set. Lowers
+    #: the ranking, never fails the guide.
+    PFS_DISFAVOURED = "pfs_disfavoured"
+    #: Soft: a spacer length the ortholog tolerates but was not published at.
+    #: Usable; the activity model reports it out-of-domain so the bounds widen.
+    SPACER_LENGTH_NONCANONICAL = "spacer_length_noncanonical"
     SPACER_LENGTH_UNSUPPORTED = "spacer_length_unsupported"
     SYNTHESIS_CONSTRAINT = "synthesis_constraint"
