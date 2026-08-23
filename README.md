@@ -24,12 +24,33 @@ util/        sequence and duplex primitives
 ## Run it
 
 ```bash
+pip install -e ".[structure]"       # [structure] adds ViennaRNA (DR2)
+
+# design against a pasted sequence, a FASTA file, or a built-in target
+cas13guide design --sequence AUGCAUGC... --out results/
+cas13guide design --fasta target.fa --min-accessibility 0.35 --out results/
+cas13guide design --preset hsa-miR-21-5p
+cas13guide design --list-presets
+```
+
+`design` runs the whole product in one command — input (FR1.1–FR1.5), scoring
+(FR3/5/6), ranking (FR8.1) and CSV/FASTA export (FR8.3) — and is what a UI would
+call. Malformed input is refused with a message naming the record and the
+offending position rather than a stack trace (FR1.4, NFR3), and nothing is
+silently repaired: `T`→`U` and whitespace go, everything else is an error,
+because a guide designed against a sequence the tool quietly altered is worse
+than no guide.
+
+Two things it prints on purpose: that the built-in calibration is **synthetic**,
+and that predicted signal is **relative**. Neither is a number to put in a paper.
+
+```bash
 pip install -e .            # or: export PYTHONPATH=src
 python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 335 tests
+python -m unittest discover -s tests -t tests    # 364 tests
 pytest                              # same suite under pytest
 ```
 
@@ -310,7 +331,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-335 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+364 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -381,6 +402,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_suffixarray.py` | SA-IS vs brute force, edge cases, deliberate recursion-path coverage |
 | `test_presets.py` | miRBase accessions and provenance, mature-miRNA geometry, the amplicon path |
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
+| `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_ingest.py` | direction flip exactness, fatal vs survivable data problems |
 | `test_acceptance.py` | each criterion measured, rejection names the failure |
 | `test_training.py` | IRLS vs sklearn oracle, grouped splitting, the measured split-bias regimes, unpenalized intercept |

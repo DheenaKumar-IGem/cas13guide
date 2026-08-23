@@ -305,8 +305,21 @@ def run_design(
 
     # ---------------- G: transparent output -------------------
     controls = generate_controls(panel, spec, reference.index, envelope=envelope)
+    # Rank everything the gate did not FAIL -- PASS *and* REVIEW.
+    #
+    # REVIEW means "usable, with a human looking at it", and the R1/R2/R3
+    # grading exists precisely so that a human can triage it. Ranking only PASS
+    # made that grading invisible: with honest OOD flagging the REVIEW bucket is
+    # routinely the majority, and a run that graded 135 guides R1/R2/R3 handed
+    # back an *empty* table, which tells the user nothing about which of the 135
+    # to look at first. The verdict and tier travel on every row, so nothing is
+    # being passed off as certified.
+    #
+    # The *panel* is still PASS-only (see above): the machine's recommendation
+    # stays certified even though the table a human reads is wider.
     ranked: list[RankedGuide] = rank_by_preference(
-        [a for a in assessments if a.gate.verdict is Verdict.PASS], preference_weights
+        [a for a in assessments if a.gate.verdict is not Verdict.FAIL],
+        preference_weights,
     )
     return build_report(
         assessments, ranked, panel, controls, spec, ledger,
