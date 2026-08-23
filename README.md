@@ -50,7 +50,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 401 tests
+python -m unittest discover -s tests -t tests    # 422 tests
 pytest                              # same suite under pytest
 ```
 
@@ -235,6 +235,34 @@ linear regime. A saturating assay scores every candidate 1.0 — not a weak
 ranking but no ranking at all — and `SignalPrediction.saturated` says when real
 constants have that problem.
 
+## BLAST off-target search, and why it is the *heuristic* index
+
+`services/blast.py` searches a BLAST database through the same `SearchIndex`
+seam as the built-in indexes (FR4.1–FR4.3) — and reports `exhaustive=False`,
+which the gate turns into an R2 REVIEW. That grading is the point, not a
+limitation to work around:
+
+- **Seeded, so it can miss.** BLAST extends exact word matches. A site whose
+  differences leave no exact word of `word_size` intact is not found.
+- **Not wobble-aware.** BLAST works in DNA space and scores G:U as a mismatch,
+  because for DNA it is one. For a Cas13 RNA:RNA duplex it is a base pair, so
+  BLAST both under-seeds wobble-rich sites and over-counts their mismatches.
+  Reported mismatch counts are therefore **re-derived** with `profile_duplex`
+  from the aligned subject sequence, never taken from BLAST's own column.
+- **Only as complete as its database.** `bound.universes` records what the
+  caller *asserts* the database covers — an assertion this module cannot verify.
+
+Two filters worth knowing about: minus-strand alignments are dropped (a
+transcript database holds sense strands, so a minus hit is not a site the guide
+can bind, and counting one would invent an off-target), and partial or gapped
+alignments are dropped (padding one out to spacer length would be inventing
+sequence).
+
+Requires BLAST+ (DR3) and a database (DR1), neither of which ships here. The
+subprocess path is tested against a stub executable emitting real-format output,
+which covers the argv, parsing, filtering and re-scoring — everything except
+whether NCBI's aligner behaves, which is not this package's contract to test.
+
 ## The report
 
 `design --out DIR` writes four files: `candidates.csv`, `candidates.fasta`,
@@ -367,7 +395,7 @@ implementation:
 
 | Seam | Reference impl | Drop-in |
 |------|----------------|---------|
-| `SearchIndex` | `ExhaustiveScanIndex`, `FMIndexSearchIndex` (both provably complete), `SeedHeuristicIndex` (honest heuristic) | — already production-shaped |
+| `SearchIndex` | `ExhaustiveScanIndex`, `FMIndexSearchIndex` (both provably complete), `SeedHeuristicIndex` and **`BlastOffTargetIndex`** (honest heuristics) | — already production-shaped |
 | `ActivityModel` | `HeuristicCas13Model`, **`TrainedActivityModel`** (fit by `services/training.py`) | trained CNN, TIGER-style model |
 | `AccessibilityModel` | `NullAccessibilityModel`, **`ViennaRNAAccessibilityModel`** (fold, not independent) | SHAPE / DMS-seq / icSHAPE via `StaticAccessibilityModel` |
 | `DuplexEnergyModel` | `NullDuplexEnergyModel`, **`ViennaRNADuplexEnergyModel`** | any hybridization model |
@@ -380,7 +408,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-401 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+422 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -453,6 +481,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_blast.py` | short-query flags, strand and length filtering, wobble re-scoring, never claims exhaustiveness |
 | `test_report_html.py` | balanced markup, no external requests, sort keys on every cell, escaping of untrusted names, score glossary completeness |
 | `test_ingest.py` | direction flip exactness, fatal vs survivable data problems |
 | `test_acceptance.py` | each criterion measured, rejection names the failure |
