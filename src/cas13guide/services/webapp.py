@@ -20,6 +20,7 @@ and says so when asked to bind anywhere else.
 from __future__ import annotations
 
 import html
+import sys
 import threading
 import webbrowser
 from email.parser import BytesParser
@@ -270,8 +271,9 @@ class DesignHandler(BaseHTTPRequestHandler):
         self._send(_render_outcome(outcome))
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        # Quieter than the default, and without the reverse DNS lookup.
-        print(f"  {self.address_string()} {fmt % args}")
+        # Quieter than the default and without the reverse DNS lookup -- and on
+        # stderr, so a test runner's stdout stays parseable.
+        print(f"  {self.address_string()} {fmt % args}", file=sys.stderr)
 
 
 def make_server(host: str = "127.0.0.1", port: int = 8000) -> HTTPServer:
