@@ -9,6 +9,8 @@ from cas13guide.metrics.aggregate import build_metric_vector
 from cas13guide.models.evidence import GuideAssessment, MetricVector
 from cas13guide.pipeline.f_decide import (
     DEFAULT_WEIGHTS,
+    RankedGuide,
+    distinct_site_ids,
     dominates,
     gate,
     pareto_front,
@@ -324,6 +326,157 @@ class TestAlleleTasksAreRankedByTheirGoverningMetric(unittest.TestCase):
         ]
         for r in rank_by_preference(guides):
             self.assertNotIn("discrimination_margin", r.sensitivity)
+
+
+
+class TestDistinctSites(unittest.TestCase):
+    """A ranked list is not a panel.
+
+    Activity varies smoothly along a transcript, so the top entries are usually
+    the same window shifted by a base or two. Measured on a 400 nt target with a
+    28 nt spacer, the top ten ranked guides covered **two** distinct sites and
+    ranks 1-3 differed by one nucleotide each. Ordering that buys one experiment
+    ten times while looking like ten independent candidates.
+    """
+
+    SPACER = "GCAUUGCUGUGGAGCUGAAGUC"
+
+    def _ranked(self, starts, target_ids=None):
+        """A ranked list with the given start offsets, in rank order."""
+        from cas13guide.contract.enums import ReasonCode
+        from cas13guide.models.evidence import (
+            Candidate, GateResult, GuideAssessment, MetricVector,
+        )
+
+        target_ids = target_ids or ["t1"] * len(starts)
+        out = []
+        for index, (start, target_id) in enumerate(zip(starts, target_ids)):
+            guide_id = f"g{index}"
+            assessment = GuideAssessment(
+                guide_id=guide_id,
+                candidate=Candidate(
+                    guide_id=guide_id, spacer=self.SPACER,
+                    source_target_id=target_id, start=start,
+                ),
+                qc=clean_qc(guide_id),
+                metrics=MetricVector(0.9, 0.0, 0.0, 0.0, 0.9, 1.0),
+                gate=GateResult(Verdict.PASS, (ReasonCode.CONSTRAINTS_SATISFIED,)),
+            )
+            out.append(
+                RankedGuide(assessment=assessment, rank=index + 1,
+                            score=10.0 - index, rationale=(), sensitivity={})
+            )
+        return out
+
+    def test_shifted_copies_of_one_site_collapse_to_the_first(self):
+        ranked = self._ranked([100, 101, 102, 103])
+        distinct = distinct_site_ids(ranked, min_spacing=22)
+        self.assertEqual(distinct, frozenset({"g0"}))
+
+    def test_genuinely_separate_sites_all_survive(self):
+        ranked = self._ranked([0, 50, 100, 150])
+        self.assertEqual(len(distinct_site_ids(ranked, min_spacing=22)), 4)
+
+    def test_the_best_ranked_representative_wins(self):
+        """Rank order decides which of an overlapping cluster is kept."""
+        ranked = self._ranked([300, 301, 10])
+        distinct = distinct_site_ids(ranked, min_spacing=22)
+        self.assertIn("g0", distinct)     # rank 1, start 300
+        self.assertNotIn("g1", distinct)  # rank 2, start 301 -- overlaps g0
+        self.assertIn("g2", distinct)     # rank 3, start 10 -- separate site
+
+    def test_exactly_spacer_length_apart_is_distinct(self):
+        """Adjacent but not overlapping: no shared target base."""
+        ranked = self._ranked([0, 22])
+        self.assertEqual(len(distinct_site_ids(ranked, min_spacing=22)), 2)
+        # one closer and they overlap
+        ranked = self._ranked([0, 21])
+        self.assertEqual(len(distinct_site_ids(ranked, min_spacing=22)), 1)
+
+    def test_positions_on_different_targets_are_not_compared(self):
+        """Start 100 on one transcript says nothing about start 100 on another."""
+        ranked = self._ranked([100, 100], target_ids=["t1", "t2"])
+        self.assertEqual(len(distinct_site_ids(ranked, min_spacing=22)), 2)
+
+    def test_an_empty_ranking_is_handled(self):
+        self.assertEqual(distinct_site_ids([], min_spacing=22), frozenset())
+
+    def test_it_marks_rather_than_filters(self):
+        """Nothing is dropped and no rank changes -- the caller decides.
+
+        Renumbering would hide that guides were collapsed; a reader seeing
+        #1, #2, #15 can tell the list was condensed rather than sparse.
+        """
+        ranked = self._ranked([100, 101, 200])
+        distinct = distinct_site_ids(ranked, min_spacing=22)
+        self.assertEqual(len(ranked), 3)                       # nothing removed
+        self.assertEqual([r.rank for r in ranked], [1, 2, 3])  # nothing renumbered
+        self.assertEqual(len(distinct), 2)
+
+
+class TestDistinctSitesReachTheReport(unittest.TestCase):
+    """The flag is only worth having if it arrives where results are read."""
+
+    def _report(self):
+        import random
+
+        from cas13guide.contract.enums import Universe
+        from cas13guide.pipeline.orchestrator import DesignContext, run_design
+        from cas13guide.services.calibration import CalibrationService
+        from cas13guide.services.indexes import ExhaustiveScanIndex
+        from cas13guide.services.registry import (
+            HeuristicCas13Model, ModelRegistry, NullAccessibilityModel,
+        )
+        from cas13guide.services.transcriptome import Locus, Transcriptome
+
+        spec = make_spec()
+        rng = random.Random(5)
+        calibration = CalibrationService()
+        for regime in ("mm0", "mm1-2", "mm3+"):
+            key = CalibrationService.stratum_key(
+                spec.profile.effector.value, spec.profile.assay.value, regime
+            )
+            for i in range(150):
+                truth = rng.random()
+                calibration.add_observation(
+                    key, min(1.0, max(0.0, truth + rng.gauss(0, 0.1))), truth,
+                    group=f"T{i % 12:02d}",
+                )
+        world = Transcriptome("GRCh38", "v44")
+        world.add(Locus("L_T1", SEQ_A, Universe.CODING, gene="TGT", expression=100.0))
+        context = DesignContext(
+            "reference", world,
+            ExhaustiveScanIndex(world, spec.context.declared_universes),
+            {"L_T1": "t1"},
+        )
+        return run_design(
+            spec, [context],
+            ModelRegistry(HeuristicCas13Model(), NullAccessibilityModel()),
+            calibration, panel_size=2,
+        )
+
+    def test_every_ranked_row_carries_the_flag(self):
+        data = self._report().to_dict()
+        self.assertTrue(data["ranked"])
+        for row in data["ranked"]:
+            self.assertIn("distinct_site", row)
+            self.assertIsInstance(row["distinct_site"], bool)
+
+    def test_the_summary_count_matches_the_flagged_rows(self):
+        data = self._report().to_dict()
+        flagged = sum(1 for row in data["ranked"] if row["distinct_site"])
+        self.assertEqual(data["distinct_site_count"], flagged)
+
+    def test_a_densely_tiled_target_really_does_collapse(self):
+        """The condition that motivated this: step-1 tiling on one transcript."""
+        data = self._report().to_dict()
+        self.assertGreater(len(data["ranked"]), 10)
+        self.assertLess(data["distinct_site_count"], len(data["ranked"]))
+
+    def test_the_first_ranked_guide_is_always_a_distinct_site(self):
+        data = self._report().to_dict()
+        self.assertTrue(data["ranked"][0]["distinct_site"])
+
 
 
 if __name__ == "__main__":

@@ -53,6 +53,10 @@ TABLE_COLUMNS: tuple[str, ...] = (
     "duplex_dg_per_nt", "predicted_signal", "pfs_3prime", "robustness",
 )
 
+#: Rendered as a data attribute rather than a column: it drives the default
+#: filter, and a column of "yes" would be noise once the filter is applied.
+DISTINCT_SITE_KEY = "distinct_site"
+
 
 @dataclass(frozen=True, slots=True)
 class AccessibilityTrack:
@@ -115,17 +119,21 @@ _JS = """
   var table=document.getElementById('results'); if(!table) return;
   var tbody=table.tBodies[0], rows=Array.prototype.slice.call(tbody.rows);
   var search=document.getElementById('q'), verdict=document.getElementById('v');
+  var distinct=document.getElementById('d');
   function apply(){
     var needle=(search.value||'').toLowerCase(), want=verdict.value;
+    var onlyDistinct=distinct&&distinct.checked;
     var shown=0;
     rows.forEach(function(r){
       var okText=!needle||r.textContent.toLowerCase().indexOf(needle)>-1;
       var okVerdict=!want||r.getAttribute('data-verdict')===want;
-      var on=okText&&okVerdict; r.style.display=on?'':'none'; if(on)shown++;
+      var okSite=!onlyDistinct||r.getAttribute('data-distinct')!=='0';
+      var on=okText&&okVerdict&&okSite; r.style.display=on?'':'none'; if(on)shown++;
     });
     document.getElementById('shown').textContent=shown+' of '+rows.length;
   }
   search.addEventListener('input',apply); verdict.addEventListener('change',apply);
+  if(distinct) distinct.addEventListener('change',apply);
   var dir={};
   Array.prototype.forEach.call(table.tHead.rows[0].cells,function(th,i){
     th.addEventListener('click',function(){
@@ -256,7 +264,8 @@ def render_report(
                 f'<td{attrs} data-sort="{html.escape(_sort_key(value))}">{rendered}</td>'
             )
         body_rows.append(
-            f'<tr data-verdict="{html.escape(str(entry.get("verdict", "")))}">'
+            f'<tr data-verdict="{html.escape(str(entry.get("verdict", "")))}"'
+            f' data-distinct="{"1" if entry.get(DISTINCT_SITE_KEY, True) else "0"}">'
             + "".join(cells)
             + "</tr>"
         )
@@ -348,6 +357,11 @@ def render_report(
     <option value="PASS">PASS only</option>
     <option value="REVIEW">REVIEW only</option>
   </select>
+  <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;
+                font-weight:500;margin:0">
+    <input id="d" type="checkbox" checked style="flex:0 0 auto;min-width:0">
+    distinct sites only
+  </label>
   <span class="sub" style="margin:0;align-self:center">showing <b id="shown"></b></span>
 </div>
 {table}

@@ -24,7 +24,7 @@ from ..services.indexes import ExhaustivenessBound, SearchIndex
 from ..services.provenance import ProvenanceLedger
 from ..util.seq import gc_fraction
 from .b_qc import qc_candidate
-from .f_decide import RankedGuide, review_rate
+from .f_decide import RankedGuide, distinct_site_ids, review_rate
 from .optimizer import Panel
 
 
@@ -192,6 +192,9 @@ class DesignReport:
     verdict_counts: dict[str, int]
     review_rate: float
     ranked: tuple[RankedGuide, ...]
+    #: Guide ids that are the best-ranked representative of a distinct target
+    #: site. The rest are shifted copies of a site already listed above them.
+    distinct_sites: frozenset[str]
     panel: Panel
     controls: tuple[ControlGuide, ...]
     coverage_map: dict[str, float]
@@ -215,6 +218,7 @@ class DesignReport:
             "spec_fingerprint": self.spec_fingerprint,
             "verdict_counts": self.verdict_counts,
             "review_rate": round(self.review_rate, 4),
+            "distinct_site_count": len(self.distinct_sites),
             "ranked": [
                 {
                     "rank": r.rank,
@@ -224,6 +228,7 @@ class DesignReport:
                     # 0-based start of the target site on its source target,
                     # so a report can place the guide on an accessibility track.
                     "start": r.assessment.candidate.start,
+                    "distinct_site": r.assessment.guide_id in self.distinct_sites,
                     "pfs_3prime": r.assessment.candidate.three_prime_flank,
                     "pfs_preferred": r.assessment.qc.pfs_preference == 1.0,
                     "qc_warnings": [w.value for w in r.assessment.qc.warnings],
@@ -342,6 +347,10 @@ def build_report(
     for a in assessments:
         counts[a.gate.verdict.value] += 1
 
+    # Marked, never filtered: see f_decide.distinct_site_ids for why the raw
+    # ranking is misleading and why dropping rows would be the wrong fix.
+    distinct = distinct_site_ids(list(ranked), spec.spacer_length)
+
     coverage_map = {
         t.target_id: panel.coverage.get(t.target_id, 0.0)
         for t in spec.contract.by_class(TargetClass.REQUIRED)
@@ -352,6 +361,7 @@ def build_report(
         verdict_counts=counts,
         review_rate=review_rate(assessments),
         ranked=tuple(ranked),
+        distinct_sites=distinct,
         panel=panel,
         controls=controls,
         coverage_map=coverage_map,

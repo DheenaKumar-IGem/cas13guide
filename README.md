@@ -68,8 +68,41 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 467 tests
+python -m unittest discover -s tests -t tests    # 478 tests
 pytest                              # same suite under pytest
+```
+
+## A ranked list is not a panel
+
+Activity varies smoothly along a transcript, so the top of a raw ranking is
+usually the *same window shifted by a base or two*. Measured on a 400 nt target
+with a 28 nt spacer, the top ten ranked guides covered **two** distinct sites —
+ranks 1, 2 and 3 differed by one nucleotide each:
+
+```
+#  1 start= 207  CGAGAUAAAUGGGUCGAGAGUUCGUGAC
+#  2 start= 208  ACGAGAUAAAUGGGUCGAGAGUUCGUGA
+#  3 start= 209  AACGAGAUAAAUGGGUCGAGAGUUCGUG
+```
+
+Those three share 27 of 28 target bases, the same local structure and the same
+accessibility. They succeed or fail together. Ordering that list buys one
+experiment ten times while looking, on screen, like ten independent candidates —
+and it makes "test several candidates" impossible to follow from the list the
+tool hands you.
+
+So each ranked guide is marked `distinct_site`: is it the best-ranked
+representative of a site not already listed above it? The CLI and the report
+show distinct sites by default; `--all-sites` and the report's checkbox restore
+the full list.
+
+**It marks rather than filters, and ranks are never renumbered.** You see #1,
+#2, #15, #22, #120 — which tells you the list was condensed, where a renumbered
+1–5 would hide it. Nothing is dropped from the data; the exports carry the flag.
+
+```
+showing one guide per distinct site; 125 shifted copies of a listed site are
+hidden (--all-sites to show them)
 ```
 
 ## What a run did not check
@@ -490,7 +523,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-467 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+478 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 

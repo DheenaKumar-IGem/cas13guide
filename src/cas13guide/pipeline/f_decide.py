@@ -392,6 +392,40 @@ def rank_by_preference(
     ]
 
 
+def distinct_site_ids(
+    ranked: list[RankedGuide], min_spacing: int
+) -> frozenset[str]:
+    """Guide ids that are the best-ranked representative of a distinct site.
+
+    A ranked list is not a panel. Activity varies smoothly along a transcript,
+    so the top entries are usually the same window shifted by a base or two:
+    they share almost all of their target, the same local structure and the same
+    accessibility, and they succeed or fail together. Measured on a 400 nt random
+    target with a 28 nt spacer, the top ten ranked guides covered **two**
+    distinct sites -- ranks 1, 2 and 3 differed by one nucleotide each. Ordering
+    that list buys one experiment ten times while looking, on screen, like ten
+    independent candidates, and it makes "test several candidates" impossible to
+    follow from the list the tool hands you.
+
+    This marks rather than filters. Nothing is dropped and no rank changes:
+    ranks stay numbered against the full set, so a caller that shows only
+    distinct sites still displays #1, #4, #9 and a reader can see that guides
+    were collapsed rather than never generated.
+
+    Sites are compared within a source target only -- positions on different
+    targets are not comparable.
+    """
+    seen: dict[str, list[int]] = {}
+    distinct: set[str] = set()
+    for entry in ranked:
+        candidate = entry.assessment.candidate
+        starts = seen.setdefault(candidate.source_target_id, [])
+        if all(abs(candidate.start - start) >= min_spacing for start in starts):
+            starts.append(candidate.start)
+            distinct.add(entry.assessment.guide_id)
+    return frozenset(distinct)
+
+
 def review_rate(assessments: list[GuideAssessment]) -> float:
     """Fraction of assessed guides sitting in REVIEW.
 

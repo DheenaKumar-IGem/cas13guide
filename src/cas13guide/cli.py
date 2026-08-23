@@ -164,7 +164,18 @@ def _design(args: argparse.Namespace) -> int:
     print(f"verdicts: {data['verdict_counts']}  "
           f"review_rate={data['review_rate']:.0%}")
 
-    rows = data["ranked"][: args.top]
+    all_rows = data["ranked"]
+    # Default to one row per distinct site. The raw ranking is dominated by
+    # single-base shifts of the same window -- see f_decide.distinct_site_ids.
+    shown = all_rows if args.all_sites else [r for r in all_rows if r["distinct_site"]]
+    rows = shown[: args.top]
+    collapsed = len(all_rows) - len(shown)
+    if collapsed and not args.all_sites:
+        print(
+            f"showing one guide per distinct site; {collapsed} shifted "
+            "copies of a listed site are hidden (--all-sites to show them)",
+            file=sys.stderr,
+        )
     if rows:
         robust = "robust" if args.variants else ""
         print()
@@ -297,6 +308,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip the collateral-cleavage signal model")
     design.add_argument("--panel-size", type=int, default=3)
     design.add_argument("--top", type=int, default=10)
+    design.add_argument("--all-sites", action="store_true",
+                        help="include guides that are shifted copies of a "
+                             "higher-ranked site (hidden by default)")
     design.add_argument("--expression", type=float, default=None)
     design.add_argument("--organism", default="Homo sapiens")
     design.add_argument("--genome-build", default="GRCh38")
