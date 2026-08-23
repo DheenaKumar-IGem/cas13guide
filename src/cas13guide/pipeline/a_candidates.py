@@ -1,8 +1,13 @@
-"""Stage A -- candidate design.
+"""Stage A -- candidate design (FR2.1, FR2.2).
 
-Tile the intended transcripts, mark junction-spanning and unique-region
-guides, validate coordinates, and deduplicate identical spacers. No scoring
-happens here; the stage only proposes.
+Tile the intended transcripts with a sliding window (FR2.1), tag each candidate
+with the flanking bases that make up its protospacer flanking site (FR2.2), mark
+junction-spanning guides, validate coordinates, and deduplicate identical
+spacers. No scoring happens here; the stage only proposes.
+
+The PFS bases are recorded rather than judged: whether a given flank is a hard
+incompatibility or a soft preference is an ortholog property, and it is decided
+in stage B against ``contract/effectors.py``.
 """
 
 from __future__ import annotations

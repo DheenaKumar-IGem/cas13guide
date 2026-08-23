@@ -14,7 +14,7 @@ produces a tool that refuses designs it should merely discourage:
   is allowed, and the activity model's domain check flags it out-of-domain, so
   the calibration widens and the gate raises an R3 REVIEW rather than either
   refusing outright or answering with unearned confidence.
-* **Required PFS vs preferred PFS.** A *required* flanking base is a hard
+* **Required PFS vs preferred PFS** (FR2.3). A *required* flanking base is a hard
   incompatibility -- the guide cannot work. A *preferred* one is a bias: it
   lowers expected activity and should push a candidate down the ranking, not
   out of the design. The reported LwaCas13a 3' H preference is the second kind,

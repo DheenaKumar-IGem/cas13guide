@@ -219,6 +219,10 @@ def _scan_locus(expected: str, sequence: str, max_mismatches: int):
     positions, which is what makes it fast: the live set collapses quickly once
     the budget starts binding (see :func:`_prune_after`).
 
+    NFR1 gives a 60 s budget for a <=5 kb transcript; the vectorized scan puts a
+    full design run on that scale at well under a second, so the budget is not
+    the constraint it once was.
+
     The hit set is *identical* to the per-character scan, including start
     order and the reported mismatch count -- ``tests/test_search.py`` pins the
     equivalence against a brute-force reference. That matters more than the

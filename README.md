@@ -72,6 +72,34 @@ python -m unittest discover -s tests -t tests    # 441 tests
 pytest                              # same suite under pytest
 ```
 
+## Requirement coverage
+
+| | Requirement | Where |
+|---|---|---|
+| ✅ | FR1.1–1.5 input, presets, validation, ortholog | `services/fasta.py`, `contract/presets.py`, `contract/effectors.py` |
+| ✅ | FR2.1–2.3 tiling, PFS tagging, PFS deprioritisation | `pipeline/a_candidates.py`, `pipeline/b_qc.py` |
+| ✅ | FR3.1–3.4 accessibility | `services/accessibility.py` |
+| ⚠️ | FR4.1–4.3 BLAST off-target | `services/blast.py` — **needs DR1 + DR3** |
+| ✅ | FR5.1–5.2 duplex free energy | `services/thermodynamics.py` |
+| ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works, `absolute_signal()` refuses |
+| ❌ | FR6.3 Bayesian panel confidence | **not implemented** — the model and its parameters are PanCRISP's and are not in this repository |
+| ✅ | FR7.1–7.2 conserved regions, variant robustness | `services/conservation.py` |
+| ✅ | FR8.1–8.4 ranking, table, export, visual | `pipeline/f_decide.py`, `services/fasta.py`, `services/report_html.py` |
+| ✅ | NFR1–NFR6 | measured at 0.2–3.4 s; `serve`; located errors; provenance ledger; 375 px verified; score glossary |
+| ❌ | DR1 RefSeq database, DR3 BLAST+, DR5 compute | infrastructure to provision |
+| ✅ | DR2 ViennaRNA | `pip install -e ".[structure]"` |
+| ⚠️ | DR4 model constants | JSON storage and loader exist; kinetic values are placeholders, Bayesian parameters absent |
+
+**The three things this cannot do without you.** Real kinetic constants from
+Feng et al. 2024 (`KineticConstants.from_json`, then set `provisional=False`);
+the Bayesian diagnostic model for FR6.3, which has no stub because guessing at
+someone else's statistical model is worse than leaving a hole; and a BLAST
+database plus toolkit. Everything else runs today.
+
+Two things it deliberately refuses rather than approximates: an absolute
+fluorescence figure from placeholder constants, and a certified bound from
+synthetic calibration. Both are announced on every run.
+
 ## The load-bearing ideas
 
 **Asymmetric bounds.** Benefit is read at its lower confidence bound, hazard at
