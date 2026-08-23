@@ -33,6 +33,24 @@ cas13guide design --preset hsa-miR-21-5p
 cas13guide design --list-presets
 ```
 
+```bash
+cas13guide serve                    # then open the page it prints
+```
+
+`serve` is the browser front end (FR1.2 upload, NFR2 no command-line
+knowledge): paste or upload a sequence, pick a preset, get the same interactive
+report. **Standard library only** — `http.server` plus `email` for multipart.
+That is deliberate: choosing Flask or FastAPI would push a dependency *and* a
+deployment shape onto whoever runs this, and neither is this package's call. It
+is a development server — single-threaded, unauthenticated, running the design
+inside the request — so it binds to localhost and says so loudly if asked to
+bind anywhere else.
+
+Both entry points are thin wrappers over `services/workflow.py:run_request`, so
+a form POST and a command line reach the pipeline through one code path and
+cannot drift into behaving differently. A real deployment can delete
+`services/webapp.py` and keep everything else.
+
 `design` runs the whole product in one command — input (FR1.1–FR1.5), scoring
 (FR3/5/6), ranking (FR8.1) and CSV/FASTA export (FR8.3) — and is what a UI would
 call. Malformed input is refused with a message naming the record and the
@@ -50,7 +68,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 422 tests
+python -m unittest discover -s tests -t tests    # 441 tests
 pytest                              # same suite under pytest
 ```
 
@@ -408,7 +426,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-422 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+441 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -481,6 +499,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_webapp.py` | upload and paste round trips, defaults shared with the CLI, errors as messages not tracebacks |
 | `test_blast.py` | short-query flags, strand and length filtering, wobble re-scoring, never claims exhaustiveness |
 | `test_report_html.py` | balanced markup, no external requests, sort keys on every cell, escaping of untrusted names, score glossary completeness |
 | `test_ingest.py` | direction flip exactness, fatal vs survivable data problems |

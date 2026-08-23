@@ -1,0 +1,225 @@
+"""The browser front end (FR1.2, NFR2) and its error behaviour (NFR3).
+
+Runs a real server on an ephemeral port and talks HTTP to it, rather than
+calling the handler methods directly: the parts most likely to break are the
+multipart parsing and the status codes, and neither is exercised by a unit test
+that hands the handler a dict.
+"""
+
+import http.client
+import threading
+import unittest
+import uuid
+
+from helpers import *  # noqa: F401,F403
+
+from cas13guide.services.webapp import (
+    MAX_UPLOAD_BYTES,
+    _parse_multipart,
+    _request_from_fields,
+    make_server,
+)
+from cas13guide.services.workflow import DesignRequest
+
+TARGET = (
+    "AUGGCACUGAAGUCCAUCGACUGGAACUUCCGAGUGCAUGGCAUUACCGAGUCCUAUGGCAAGUUCGAC"
+    "CUGAUCGAGAAGUGCCUGGAAUCCAUGGGCUACCGAGAUCUGGCCAAGUUCGGCAUCUAA"
+)
+
+
+class ServerTestCase(unittest.TestCase):
+    """One server for the whole class; each test is a fresh connection."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = make_server("127.0.0.1", 0)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=5)
+
+    def request(self, method, path, body=None, headers=None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=120)
+        try:
+            connection.request(method, path, body=body, headers=headers or {})
+            response = connection.getresponse()
+            return response.status, dict(response.getheaders()), response.read().decode()
+        finally:
+            connection.close()
+
+    def form_post(self, fields, files=None):
+        boundary = f"----{uuid.uuid4().hex}"
+        parts = []
+        for name, value in fields.items():
+            parts.append(
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'
+            )
+        for name, (filename, content) in (files or {}).items():
+            parts.append(
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                f"Content-Type: text/plain\r\n\r\n{content}\r\n"
+            )
+        body = ("".join(parts) + f"--{boundary}--\r\n").encode()
+        return self.request(
+            "POST", "/design", body,
+            {"Content-Type": f"multipart/form-data; boundary={boundary}",
+             "Content-Length": str(len(body))},
+        )
+
+
+class TestFormPage(ServerTestCase):
+    def test_the_form_is_served(self):
+        status, _headers, body = self.request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn("<form", body)
+        self.assertIn('name="sequence"', body)
+        self.assertIn('type="file"', body)          # FR1.2 upload
+
+    def test_defaults_match_the_shared_request_object(self):
+        """The form and the CLI must not disagree about what the default is."""
+        _status, _headers, body = self.request("GET", "/")
+        defaults = DesignRequest()
+        for value in (defaults.effector, defaults.assay, defaults.task):
+            self.assertIn(f"<option selected>{value}</option>", body)
+
+    def test_every_preset_is_offered(self):
+        from cas13guide.contract.presets import preset_ids
+
+        _status, _headers, body = self.request("GET", "/")
+        for preset_id in preset_ids():
+            self.assertIn(preset_id, body)
+
+    def test_security_headers_are_set(self):
+        _status, headers, _body = self.request("GET", "/")
+        self.assertIn("Content-Security-Policy", headers)
+        self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+
+    def test_an_unknown_path_is_a_404(self):
+        status, _headers, _body = self.request("GET", "/wat")
+        self.assertEqual(status, 404)
+
+
+class TestDesignRoundTrip(ServerTestCase):
+    def test_a_pasted_sequence_produces_a_report(self):
+        status, _headers, body = self.form_post({"sequence": TARGET})
+        self.assertEqual(status, 200)
+        self.assertIn("Cas13 guide design", body)
+        self.assertIn("<table id=\"results\"", body)
+        self.assertIn("design another", body)
+
+    def test_an_uploaded_fasta_produces_a_report(self):
+        """FR1.2 -- the upload path, not just the textarea."""
+        status, _headers, body = self.form_post(
+            {"sequence": ""},
+            files={"fasta": ("t.fa", f">uploaded\n{TARGET}\n")},
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("uploaded", body)
+
+    def test_the_standing_caveats_are_always_shown(self):
+        _status, _headers, body = self.form_post({"sequence": TARGET})
+        self.assertIn("SYNTHETIC", body)
+        self.assertIn("RELATIVE", body)
+
+    def test_a_preset_can_be_designed_against(self):
+        status, _headers, body = self.form_post(
+            {"sequence": "", "preset": "hsa-miR-21-5p"}
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("hsa-miR-21-5p", body)
+
+
+class TestErrorsAreLegibleNotTracebacks(ServerTestCase):
+    """NFR3 -- malformed input must not return a stack trace to a browser."""
+
+    def test_a_bad_character_returns_400_and_says_where(self):
+        status, _headers, body = self.form_post({"sequence": "AUGCXXAUGC"})
+        self.assertEqual(status, 400)
+        self.assertIn("position 5", body)
+        self.assertNotIn("Traceback", body)
+        self.assertIn("<form", body)        # and the form comes back to retry
+
+    def test_no_sequence_says_what_to_do(self):
+        status, _headers, body = self.form_post({"sequence": "   "})
+        self.assertEqual(status, 400)
+        self.assertIn("No sequence supplied", body)
+
+    def test_a_non_numeric_field_is_reported_by_name(self):
+        status, _headers, body = self.form_post(
+            {"sequence": TARGET, "max_mismatches": "lots"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("max mismatches", body)
+        self.assertNotIn("Traceback", body)
+
+    def test_an_oversized_upload_is_refused_before_it_is_read(self):
+        status, _headers, _body = self.request(
+            "POST", "/design", b"x=1",
+            {"Content-Type": "application/x-www-form-urlencoded",
+             "Content-Length": str(MAX_UPLOAD_BYTES + 1)},
+        )
+        self.assertEqual(status, 413)
+
+    def test_a_hostile_sequence_name_is_escaped_in_the_report(self):
+        status, _headers, body = self.form_post(
+            {"sequence": f">a<script>alert(1)</script>\n{TARGET}"}
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn("<script>alert(1)</script>", body)
+        self.assertIn("&lt;script&gt;", body)
+
+
+class TestMultipartParsing(unittest.TestCase):
+    """``cgi`` was removed in 3.13, so this uses ``email``; pin the behaviour."""
+
+    def _body(self, boundary, parts):
+        return ("".join(parts) + f"--{boundary}--\r\n").encode()
+
+    def test_fields_and_files_are_separated(self):
+        boundary = "abc123"
+        body = self._body(boundary, [
+            f'--{boundary}\r\nContent-Disposition: form-data; name="effector"\r\n\r\n'
+            "LwaCas13a\r\n",
+            f'--{boundary}\r\nContent-Disposition: form-data; name="fasta"; '
+            'filename="t.fa"\r\n\r\n>x\nAUGC\r\n',
+        ])
+        fields = _parse_multipart(body, f"multipart/form-data; boundary={boundary}")
+        self.assertEqual(fields["effector"], "LwaCas13a")
+        self.assertIn(">x", fields["fasta__file"])
+        self.assertNotIn("fasta", fields)      # the file is under its own key
+
+    def test_an_empty_file_input_is_ignored(self):
+        """Browsers send an empty part for a file input nobody touched."""
+        boundary = "abc123"
+        body = self._body(boundary, [
+            f'--{boundary}\r\nContent-Disposition: form-data; name="fasta"; '
+            'filename=""\r\n\r\n\r\n',
+        ])
+        fields = _parse_multipart(body, f"multipart/form-data; boundary={boundary}")
+        self.assertNotIn("fasta__file", fields)
+
+    def test_an_uploaded_file_beats_an_empty_textarea(self):
+        request = _request_from_fields({"sequence": "", "fasta__file": ">x\nAUGC"})
+        self.assertEqual(request.sequence_text, ">x\nAUGC")
+
+    def test_a_pasted_sequence_wins_when_both_are_present(self):
+        request = _request_from_fields({"sequence": "AUGC", "fasta__file": ">x\nGGGG"})
+        self.assertEqual(request.sequence_text, "AUGC")
+
+    def test_blank_selects_fall_back_to_the_defaults(self):
+        request = _request_from_fields({"sequence": "AUGC", "effector": "", "assay": ""})
+        defaults = DesignRequest()
+        self.assertEqual(request.effector, defaults.effector)
+        self.assertEqual(request.assay, defaults.assay)
+
+
+if __name__ == "__main__":
+    unittest.main()

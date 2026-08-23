@@ -1,6 +1,7 @@
 """Command line entry point.
 
 ``cas13guide design`` -- design guides from a sequence, FASTA file or preset.
+``cas13guide serve``  -- the same thing, in a browser.
 ``cas13guide demo``  -- run the bundled end-to-end example.
 ``cas13guide check`` -- run the benchmark/coverage CI gate.
 """
@@ -110,43 +111,13 @@ def _train(args: argparse.Namespace) -> int:
 def _design(args: argparse.Namespace) -> int:
     """Design guides against a pasted sequence, a FASTA file, or a preset.
 
-    The one command that exercises the whole product: input (FR1.1-FR1.5),
-    scoring (FR3/5/6 when ViennaRNA is present), ranking (FR8.1) and export
-    (FR8.3). NFR2 asks that a basic query need no bioinformatics command-line
-    knowledge; this is as close as a CLI gets, and it is what a UI would call.
+    A thin wrapper over ``services.workflow.run_request``: the CLI and the web
+    server share that one code path so a form POST and a command line cannot
+    drift into behaving differently.
     """
-    import random
-
-    from .contract.enums import AssayType, Effector, Task, TargetClass, Universe
-    from .contract.presets import (
-        MIRNA_PRESETS,
-        designability,
-        get_preset,
-        largest_designable_spacer_length,
-        preset_ids,
-    )
-    from .contract.spec import (
-        ContextScope,
-        EffectorAssayProfile,
-        ResolvedDesignSpec,
-        TargetContract,
-        Thresholds,
-    )
-    from .pipeline.orchestrator import DesignContext, run_design
-    from .services.calibration import CalibrationService
-    from .services.fasta import (
-        SequenceInputError,
-        parse_sequence_input,
-        read_fasta,
-        write_exports,
-    )
-    from .services.indexes import ExhaustiveScanIndex
-    from .services.registry import (
-        HeuristicCas13Model,
-        ModelRegistry,
-        NullAccessibilityModel,
-    )
-    from .services.transcriptome import Locus, Transcriptome
+    from .contract.presets import get_preset, preset_ids
+    from .services.fasta import write_exports
+    from .services.workflow import DesignRequest, DesignRequestError, run_request
 
     if args.list_presets:
         print("built-in targets (FR1.3):")
@@ -155,232 +126,105 @@ def _design(args: argparse.Namespace) -> int:
             print(f"  {preset_id:18s} {preset.accession:14s} {preset.length:3d} nt")
         return 0
 
-    # ---------------- input (FR1.1, FR1.2, FR1.3, FR1.4) ----------------
-    try:
-        if args.preset:
-            preset = get_preset(args.preset)
-            records = [
-                type("R", (), {"name": preset.preset_id, "sequence": preset.sequence,
-                               "description": preset.accession, "length": preset.length})()
-            ]
-        elif args.fasta:
-            records = read_fasta(args.fasta)
-        elif args.sequence:
-            records = parse_sequence_input(args.sequence)
-        else:
-            print("supply --sequence, --fasta or --preset (or --list-presets)",
-                  file=sys.stderr)
-            return 2
-    except (SequenceInputError, KeyError) as exc:
-        print(f"cannot read input: {exc}", file=sys.stderr)
-        return 2
-
-    effector = Effector(args.effector)
-    assay = AssayType(args.assay)
-
-    # ---------------- spacer length (FR1.5, FR2.1) ----------------
-    spacer_length = args.spacer_length
-    if spacer_length is None and args.preset:
-        preset = get_preset(args.preset)
-        spacer_length = largest_designable_spacer_length(preset, effector)
-        report = designability(preset, effector, spacer_length)
-        print(f"preset {preset.preset_id} ({preset.length} nt): {report.note}")
-        if spacer_length is None:
-            return 2
-
-    targets = []
-    for index, record in enumerate(records):
-        targets.append(
-            __import__("cas13guide.contract.spec", fromlist=["TargetSpec"]).TargetSpec(
-                target_id=record.name,
-                sequence=record.sequence,
-                target_class=TargetClass.REQUIRED if index == 0 else TargetClass.DESIRED,
-                gene=record.name,
-                biotype=Universe.NCRNA,
-                expression=args.expression,
-            )
-        )
-
-    universes = frozenset({Universe.SYNTHETIC, Universe.VIRAL, Universe.NCRNA,
-                           Universe.CODING, Universe.PRE_MRNA, Universe.RRNA,
-                           Universe.MITO})
-    try:
-        spec = ResolvedDesignSpec(
-            contract=TargetContract(task=Task(args.task), targets=tuple(targets)),
-            profile=EffectorAssayProfile(
-                effector=effector, assay=assay, spacer_length=spacer_length
-            ),
-            context=ContextScope(
-                organism=args.organism, genome_build=args.genome_build,
-                annotation_version=args.annotation, declared_universes=universes,
-            ),
-            thresholds=Thresholds(
-                required_search_mismatches=args.max_mismatches,
-                min_accessibility=args.min_accessibility,
-            ),
-        )
-    except Exception as exc:
-        print(f"cannot build the design spec: {exc}", file=sys.stderr)
-        return 2
-
-    # ---------------- models (FR3.x, FR5.x, FR6.x) ----------------
-    accessibility = NullAccessibilityModel()
-    energy = None
-    kinetics = None
-    if not args.no_structure:
-        try:
-            from .services.accessibility import ViennaRNAAccessibilityModel
-            from .services.thermodynamics import ViennaRNADuplexEnergyModel
-
-            accessibility = ViennaRNAAccessibilityModel()
-            energy = ViennaRNADuplexEnergyModel()
-        except Exception as exc:
-            print(f"structural scoring disabled ({exc}); "
-                  'install with: pip install "cas13guide[structure]"', file=sys.stderr)
-    if not args.no_signal:
-        from .services.kinetics import CollateralKineticsModel
-
-        kinetics = CollateralKineticsModel()
-
-    registry_kwargs = {}
-    if energy is not None:
-        registry_kwargs["energy"] = energy
-    if kinetics is not None:
-        registry_kwargs["kinetics"] = kinetics
-    registry = ModelRegistry(HeuristicCas13Model(), accessibility, **registry_kwargs)
-
-    # ---------------- searchable world ----------------
-    world = Transcriptome(args.genome_build, args.annotation)
-    for record in records:
-        world.add(Locus(record.name, record.sequence, Universe.NCRNA,
-                        gene=record.name, expression=args.expression))
-    if args.background:
-        for record in read_fasta(args.background):
-            world.add(Locus(record.name, record.sequence, Universe.CODING,
-                            gene=record.name, expression=None))
-
-    # ---------------- calibration ----------------
-    rng = random.Random(args.seed)
-    calibration = CalibrationService()
-    for regime in ("mm0", "mm1-2", "mm3+"):
-        key = CalibrationService.stratum_key(effector.value, assay.value, regime)
-        for i in range(args.calibration_n):
-            truth = rng.random()
-            calibration.add_observation(
-                key, min(1.0, max(0.0, truth + rng.gauss(0, args.calibration_noise))),
-                truth, group=f"T{i % 12:02d}",
-            )
-    print(
-        "NOTE: calibration is SYNTHETIC. Bounds are exercisable, not earned -- "
-        "feed real screen data via `cas13guide train` before trusting them.",
-        file=sys.stderr,
+    request = DesignRequest(
+        sequence_text=args.sequence,
+        fasta_path=args.fasta,
+        preset=args.preset,
+        variants_path=args.variants,
+        background_path=args.background,
+        effector=args.effector,
+        assay=args.assay,
+        task=args.task,
+        spacer_length=args.spacer_length,
+        max_mismatches=args.max_mismatches,
+        min_accessibility=args.min_accessibility,
+        conserved_mismatches=args.conserved_mismatches,
+        panel_size=args.panel_size,
+        expression=args.expression,
+        organism=args.organism,
+        genome_build=args.genome_build,
+        annotation=args.annotation,
+        use_structure=not args.no_structure,
+        use_signal=not args.no_signal,
+        seed=args.seed,
+        calibration_n=args.calibration_n,
+        calibration_noise=args.calibration_noise,
     )
+    try:
+        outcome = run_request(request)
+    except DesignRequestError as exc:
+        print(f"cannot run this design: {exc}", file=sys.stderr)
+        return 2
 
-    contexts = [
-        DesignContext(
-            "reference", world, ExhaustiveScanIndex(world, universes),
-            {record.name: record.name for record in records},
-        )
-    ]
+    for note in outcome.notes:
+        print(note, file=sys.stderr)
 
-    # ---------------- variants (FR7.1, FR7.2) ----------------
-    if args.variants:
-        from .services.conservation import summarize_conservation, variant_contexts
+    data = outcome.report
+    print()
+    print(f"verdicts: {data['verdict_counts']}  "
+          f"review_rate={data['review_rate']:.0%}")
 
-        variant_records = read_fasta(args.variants)
-        primary = records[0]
-        combined = [primary] + list(variant_records)
-
-        # FR7.1 -- can a single shared guide exist at all, and where?
-        summary = summarize_conservation(
-            combined, spec.spacer_length, max_mismatches=args.conserved_mismatches
-        )
-        print(f"\nconservation ({len(variant_records)} variant(s)): {summary.summary()}")
-        if not summary.designable:
-            print("  proceeding anyway; robustness will show which variants each "
-                  "guide loses.", file=sys.stderr)
-
-        # FR7.2 -- one context per variant, so `robustness` (the minimum
-        # required coverage across contexts) flags any guide that loses one.
-        contexts = variant_contexts(
-            combined, universes, target_id=primary.name,
-            biotype=Universe.NCRNA, expression=args.expression,
-        )
-
-    report = run_design(spec, contexts, registry, calibration,
-                        panel_size=args.panel_size)
-
-    # ---------------- output (FR8.1, FR8.2, FR8.3) ----------------
-    data = report.to_dict()
-    print(f"\nverdicts: {data['verdict_counts']}  "
-          f"review_rate={report.review_rate:.0%}")
     rows = data["ranked"][: args.top]
     if rows:
         robust = "robust" if args.variants else ""
-        print(f"\n{'rank':>4}  {'spacer':32s} {'score':>6} {'access':>7} "
+        print()
+        print(f"{'rank':>4}  {'spacer':32s} {'score':>6} {'access':>7} "
               f"{'dG/nt':>7} {'signal':>7} {'PFS':>4} {robust:>7}")
         for row in rows:
-            # FR7.2: robustness is the worst required coverage across the
-            # variant contexts, so a guide that loses one shows it here.
             worst = (f"{row['metrics']['robustness']:.3f}" if args.variants else "")
             print(f"{row['rank']:>4}  {row['spacer']:32s} {row['score']:>6.2f} "
                   f"{str(row['accessibility']):>7} {str(row['duplex_dg_per_nt']):>7} "
                   f"{str(row['predicted_signal']):>7} {str(row['pfs_3prime']):>4} "
                   f"{worst:>7}")
     else:
-        print("\nno guide cleared the gate.")
+        print()
+        print("no guide cleared the gate.")
         for shortfall in data["shortfalls"]:
             print(f"  ! {shortfall}")
 
     if args.out:
-        # FR8.2/FR8.4/NFR5/NFR6 -- one self-contained page: sortable, filterable,
-        # with an accessibility track and an explanation of every score.
         from .services.report_html import AccessibilityTrack, write_report
 
         tracks = []
-        profile_source = getattr(accessibility, "unpaired_profile", None)
-        if profile_source is not None and records:
-            # Mark the top-ranked guides on the track so a reader can see
-            # whether the ranking simply followed the open regions.
-            marks = [
-                (row.get("start", 0), spec.spacer_length,
-                 f"#{row['rank']} {row['guide_id']}")
-                for row in data["ranked"][: args.track_guides]
+        if outcome.profile:
+            tracks = [
+                AccessibilityTrack(
+                    name=f"{outcome.records[0].name} "
+                         f"({len(outcome.records[0].sequence)} nt)",
+                    profile=outcome.profile,
+                    guides=[
+                        (r.get("start", 0), outcome.spec.spacer_length,
+                         f"#{r['rank']} {r['guide_id']}")
+                        for r in data["ranked"][: args.track_guides]
+                    ],
+                )
             ]
-            try:
-                tracks = [
-                    AccessibilityTrack(
-                        name=f"{records[0].name} ({len(records[0].sequence)} nt)",
-                        profile=profile_source(records[0].sequence),
-                        guides=marks,
-                    )
-                ]
-            except Exception:
-                tracks = []
-
         html_path = write_report(
             data,
             pathlib.Path(args.out) / f"{args.stem}.html",
-            title=f"Cas13 guide design - {records[0].name}",
+            title=f"Cas13 guide design - {outcome.records[0].name}",
             subtitle=(
-                f"{effector.value} / {assay.value} / {spec.spacer_length} nt spacer  |  "
-                f"spec {spec.fingerprint()}"
+                f"{request.effector} / {request.assay} / "
+                f"{outcome.spec.spacer_length} nt spacer  |  "
+                f"spec {outcome.spec.fingerprint()}"
             ),
             tracks=tracks,
-            notes=[
-                "The bundled calibration is SYNTHETIC. Bounds here are "
-                "exercisable, not earned - supply real screen data before "
-                "relying on them.",
-                "Predicted signal is RELATIVE and comparable only within this "
-                "run: the kinetic constants shipped by default are placeholders.",
-            ],
+            notes=outcome.notes,
         )
         written = write_exports(data, args.out, stem=args.stem)
         written["html"] = html_path
-        print("\nwrote:")
+        print()
+        print("wrote:")
         for label, path in written.items():
             print(f"  {label:9s} {path}")
     return 0 if rows else 1
+
+
+def _serve(args: argparse.Namespace) -> int:
+    """Serve the browser UI (FR1.2, NFR2)."""
+    from .services.webapp import serve
+
+    return serve(host=args.host, port=args.port, open_browser=not args.no_browser)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -458,6 +302,15 @@ def main(argv: list[str] | None = None) -> int:
     design.add_argument("--track-guides", type=int, default=5,
                         help="how many top guides to mark on the accessibility track")
     design.set_defaults(func=_design)
+
+    serve = sub.add_parser("serve", help="serve the browser UI (FR1.2, NFR2)")
+    serve.add_argument("--host", default="127.0.0.1",
+                       help="bind address; anything but localhost is exposed to "
+                            "the network and this is a development server")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--no-browser", action="store_true",
+                       help="do not open a browser window")
+    serve.set_defaults(func=_serve)
 
     args = parser.parse_args(argv)
     return args.func(args)
