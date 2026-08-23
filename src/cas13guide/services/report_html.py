@@ -83,6 +83,7 @@ h1{font-size:1.5rem;margin:0 0 4px} h2{font-size:1.1rem;margin:34px 0 10px}
 .card .n{font-size:1.6rem;font-weight:650} .card .l{color:var(--muted);font-size:.8rem}
 .note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--review);
 border-radius:8px;padding:12px 14px;margin:16px 0;font-size:.9rem;color:var(--muted)}
+.note.crit{border-left-color:var(--fail)}
 .controls{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
 input,select{background:var(--card);color:var(--fg);border:1px solid var(--line);
 border-radius:8px;padding:8px 10px;font:inherit;font-size:.9rem}
@@ -319,7 +320,13 @@ def render_report(
             f"<tbody>{rows}</tbody></table></div>"
         )
 
-    note_html = "".join(f'<div class="note">{html.escape(n)}</div>' for n in notes)
+    # Limitations lead, above the table. A reader who stops after the first
+    # screen should have seen what the run did not check, not the ranking.
+    note_html = "".join(
+        f'<div class="note{" crit" if n.upper().startswith("CRITICAL") else ""}">'
+        f"{html.escape(n)}</div>"
+        for n in notes
+    )
     provenance = json.dumps(report.get("provenance", {}), indent=2, default=str)
 
     return f"""<!doctype html>

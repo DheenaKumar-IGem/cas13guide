@@ -123,10 +123,30 @@ class TestDesignRoundTrip(ServerTestCase):
         self.assertEqual(status, 200)
         self.assertIn("uploaded", body)
 
-    def test_the_standing_caveats_are_always_shown(self):
+    def test_the_runs_limitations_are_shown_with_the_results(self):
+        """A user must not reach a guide table without seeing what was not checked.
+
+        These are derived from the run rather than a fixed banner, so this also
+        pins that the derivation reaches the page at all.
+        """
         _status, _headers, body = self.form_post({"sequence": TARGET})
+        # the calibration this server seeds is synthetic, and it says so
         self.assertIn("SYNTHETIC", body)
-        self.assertIn("RELATIVE", body)
+        # the built-in activity model is a heuristic, and it says so
+        self.assertIn("heuristic", body.lower())
+        # and off-target scope is bounded by what was loaded
+        self.assertIn("Anything not loaded is", body)
+
+    def test_a_limitation_that_does_not_apply_is_not_shown(self):
+        """The point of deriving them: no warning for a model that is not in use."""
+        _status, _headers, body = self.form_post(
+            {"sequence": TARGET, "assay": "cell_culture_knockdown", "task": "knockdown"}
+        )
+        # collateral IS a hazard for a knockdown assay, so that one appears ...
+        self.assertIn("Collateral", body)
+        # ... and the placeholder-signal-constants warning, which is a detection
+        # concern only, does not.
+        self.assertNotIn("PLACEHOLDER kinetic constants", body)
 
     def test_a_preset_can_be_designed_against(self):
         status, _headers, body = self.form_post(

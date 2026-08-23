@@ -134,10 +134,22 @@ class TestMalformedInputSaysWhatAndWhere(unittest.TestCase):
                 parse_sequence_input(junk)
 
 
+def data_lines(text: str) -> list[str]:
+    """The rows a consumer sees, i.e. everything past the provenance comments."""
+    return [line for line in text.splitlines() if not line.startswith("#")]
+
+
 class TestExport(unittest.TestCase):
     """FR8.3 -- CSV and FASTA export of ranked candidates."""
 
     REPORT = {
+        "spec_fingerprint": "abc123",
+        "verdict_counts": {"PASS": 0, "REVIEW": 1, "FAIL": 2},
+        "provenance": {"records": [
+            {"kind": "model", "name": "activity", "version": "model/heuristic-cas13/v1"},
+            {"kind": "search", "name": "bound", "version": "index/exhaustive-scan/v1"},
+        ]},
+        "shortfalls": [],
         "ranked": [
             {
                 "rank": 1, "guide_id": "g_abc", "spacer": "AUGCAUGCAUGCAUGCAUGCAU",
@@ -160,19 +172,19 @@ class TestExport(unittest.TestCase):
 
     def test_csv_has_a_stable_declared_header(self):
         text = ranked_to_csv(self.REPORT)
-        header = text.splitlines()[0].split(",")
+        header = data_lines(text)[0].split(",")
         for column in RANKED_COLUMNS:
             self.assertIn(column, header)
         self.assertIn("required_coverage", header)
 
     def test_csv_carries_the_verdict_and_tier(self):
         """A REVIEW row must be identifiable as one in the exported file."""
-        row = ranked_to_csv(self.REPORT).splitlines()[1]
+        row = data_lines(ranked_to_csv(self.REPORT))[1]
         self.assertIn("REVIEW", row)
         self.assertIn("R2", row)
 
     def test_list_valued_columns_are_flattened_not_repr_d(self):
-        row = ranked_to_csv(self.REPORT).splitlines()[1]
+        row = data_lines(ranked_to_csv(self.REPORT))[1]
         self.assertIn("expression_unknown", row)
         self.assertNotIn("[", row)
 
@@ -198,8 +210,51 @@ class TestExport(unittest.TestCase):
 
     def test_an_empty_ranking_still_writes_a_valid_header(self):
         text = ranked_to_csv({"ranked": []})
-        self.assertEqual(len(text.splitlines()), 1)
+        self.assertEqual(len(data_lines(text)), 1)
         self.assertIn("guide_id", text)
+
+
+class TestProvenanceTravelsWithTheFile(unittest.TestCase):
+    """NFR4 -- an exported file outlives the session that produced it.
+
+    Without a header it is a table of numbers with no model version, no
+    parameters and no statement of what was not checked, and it looks exactly
+    like a table that has all three.
+    """
+
+    def test_the_csv_header_is_comment_prefixed_so_readers_skip_it(self):
+        text = ranked_to_csv(TestExport.REPORT)
+        self.assertTrue(text.startswith("# "))
+        # pandas' comment='#' / R's comment.char='#' see a clean table
+        self.assertEqual(data_lines(text)[0].split(",")[0], "rank")
+
+    def test_it_names_the_version_fingerprint_and_models(self):
+        text = ranked_to_csv(TestExport.REPORT)
+        self.assertIn("cas13guide", text)
+        self.assertIn("abc123", text)                     # spec fingerprint
+        self.assertIn("model: activity", text)
+
+    def test_limitations_travel_with_the_file(self):
+        text = ranked_to_csv(TestExport.REPORT, limitations=["CRITICAL: nothing checked"])
+        self.assertIn("limitation: CRITICAL: nothing checked", text)
+
+    def test_the_fasta_header_uses_the_fasta_comment_character(self):
+        """'#' would be read as sequence by some parsers; ';' is the FASTA one."""
+        text = ranked_to_fasta(TestExport.REPORT, limitations=["INFO: x"])
+        self.assertTrue(text.startswith("; "))
+        self.assertIn("; limitation: INFO: x", text)
+
+    def test_an_exported_fasta_still_parses(self):
+        """The round trip the header could most easily have broken."""
+        text = ranked_to_fasta(TestExport.REPORT, limitations=["INFO: x"])
+        [record] = parse_fasta(text)
+        self.assertEqual(record.name, "g_abc")
+        self.assertEqual(record.sequence, "AUGCAUGCAUGCAUGCAUGCAU")
+
+    def test_comment_lines_are_skipped_by_the_parser_generally(self):
+        records = parse_fasta("; a comment\n# another\n>r1\nAUGC\n; trailing\n")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].sequence, "AUGC")
 
 
 class TestReviewGuidesReachTheRanking(unittest.TestCase):

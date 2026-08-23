@@ -36,17 +36,13 @@ from .fasta import SequenceInputError, SequenceRecord, parse_sequence_input, rea
 #: that stops a suspiciously clean off-target report from passing.
 ALL_UNIVERSES: frozenset[Universe] = frozenset(Universe)
 
-#: Said out loud on every run that uses the built-in calibration. Neither of
-#: these is a number to put in a paper, and both look exactly like numbers that
-#: are.
-STANDING_CAVEATS: tuple[str, ...] = (
-    "The bundled calibration is SYNTHETIC. Bounds here are exercisable, not "
-    "earned -- supply real screen data via `cas13guide train` before relying "
-    "on them.",
-    "Predicted signal is RELATIVE and comparable only within this run: the "
-    "kinetic constants shipped by default are placeholders, so no absolute "
-    "fluorescence figure is offered.",
-)
+#: Kept as the module's public name for callers that imported it, but the
+#: caveats a run actually carries are now *derived* from that run -- see
+#: ``services/limitations.py``. A fixed banner has two failure modes and this
+#: package would hit both: it keeps warning about placeholder constants after
+#: you have supplied real ones, and it stays silent about a heuristic index
+#: because nobody remembered to add the line.
+STANDING_CAVEATS: tuple[str, ...] = ()
 
 
 class DesignRequestError(ValueError):
@@ -94,6 +90,9 @@ class DesignOutcome:
     records: list[SequenceRecord]
     spec: ResolvedDesignSpec
     notes: list[str] = field(default_factory=list)
+    #: What this run could not establish, derived from the models and bounds it
+    #: actually used. See ``services/limitations.py``.
+    limitations: tuple = ()
     #: Per-nucleotide unpaired probability of the primary target, when a
     #: structural model was available. Drives the report's accessibility track.
     profile: tuple[float, ...] = ()
@@ -228,6 +227,10 @@ def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
 
     rng = random.Random(request.seed)
     calibration = CalibrationService()
+    # Marked rather than described. services/limitations.py reads this flag, so
+    # the warning appears because the calibration *is* synthetic, not because a
+    # caller remembered to add a banner -- and it disappears when it stops being.
+    calibration.synthetic = True
     for regime in ("mm0", "mm1-2", "mm3+"):
         key = CalibrationService.stratum_key(
             spec.profile.effector.value, spec.profile.assay.value, regime
@@ -245,7 +248,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
     from .indexes import ExhaustiveScanIndex
     from .transcriptome import Locus, Transcriptome
 
-    notes: list[str] = list(STANDING_CAVEATS)
+    notes: list[str] = []
     try:
         records = _read_records(request)
     except SequenceInputError as exc:
@@ -289,11 +292,14 @@ def run_request(request: DesignRequest) -> DesignOutcome:
             biotype=Universe.NCRNA, expression=request.expression,
         )
 
+    calibration_service = seed_calibration(request, spec)
     report = run_design(
-        spec, contexts, registry, seed_calibration(request, spec),
+        spec, contexts, registry, calibration_service,
         panel_size=request.panel_size,
     )
     data = report.to_dict()
+    weakest_bound = report.search_bound
+    gaps = report.universe_gaps
 
     profile: tuple[float, ...] = ()
     source = getattr(registry.accessibility, "unpaired_profile", None)
@@ -303,6 +309,18 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         except Exception:
             profile = ()
 
+    from .limitations import as_lines, limitations_for_run
+
+    found = limitations_for_run(
+        spec,
+        registry=registry,
+        calibration=calibration_service,
+        bound=weakest_bound,
+        universe_gaps=gaps,
+    )
+    notes = as_lines(found) + notes
+
     return DesignOutcome(
-        report=data, records=records, spec=spec, notes=notes, profile=profile
+        report=data, records=records, spec=spec, notes=notes, profile=profile,
+        limitations=found,
     )

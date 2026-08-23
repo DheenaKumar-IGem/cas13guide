@@ -29,6 +29,9 @@ from typing import Iterable, Iterator, Sequence
 
 from ..util.seq import VALID_RNA
 
+#: Line prefixes that mark a comment rather than sequence data.
+_COMMENT_PREFIXES = frozenset(";#")
+
 #: Characters stripped as formatting rather than treated as content.
 _IGNORED = frozenset(" \t\r\n\v\f-*")
 
@@ -108,6 +111,13 @@ def parse_fasta(text: str) -> list[SequenceRecord]:
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
+            continue
+        if stripped[0] in _COMMENT_PREFIXES:
+            # ';' is the original FASTA comment character and '#' is the
+            # widespread convention. Both must be skipped rather than parsed as
+            # sequence -- not least because this module writes a ';'-prefixed
+            # provenance header itself, so treating them as data made the
+            # exports unreadable by the parser that produced them.
             continue
         if stripped.startswith(">"):
             flush()
@@ -234,8 +244,67 @@ def ranked_rows(report_dict: dict) -> list[dict]:
     return rows
 
 
-def ranked_to_csv(report_dict: dict) -> str:
-    """Ranked candidates as CSV text (FR8.3)."""
+def provenance_lines(
+    report_dict: dict,
+    subtitle: str = "",
+    limitations: Sequence[str] = (),
+) -> list[str]:
+    """Everything needed to know how a file was produced (NFR4).
+
+    An exported CSV outlives the session that made it. Without this it is a
+    table of numbers carrying no model version, no parameters and no statement
+    of what was not checked -- and it looks exactly like a table that does carry
+    those things. The limitations travel with it rather than staying in the app,
+    because the person reading the file in six months is precisely the person
+    who cannot see the app.
+    """
+    from .. import __version__
+
+    lines = [f"cas13guide {__version__}"]
+    if subtitle:
+        lines.append(subtitle)
+    fingerprint = report_dict.get("spec_fingerprint")
+    if fingerprint:
+        lines.append(f"spec fingerprint: {fingerprint}")
+    counts = report_dict.get("verdict_counts") or {}
+    if counts:
+        lines.append(
+            "verdicts: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+            + f"; exported={len(report_dict.get('ranked', []))}"
+        )
+    for record in (report_dict.get("provenance") or {}).get("records", []):
+        if record.get("kind") in ("model", "calibration", "search"):
+            lines.append(f"{record.get('kind')}: {record.get('name')} = {record.get('version')}")
+    for shortfall in report_dict.get("shortfalls") or []:
+        lines.append(f"shortfall: {shortfall}")
+    for limitation in limitations:
+        lines.append(f"limitation: {limitation}")
+    return lines
+
+
+def provenance_header(
+    report_dict: dict,
+    subtitle: str = "",
+    limitations: Sequence[str] = (),
+    prefix: str = "# ",
+) -> str:
+    return "".join(
+        f"{prefix}{line}\n"
+        for line in provenance_lines(report_dict, subtitle, limitations)
+    )
+
+
+def ranked_to_csv(
+    report_dict: dict,
+    subtitle: str = "",
+    limitations: Sequence[str] = (),
+) -> str:
+    """Ranked candidates as CSV, behind a provenance header (FR8.3, NFR4).
+
+    The header is comment-prefixed, which every reader this is aimed at
+    (pandas' ``comment='#'``, R's ``read.csv(comment.char='#')``, a spreadsheet
+    import dialog) can skip, and which none of them mistakes for data.
+    """
     rows = ranked_rows(report_dict)
     columns = list(RANKED_COLUMNS) + [
         "required_coverage",
@@ -243,6 +312,7 @@ def ranked_to_csv(report_dict: dict) -> str:
         "cumulative_burden",
     ]
     out = io.StringIO()
+    out.write(provenance_header(report_dict, subtitle, limitations))
     writer = csv.DictWriter(out, fieldnames=columns, lineterminator="\n")
     writer.writeheader()
     for row in rows:
@@ -250,7 +320,12 @@ def ranked_to_csv(report_dict: dict) -> str:
     return out.getvalue()
 
 
-def ranked_to_fasta(report_dict: dict, limit: int | None = None) -> str:
+def ranked_to_fasta(
+    report_dict: dict,
+    limit: int | None = None,
+    subtitle: str = "",
+    limitations: Sequence[str] = (),
+) -> str:
     """Ranked spacers as FASTA (FR8.3).
 
     The description carries the numbers a wet-lab notebook needs beside the
@@ -272,7 +347,11 @@ def ranked_to_fasta(report_dict: dict, limit: int | None = None) -> str:
                 description=" ".join(parts),
             )
         )
-    return format_fasta(records)
+    # ';' is the FASTA comment character; '#' is read as sequence by some
+    # parsers, and a provenance line concatenated onto a spacer is the kind
+    # of corruption that survives review.
+    return (provenance_header(report_dict, subtitle, limitations, prefix="; ")
+            + format_fasta(records))
 
 
 def controls_to_fasta(report_dict: dict) -> str:
@@ -293,15 +372,19 @@ def controls_to_fasta(report_dict: dict) -> str:
 
 
 def write_exports(
-    report_dict: dict, directory: str | Path, stem: str = "candidates"
+    report_dict: dict,
+    directory: str | Path,
+    stem: str = "candidates",
+    subtitle: str = "",
+    limitations: Sequence[str] = (),
 ) -> dict[str, Path]:
     """Write the CSV and FASTA exports side by side. Returns the paths written."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
     for label, suffix, text in (
-        ("csv", ".csv", ranked_to_csv(report_dict)),
-        ("fasta", ".fasta", ranked_to_fasta(report_dict)),
+        ("csv", ".csv", ranked_to_csv(report_dict, subtitle, limitations)),
+        ("fasta", ".fasta", ranked_to_fasta(report_dict, None, subtitle, limitations)),
         ("controls", "_controls.fasta", controls_to_fasta(report_dict)),
     ):
         path = directory / f"{stem}{suffix}"

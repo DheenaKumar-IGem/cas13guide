@@ -20,7 +20,7 @@ from ..contract.enums import TargetClass, Verdict
 from ..contract.spec import ResolvedDesignSpec
 from ..metrics.aggregate import pair_hazard
 from ..models.evidence import Candidate, GuideAssessment
-from ..services.indexes import SearchIndex
+from ..services.indexes import ExhaustivenessBound, SearchIndex
 from ..services.provenance import ProvenanceLedger
 from ..util.seq import gc_fraction
 from .b_qc import qc_candidate
@@ -203,6 +203,12 @@ class DesignReport:
     #: should see, distinct from the scalar ranking below it.
     pareto_frontier: tuple[str, ...] = field(default_factory=tuple)
     shortfalls: tuple[str, ...] = field(default_factory=tuple)
+    #: The weakest bound the search actually proved, and the universes the assay
+    #: needed but the search did not cover. Carried structurally rather than only
+    #: as the prose claim in the ledger, so a caller reasoning about scope does
+    #: not have to parse a sentence back into facts.
+    search_bound: "ExhaustivenessBound | None" = None
+    universe_gaps: frozenset = frozenset()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -329,6 +335,8 @@ def build_report(
     ledger: ProvenanceLedger,
     shortfalls: tuple[str, ...] = (),
     pareto_frontier: tuple[str, ...] = (),
+    search_bound: ExhaustivenessBound | None = None,
+    universe_gaps: frozenset = frozenset(),
 ) -> DesignReport:
     counts = {v.value: 0 for v in Verdict}
     for a in assessments:
@@ -353,4 +361,6 @@ def build_report(
         validation_plan=_validation_plan(panel, controls, spec),
         pareto_frontier=pareto_frontier,
         shortfalls=shortfalls,
+        search_bound=search_bound,
+        universe_gaps=universe_gaps,
     )

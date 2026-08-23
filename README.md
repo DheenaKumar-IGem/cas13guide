@@ -68,9 +68,45 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 441 tests
+python -m unittest discover -s tests -t tests    # 467 tests
 pytest                              # same suite under pytest
 ```
+
+## What a run did not check
+
+`services/limitations.py` returns the limitations of **this** run as data —
+severity-tagged, with a source where the claim is about biology rather than
+about this code. They lead the HTML report above the guide table, and they are
+written into the provenance header of every CSV and FASTA export, so a file that
+outlives the session still says what it did not check.
+
+They are **derived from the run**, not a fixed banner. That is the whole point:
+a static list keeps warning about placeholder kinetic constants after you have
+supplied real ones, and stays silent about a heuristic off-target index because
+nobody remembered to add the line. Either failure trains the reader to skim,
+which is worse than saying nothing. So the same code produces different
+limitations for different runs:
+
+| Run | Includes | Omits |
+|---|---|---|
+| detection, built-in models | `provisional-kinetics` | `collateral-not-predicted` (collateral is the readout here) |
+| knockdown, built-in models | `collateral-not-predicted` | `provisional-kinetics` (the run does not rank on signal) |
+| fitted model, real probing track | — | `heuristic-activity-model`, `accessibility-is-predicted` |
+
+Each one is tested in both directions — it appears when the condition holds and
+is absent when it does not — because a warning that fires unconditionally is
+indistinguishable from one that is broken.
+
+### Exports carry their own provenance
+
+Every CSV and FASTA leaves with a comment-prefixed header naming the version,
+the spec fingerprint, every model version, any shortfalls and the limitations
+above. Without it an exported table is numbers with no record of how they were
+made, and it looks exactly like a table that has one. The CSV uses `#` (which
+pandas' `comment='#'` and R's `comment.char='#'` skip) and the FASTA uses `;`,
+the FASTA comment character — `#` would be read as sequence by some parsers, and
+a provenance line concatenated onto a spacer is the kind of corruption that
+survives review. The parser skips both, so an exported FASTA still reads back.
 
 ## Requirement coverage
 
@@ -454,7 +490,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-441 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+467 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -527,6 +563,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_limitations.py` | each warning appears exactly when its condition holds, and not otherwise |
 | `test_webapp.py` | upload and paste round trips, defaults shared with the CLI, errors as messages not tracebacks |
 | `test_blast.py` | short-query flags, strand and length filtering, wobble re-scoring, never claims exhaustiveness |
 | `test_report_html.py` | balanced markup, no external requests, sort keys on every cell, escaping of untrusted names, score glossary completeness |

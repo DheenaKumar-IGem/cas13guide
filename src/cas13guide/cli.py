@@ -211,7 +211,14 @@ def _design(args: argparse.Namespace) -> int:
             tracks=tracks,
             notes=outcome.notes,
         )
-        written = write_exports(data, args.out, stem=args.stem)
+        subtitle = (
+            f"{request.effector} / {request.assay} / "
+            f"{outcome.spec.spacer_length} nt spacer"
+        )
+        written = write_exports(
+            data, args.out, stem=args.stem,
+            subtitle=subtitle, limitations=outcome.notes,
+        )
         written["html"] = html_path
         print()
         print("wrote:")

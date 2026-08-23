@@ -325,4 +325,6 @@ def run_design(
         assessments, ranked, panel, controls, spec, ledger,
         shortfalls=tuple(telemetry.shortfalls),
         pareto_frontier=frontier_ids,
+        search_bound=bound,
+        universe_gaps=universe_gaps,
     )
