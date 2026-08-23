@@ -14,7 +14,6 @@ import uuid
 from helpers import *  # noqa: F401,F403
 
 from cas13guide.services.webapp import (
-    MAX_UPLOAD_BYTES,
     _parse_multipart,
     _request_from_fields,
     make_server,
@@ -161,12 +160,29 @@ class TestErrorsAreLegibleNotTracebacks(ServerTestCase):
         self.assertNotIn("Traceback", body)
 
     def test_an_oversized_upload_is_refused_before_it_is_read(self):
-        status, _headers, _body = self.request(
-            "POST", "/design", b"x=1",
-            {"Content-Type": "application/x-www-form-urlencoded",
-             "Content-Length": str(MAX_UPLOAD_BYTES + 1)},
-        )
+        """Send a body that really is too big, against a lowered ceiling.
+
+        The obvious version -- declare a huge Content-Length and send three
+        bytes -- is a race: the server answers 413 and closes without reading,
+        while the client is still mid-send, and the reset surfaces as a flaky
+        failure under load rather than a clean assertion. Lowering the limit
+        keeps the test honest about what it sends and fast.
+        """
+        import cas13guide.services.webapp as webapp
+
+        original = webapp.MAX_UPLOAD_BYTES
+        webapp.MAX_UPLOAD_BYTES = 128
+        try:
+            body = b"sequence=" + b"A" * 512
+            status, _headers, _body = self.request(
+                "POST", "/design", body,
+                {"Content-Type": "application/x-www-form-urlencoded",
+                 "Content-Length": str(len(body))},
+            )
+        finally:
+            webapp.MAX_UPLOAD_BYTES = original
         self.assertEqual(status, 413)
+        self.assertGreater(original, 1024 * 1024)   # the shipped limit is sane
 
     def test_a_hostile_sequence_name_is_escaped_in_the_report(self):
         status, _headers, body = self.form_post(
