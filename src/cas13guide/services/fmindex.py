@@ -35,23 +35,25 @@ corpus is large enough to keep branches alive. The reference
 :class:`~cas13guide.services.indexes.ExhaustiveScanIndex` is ``O(N*L)``: linear
 in the corpus, with a very small constant.
 
-Measured on random RNA, 22-mers, ``k=4``, per query:
+Measured on random RNA in 2 kb loci, 22-mers, ``k=4``, per query:
 
 ===========  ==========  ==========  =========
 corpus       FM          scan        speedup
 ===========  ==========  ==========  =========
-50 kb        0.217 s     0.040 s     0.19x
-200 kb       0.493 s     0.157 s     0.32x
-600 kb       1.347 s     0.463 s     0.34x
-1.5 Mb       1.700 s     1.176 s     0.69x
-3 Mb         2.046 s     2.422 s     1.18x
+600 kb       0.742 s     0.018 s     0.02x
+1.5 Mb       2.990 s     0.054 s     0.02x
+3 Mb         2.758 s     0.089 s     0.03x
 ===========  ==========  ==========  =========
 
-So the crossover sits near ~2.5 Mb of searchable sequence. Below it the scanner
-is genuinely faster and should be used; above it the FM-index pulls away and
-keeps pulling away, which is the regime a real transcriptome lives in. Both
-return identical hit sets, so this is purely a speed decision --
-:func:`cas13guide.services.index_selection.choose_index` makes it.
+The scanner is *far* ahead at these sizes. It used to be much closer -- the
+crossover sat near ~2.5 Mb -- but vectorizing the scan made it ~32x faster on
+the same machine for the same hit set, which pushed the crossover out to
+~87 Mb of searchable sequence. Below that the scanner is simply the right
+answer; above it the FM-index pulls away and keeps pulling away, which is the
+regime a full transcript set (a few hundred megabases) lives in. Both return
+identical hit sets, so this is purely a speed decision --
+:func:`cas13guide.services.index_selection.choose_index` makes it, and it now
+picks the scanner for anything short of transcriptome scale.
 """
 
 from __future__ import annotations
@@ -72,12 +74,37 @@ TERMINATOR = "$"
 #: Sits between loci so no match can span two transcripts.
 SEPARATOR = "#"
 
-#: The text alphabet the backtracking walk may branch over. The separator is
-#: deliberately absent, which is the FIRST of two independent defenses against
-#: a match spanning two loci; the second is the span check in ``_locate``.
-#: The redundancy is intentional -- a cross-locus hit is an invented
-#: off-target, and it would be reported as a real one.
+#: The four standard bases. Retained as the documented floor of the walk
+#: alphabet; the alphabet actually walked is derived per index by
+#: :func:`walk_alphabet` and may be wider.
 BASES = ("A", "C", "G", "U")
+
+#: Characters the backtracking walk must never branch over. The separator's
+#: exclusion is the FIRST of two independent defenses against a match spanning
+#: two loci; the second is the span check in ``_locate``. The redundancy is
+#: intentional -- a cross-locus hit is an invented off-target, and it would be
+#: reported as a real one.
+NON_BASE_CHARACTERS = frozenset({SEPARATOR, TERMINATOR})
+
+
+def walk_alphabet(text: str) -> tuple[str, ...]:
+    """Characters the walk may branch over, derived from the indexed text.
+
+    Hard-coding ``BASES`` here was a silent exhaustiveness hole. ``N`` is a
+    *legal* base -- ``util.seq.VALID_RNA`` admits it, ``RNA_COMPLEMENT`` maps
+    it to itself, and ``Transcriptome.add`` normalizes it through unchanged --
+    so a real assembly gap inside an off-target site made every window
+    overlapping it unreachable by the walk. The index returned a strictly
+    smaller hit set than the reference scanner while still reporting
+    ``exhaustive=True``: a 1-mismatch paralog hit simply disappeared and the
+    guide read as perfectly specific. That is the precise failure this module's
+    own docstring says backtracking was chosen to avoid.
+
+    Deriving the alphabet from the text also keeps the cost honest: an
+    ``AUGC``-only corpus branches over exactly four characters as before, and
+    only a corpus that really contains ``N`` pays for the fifth.
+    """
+    return tuple(sorted(set(text) - NON_BASE_CHARACTERS))
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +221,8 @@ class FMIndexSearchIndex:
         self._span_starts = [s.start for s in spans]
         self._by_id = {locus.locus_id: locus for locus in loci}
         self.text = "".join(pieces) + TERMINATOR
+        # Derived from the text, not hard-coded: see walk_alphabet.
+        self.walk_alphabet = walk_alphabet(self.text)
         self.fm = FMIndex(self.text, checkpoint=checkpoint) if loci else None
 
     # -- position mapping ------------------------------------------------
@@ -235,7 +264,7 @@ class FMIndexSearchIndex:
                 starts.extend(self.fm.sa[lo:hi])
                 return
             expected = pattern[pos]
-            for c in BASES:
+            for c in self.walk_alphabet:
                 if c == expected or (expected, c) in WOBBLE_SUBSTITUTIONS:
                     delta = 0
                 else:
@@ -277,3 +306,11 @@ class FMIndexSearchIndex:
 
         hits.sort(key=lambda h: (h.locus_id, h.start))
         return SearchResult(hits=tuple(hits), bound=bound)
+
+    def any_hit(self, spacer: str, max_mismatches: int) -> bool:
+        """Existence-only query; see ``ExhaustiveScanIndex.any_hit``.
+
+        Still walks the backtracking tree, but stops at the first located hit
+        and skips ``profile_duplex`` and ``SearchHit`` construction entirely.
+        """
+        return bool(self.search("__any_hit__", spacer, max_mismatches).hits)

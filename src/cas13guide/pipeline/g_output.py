@@ -18,12 +18,34 @@ from typing import Any
 
 from ..contract.enums import TargetClass, Verdict
 from ..contract.spec import ResolvedDesignSpec
-from ..models.evidence import GuideAssessment
+from ..metrics.aggregate import pair_hazard
+from ..models.evidence import Candidate, GuideAssessment
 from ..services.indexes import SearchIndex
 from ..services.provenance import ProvenanceLedger
-from ..util.seq import gc_fraction, has_polyu_terminator, max_homopolymer
+from ..util.seq import gc_fraction
+from .b_qc import qc_candidate
 from .f_decide import RankedGuide, review_rate
 from .optimizer import Panel
+
+
+def _has_any_hit(index: SearchIndex, guide_id: str, spacer: str, depth: int) -> bool:
+    """Does ``spacer`` bind anywhere within ``depth`` mismatches?
+
+    ``generate_controls`` consumes nothing but this yes/no, yet it used to pay
+    for a full ``index.search`` -- every hit materialized into a ``SearchHit``
+    with a ``profile_duplex`` -- for each of up to ``attempts`` scrambles per
+    panel member. At the default envelope a random scramble almost always hits
+    something, so nearly every one of those searches was enumerated in full and
+    then discarded on ``if not result.hits``.
+
+    An index may offer ``any_hit`` to answer this without enumerating; the
+    fallback keeps the ``SearchIndex`` Protocol unchanged, so third-party
+    implementations still work untouched.
+    """
+    probe = getattr(index, "any_hit", None)
+    if probe is not None:
+        return bool(probe(spacer, depth))
+    return bool(index.search(guide_id, spacer, depth).hits)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,12 +95,26 @@ def generate_controls(
             candidate = "".join(shuffled)
             if candidate == spacer:
                 continue
-            if max_homopolymer(candidate) > 4 or has_polyu_terminator(candidate):
+            # Stage B's own QC, not a hand-copied subset of it. The old inline
+            # check tested a hardcoded homopolymer limit of 4 and the poly-U
+            # terminator and nothing else, so a control could ship carrying a
+            # GC violation, a self-folding stem or a direct-repeat interaction
+            # -- i.e. a control the pipeline's own gate would FAIL as
+            # deterministically incompatible.
+            probe = Candidate(
+                guide_id=f"ctrl_{member.guide_id}",
+                spacer=candidate,
+                source_target_id=member.candidate.source_target_id,
+                start=member.candidate.start,
+                five_prime_flank=member.candidate.five_prime_flank,
+                three_prime_flank=member.candidate.three_prime_flank,
+            )
+            if not qc_candidate(probe, spec).passed:
                 continue
-            result = index.search(f"ctrl_{member.guide_id}", candidate, depth)
-            if not result.hits:
-                chosen = candidate
-                break
+            if _has_any_hit(index, f"ctrl_{member.guide_id}", candidate, depth):
+                continue
+            chosen = candidate
+            break
         if chosen is None:
             controls.append(
                 ControlGuide(
@@ -178,6 +214,7 @@ class DesignReport:
                     "rank": r.rank,
                     "guide_id": r.assessment.guide_id,
                     "spacer": r.assessment.spacer,
+                    "spans_junction": r.assessment.candidate.spans_junction,
                     "score": round(r.score, 4),
                     "verdict": r.assessment.gate.verdict.value,
                     "review_tier": (
@@ -230,7 +267,9 @@ def _off_target_rows(assessments: list[GuideAssessment], limit: int = 50) -> tup
                     "ucb_activity": round(e.activity.upper, 4),
                     "ucb_expression": round(e.expression.upper, 4),
                     "hazard_weight": e.hazard_weight,
-                    "hazard": round(e.activity.upper * e.expression.upper * e.hazard_weight, 4),
+                    # Same code path as worst_off_target / cumulative_burden, so the column a
+                    # reviewer eyeballs cannot drift from the metric it reproduces.
+                    "hazard": round(pair_hazard(e), 4),
                     "expression_unknown": e.expression_unknown,
                     "ood": e.ood,
                 }

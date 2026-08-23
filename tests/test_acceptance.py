@@ -11,8 +11,15 @@ from cas13guide.simulate import simulate_screen
 def screen(**kw):
     # 40 transcripts so the calibration split gets >= 8 independent groups;
     # with fewer, conformal coverage is unreliable and the gate says so.
+    #
+    # step=4 rather than 8: at step=8 the calibration split leaves the mm3+
+    # regime with 19 rows, one short of MIN_STRATUM_N, so that stratum resolves
+    # to nothing and its test pairs are scored against the [0, 1] fallback --
+    # which "covers" all of them and scored a vacuous 1.000. A good screen has
+    # to be good in every regime it will be evaluated in, so the fixture is
+    # dense enough to calibrate all three (mm0/mm1-2/mm3+ get 265/93/42 rows).
     base = dict(
-        seed=21, step=8, signal_scale=10, transcript_effect_sd=0.8,
+        seed=21, step=4, signal_scale=10, transcript_effect_sd=0.8,
         noise_sd=0.2, n_transcripts=40, transcript_length=220,
     )
     base.update(kw)

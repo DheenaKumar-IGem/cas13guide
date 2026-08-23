@@ -159,5 +159,43 @@ class TestWetLabFeedback(unittest.TestCase):
         self.assertLess(after.width, before.width)
 
 
+
+class TestWetlabFeedbackCarriesItsIndependentUnit(unittest.TestCase):
+    """Feedback without a group label switches the group-adequacy check off.
+
+    ``_groups_adequate`` treats a stratum with zero group labels as
+    unjudgeable-and-therefore-acceptable. Since ``record_wetlab_result`` never
+    passed a group, the MIN_STRATUM_GROUPS guard disabled itself for exactly the
+    feedback path, and a bound built from one transcript's worth of wet-lab data
+    came back looking certified.
+    """
+
+    KEY = "RfxCas13d|cell_culture_knockdown|mm0"
+
+    def test_group_is_recorded_when_supplied(self):
+        calibration = CalibrationService()
+        for i in range(40):
+            record_wetlab_result(
+                calibration, self.KEY, 0.5, 0.55, group=f"ENST{i % 10:05d}"
+            )
+        self.assertEqual(calibration.describe()[self.KEY], 40)
+        self.assertEqual(calibration.describe_groups()[self.KEY], 10)
+
+    def test_too_few_groups_leaves_the_bound_uncertified(self):
+        calibration = CalibrationService()
+        for i in range(60):
+            record_wetlab_result(calibration, self.KEY, 0.5, 0.55, group="ENST00001")
+        self.assertTrue(
+            calibration.interval(0.5, self.KEY, 0.10).ood,
+            "one transcript of wet-lab data must not present itself as certified",
+        )
+
+    def test_the_parameter_stays_optional_for_existing_callers(self):
+        calibration = CalibrationService()
+        record_wetlab_result(calibration, self.KEY, 0.4, 0.42)
+        self.assertEqual(calibration.describe()[self.KEY], 1)
+        self.assertEqual(calibration.describe_groups()[self.KEY], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

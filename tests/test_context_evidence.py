@@ -4,6 +4,8 @@ import unittest
 
 from helpers import *  # noqa: F401,F403
 
+from cas13guide.contract.enums import TargetClass, Universe
+from cas13guide.contract.spec import HazardWeights
 from cas13guide.services.context import (
     SATURATION_K,
     abundance_factor,
@@ -55,6 +57,41 @@ class TestExpressionInterval(unittest.TestCase):
         iv = expression_interval(120.0, relative_uncertainty=0.3)
         self.assertLessEqual(iv.lower, iv.point)
         self.assertLessEqual(iv.point, iv.upper)
+
+
+
+class TestPartialHazardWeightsAreCompleted(unittest.TestCase):
+    """A partial override means "override these, keep the rest".
+
+    Pydantic *replaces* a ``default_factory`` dict rather than merging it, so
+    softening one biotype silently dropped every other biotype to the 1.0
+    fallback -- halving rRNA and mito hazard at the exact point the gate reads
+    it -- while overriding one intent class made ``weight_for`` raise
+    ``KeyError`` partway through stage D.
+    """
+
+    def test_a_partial_by_class_override_keeps_the_other_classes(self):
+        weights = HazardWeights(by_class={TargetClass.FORBIDDEN: 10.0})
+        self.assertEqual(weights.weight_for(TargetClass.FORBIDDEN, Universe.CODING), 10.0)
+        # the untouched classes keep their defaults instead of raising
+        self.assertEqual(weights.weight_for(TargetClass.AVOID, Universe.CODING), 1.0)
+        self.assertEqual(weights.weight_for(TargetClass.TOLERATED, Universe.CODING), 0.1)
+
+    def test_a_partial_by_biotype_override_does_not_deflate_the_risky_ones(self):
+        weights = HazardWeights(by_biotype={Universe.VIRAL: 0.5})
+        self.assertEqual(weights.weight_for(TargetClass.AVOID, Universe.VIRAL), 0.5)
+        # rRNA and mito must keep their elevated priors, not fall back to 1.0
+        self.assertEqual(weights.weight_for(TargetClass.AVOID, Universe.RRNA), 2.0)
+        self.assertEqual(weights.weight_for(TargetClass.AVOID, Universe.MITO), 1.5)
+
+    def test_an_unannotated_hit_still_carries_hazard(self):
+        weights = HazardWeights(by_class={TargetClass.FORBIDDEN: 10.0})
+        self.assertGreater(weights.weight_for(None, Universe.RRNA), 0.0)
+
+    def test_defaults_are_unchanged(self):
+        default = HazardWeights()
+        self.assertEqual(default.weight_for(TargetClass.FORBIDDEN, Universe.RRNA), 10.0)
+        self.assertEqual(default.weight_for(TargetClass.REQUIRED, Universe.CODING), 0.0)
 
 
 if __name__ == "__main__":

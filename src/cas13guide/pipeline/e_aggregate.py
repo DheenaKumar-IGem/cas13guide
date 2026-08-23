@@ -8,6 +8,7 @@ in :mod:`cas13guide.metrics.aggregate` and the decision rules in
 
 from __future__ import annotations
 
+from ..contract.enums import Universe
 from ..contract.spec import ResolvedDesignSpec
 from ..metrics.aggregate import build_metric_vector
 from ..models.evidence import Candidate, GuideAssessment, PairEvidence, QCResult
@@ -20,7 +21,7 @@ def assess_guides(
     qc_results: dict[str, QCResult],
     evidence_by_guide_and_context: dict[str, dict[str, tuple[PairEvidence, ...]]],
     bound: ExhaustivenessBound,
-    universe_gaps: frozenset,
+    universe_gaps: frozenset[Universe],
     spec: ResolvedDesignSpec,
 ) -> list[GuideAssessment]:
     assessments: list[GuideAssessment] = []

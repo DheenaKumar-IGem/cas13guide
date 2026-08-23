@@ -12,6 +12,7 @@ import math
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from ..contract.effectors import EFFECTORS
 from ..contract.enums import Effector
 from ..util.duplex import DuplexProfile, duplex_penalty
 from ..util.seq import gc_fraction
@@ -68,9 +69,18 @@ class HeuristicCas13Model:
     version = "model/heuristic-cas13/v1"
 
     def __init__(self) -> None:
+        effectors = frozenset({Effector.RFX_CAS13D, Effector.LWA_CAS13A})
         self.domain = ModelDomain(
-            effectors=frozenset({Effector.RFX_CAS13D, Effector.LWA_CAS13A}),
-            spacer_lengths=frozenset({22, 23, 28, 30}),
+            effectors=effectors,
+            # Derived from contract/effectors.py rather than restated. The
+            # literal set was {22, 23, 28, 30} -- the same union, but maintained
+            # by hand, so contract/effectors.py's claim that "the registry
+            # cross-checks its supported domain against these values" was simply
+            # untrue, and a spacer length added to an ortholog would never have
+            # reached the model's declared domain.
+            spacer_lengths=frozenset(
+                length for e in effectors for length in EFFECTORS[e].spacer_lengths
+            ),
             max_mismatches=6,
         )
 

@@ -57,16 +57,48 @@ class TestCostModel(unittest.TestCase):
         self.assertEqual(plan.kind, FM)
         self.assertIn("amortizes", plan.rationale)
 
-    def test_query_volume_flips_the_decision_at_fixed_corpus_size(self):
-        """Corpus size alone is not enough -- build cost has to pay back."""
-        bases = 3_000_000
-        self.assertEqual(plan_index(bases, expected_queries=10).kind, SCANNER)
-        self.assertEqual(plan_index(bases, expected_queries=1000).kind, FM)
+    @staticmethod
+    def _break_even_queries(bases: int) -> float:
+        """Queries at which FM total == scanner total, from the constants.
 
-    def test_model_reproduces_the_measured_amortization_point(self):
-        """At 3 Mb the measured break-even was ~78 queries."""
-        scanner, fm = estimate_seconds(3_000_000, 78)
-        self.assertAlmostEqual(scanner, fm, delta=0.05 * scanner)
+        ``q * s * M == b * M + q * f``  =>  ``q = b*M / (s*M - f)``. Only finite
+        above :data:`CROSSOVER_BASES`, where the scanner's per-query cost finally
+        exceeds the FM-index's.
+        """
+        mb = bases / 1_000_000
+        return BUILD_SECONDS_PER_MB * mb / (SCAN_SECONDS_PER_MB_PER_QUERY * mb - FM_SECONDS_PER_QUERY)
+
+    def test_query_volume_flips_the_decision_at_fixed_corpus_size(self):
+        """Corpus size alone is not enough -- build cost has to pay back.
+
+        Stated in terms of the derived crossover rather than a hard-coded
+        corpus size: the old form pinned 3 Mb, which stopped being a corpus
+        where the flip happens once the scanner was vectorized, so the test
+        failed for a reason that had nothing to do with the policy it guards.
+        """
+        bases = int(CROSSOVER_BASES * 1.7)          # comfortably past crossover
+        break_even = self._break_even_queries(bases)
+        self.assertGreater(break_even, 1.0)
+        self.assertEqual(plan_index(bases, expected_queries=1).kind, SCANNER)
+        self.assertEqual(
+            plan_index(bases, expected_queries=int(break_even * 4)).kind, FM
+        )
+
+    def test_below_the_crossover_no_query_volume_can_justify_the_fm_index(self):
+        """Under the crossover the scanner is cheaper *per query*, so build never pays."""
+        bases = int(CROSSOVER_BASES * 0.5)
+        for queries in (1, 100, 10_000, 1_000_000):
+            self.assertEqual(plan_index(bases, expected_queries=queries).kind, SCANNER)
+
+    def test_model_reproduces_its_own_amortization_point(self):
+        """At the derived break-even the two totals meet, by construction."""
+        bases = int(CROSSOVER_BASES * 1.7)
+        queries = self._break_even_queries(bases)
+        scanner, fm = estimate_seconds(bases, queries)
+        self.assertAlmostEqual(scanner, fm, delta=0.01 * scanner)
+        # and the decision really does turn there
+        self.assertEqual(plan_index(bases, int(queries * 0.5)).kind, SCANNER)
+        self.assertEqual(plan_index(bases, int(queries * 2)).kind, FM)
 
     def test_scan_cost_is_linear_in_corpus_size(self):
         a, _ = estimate_seconds(1_000_000, 100)

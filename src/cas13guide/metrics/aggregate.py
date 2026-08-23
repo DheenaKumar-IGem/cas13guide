@@ -26,6 +26,7 @@ from collections import defaultdict
 from ..contract.enums import TargetClass
 from ..contract.spec import ResolvedDesignSpec
 from ..models.evidence import MetricVector, PairEvidence, QCResult
+from .bounds import benefit_lower, hazard_product
 
 #: Returned when a required target has no supporting evidence at all.
 NO_EVIDENCE = 0.0
@@ -34,11 +35,18 @@ NO_EVIDENCE = 0.0
 def _best_lcb_per_target(
     evidence: tuple[PairEvidence, ...], target_class: TargetClass
 ) -> dict[str, float]:
-    """Best (highest LCB) site per named target of the given class."""
+    """Best (highest LCB) site per named target of the given class.
+
+    ``benefit_lower`` rather than ``.lower`` for the same reason ``_hazard``
+    calls ``hazard_product``: which end of the interval a *benefit* reads is a
+    property of the bound algebra, and it should have exactly one definition.
+    """
     best: dict[str, float] = defaultdict(lambda: NO_EVIDENCE)
     for e in evidence:
         if e.target_class is target_class and e.hit.target_id is not None:
-            best[e.hit.target_id] = max(best[e.hit.target_id], e.activity.lower)
+            best[e.hit.target_id] = max(
+                best[e.hit.target_id], benefit_lower(e.activity)
+            )
     return dict(best)
 
 
@@ -58,13 +66,25 @@ def desired_utility(evidence: tuple[PairEvidence, ...], spec: ResolvedDesignSpec
     return sum(t.weight * best.get(t.target_id, NO_EVIDENCE) for t in desired)
 
 
-def _hazard(e: PairEvidence) -> float:
-    """``UCB(activity) x UCB(expression) x hazard_weight`` for one pair."""
-    return e.activity.upper * e.expression.upper * e.hazard_weight
+def pair_hazard(e: PairEvidence) -> float:
+    """``UCB(activity) x UCB(expression) x hazard_weight`` for one pair.
+
+    Delegated to :func:`~cas13guide.metrics.bounds.hazard_product` rather than
+    multiplying the three factors here. ``metrics/bounds.py`` documents itself
+    as the one place the LCB/UCB asymmetry lives, and it was not: this function
+    re-implemented the product by hand, so an edit there -- to the non-negative
+    check, or to which end of an interval a hazard reads -- would silently not
+    reach the number the gate actually tests.
+    """
+    return hazard_product(e.activity, e.expression, scale=e.hazard_weight)
+
+
+#: Kept as the old private name so nothing that imported it breaks.
+_hazard = pair_hazard
 
 
 def off_target_hazards(evidence: tuple[PairEvidence, ...]) -> list[tuple[PairEvidence, float]]:
-    return [(e, _hazard(e)) for e in evidence if not e.is_intended]
+    return [(e, pair_hazard(e)) for e in evidence if not e.is_intended]
 
 
 def worst_off_target(evidence: tuple[PairEvidence, ...]) -> float:
@@ -87,14 +107,26 @@ def discrimination_margin(
 
     Returns ``None`` when the task does not call for discrimination, ``inf``
     when the off-allele has no credible activity at all.
+
+    The ``on`` term is the min over the contract's REQUIRED targets, exactly as
+    :func:`required_coverage` computes it -- *not* over the targets that happen
+    to appear in ``evidence``. Taking the min over observed targets meant a
+    required allele with no evidence at all was dropped from the minimum rather
+    than scoring ``NO_EVIDENCE``, so a context missing a required allele
+    reported a *higher* margin than one covering it (6.00 vs 5.67 in the case
+    that surfaced this), and ``build_metric_vector``'s cross-context ``min``
+    then hid the gap entirely. A missing required target is the worst case for
+    this ratio, not an absent one.
     """
     if not spec.requires_discrimination:
         return None
 
-    on_best = _best_lcb_per_target(evidence, TargetClass.REQUIRED)
-    if not on_best:
+    required = spec.contract.by_class(TargetClass.REQUIRED)
+    if not required:
         return 0.0
-    on = min(on_best.values())
+
+    on_best = _best_lcb_per_target(evidence, TargetClass.REQUIRED)
+    on = min(on_best.get(t.target_id, NO_EVIDENCE) for t in required)
 
     off_upper = [
         e.activity.upper

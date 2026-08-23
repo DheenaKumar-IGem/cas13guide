@@ -17,6 +17,7 @@ Two rules from the design live here:
 from __future__ import annotations
 
 from ..contract.spec import ResolvedDesignSpec
+from ..metrics.bounds import Interval
 from ..models.evidence import PairEvidence, SearchHit
 from ..services.calibration import CalibrationService
 from ..services.context import ExpressionSource, expression_interval
@@ -66,7 +67,7 @@ def evidence_for_hit(
     if not in_domain:
         # Model domain violation is a stronger statement than a missing
         # calibration stratum: refuse to narrow at all.
-        activity = type(activity).unknown(stratum=f"{stratum}->model-out-of-domain")
+        activity = Interval.unknown(stratum=f"{stratum}->model-out-of-domain")
 
     tpm = expression.expression_tpm(hit.locus_id)
     if tpm is None and locus is not None:
@@ -79,7 +80,7 @@ def evidence_for_hit(
 
     accessibility_iv = None
     if accessibility_value is not None:
-        accessibility_iv = type(activity).exact(accessibility_value, stratum="accessibility")
+        accessibility_iv = Interval.exact(accessibility_value, stratum="accessibility")
 
     return PairEvidence(
         guide_id=hit.guide_id,

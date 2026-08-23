@@ -84,12 +84,17 @@ class CalibrationStratum:
     predicted: list[float] = field(default_factory=list)
     observed: list[float] = field(default_factory=list)
     groups: set[str] = field(default_factory=set)
+    #: Sorted nonconformity scores, rebuilt lazily. Fitting is a bulk phase and
+    #: use is a per-hit phase, so this is filled once and then read thousands of
+    #: times; ``add`` drops it rather than trying to keep it in sync.
+    _sorted_scores: list[float] | None = field(default=None, repr=False, compare=False)
 
     def add(self, predicted: float, observed: float, group: str | None = None) -> None:
         self.predicted.append(predicted)
         self.observed.append(observed)
         if group is not None:
             self.groups.add(group)
+        self._sorted_scores = None
 
     @property
     def n(self) -> int:
@@ -107,6 +112,17 @@ class CalibrationStratum:
     def residuals(self) -> list[float]:
         return [abs(o - p) for p, o in zip(self.predicted, self.observed)]
 
+    def sorted_residuals(self) -> list[float]:
+        """Ascending nonconformity scores, cached until the next :meth:`add`.
+
+        Returned as the live list rather than a copy because every caller in
+        this module only indexes into it; callers outside it should not mutate
+        the result.
+        """
+        if self._sorted_scores is None:
+            self._sorted_scores = sorted(self.residuals())
+        return self._sorted_scores
+
     def quantile(self, alpha: float) -> tuple[float, bool]:
         """Conformal quantile with the finite-sample ``(n+1)`` correction.
 
@@ -120,10 +136,10 @@ class CalibrationStratum:
         n = self.n
         if n == 0:
             return 1.0, False
-        scores = sorted(self.residuals())
+        scores = self.sorted_residuals()
         rank = math.ceil((n + 1) * (1.0 - alpha))
         if rank > n:
-            return max(scores), False
+            return scores[-1], False  # == max(scores); the list is sorted
         return scores[rank - 1], True
 
 
@@ -133,9 +149,33 @@ class CoverageReport:
     n: int
     nominal: float
     empirical: float
+    #: Pairs scored against the maximally-wide fallback interval because no
+    #: stratum in the chain had data. Those trivially "cover" every observation
+    #: in [0, 1], so counting them as coverage is meaningless -- see :attr:`ok`.
+    n_uncalibrated: int = 0
+
+    @property
+    def uncalibrated(self) -> bool:
+        """True when *no* pair was scored against real calibration data."""
+        return self.n > 0 and self.n_uncalibrated == self.n
 
     @property
     def ok(self) -> bool:
+        """Did the interval cover often enough to be worth trusting?
+
+        A stratum with no calibration data at all used to score a perfect
+        1.000 here and pass: :meth:`CalibrationService.interval` falls back to
+        ``Interval.unknown(0.0, 1.0)``, and every observed activity lies in
+        ``[0, 1]``, so the fallback covers by construction. That inverted the CI
+        gate -- deleting calibration data made the benchmark *greener* than
+        having it, which is the one direction a coverage check must never move.
+
+        Only the fully-uncalibrated case is rejected. A stratum that resolved
+        through the fallback chain to a broader-but-real stratum is flagged
+        ``ood`` on the interval itself and is legitimately measured here.
+        """
+        if self.uncalibrated:
+            return False
         # Small tolerance for finite-sample slack.
         return self.empirical >= self.nominal - 0.05
 
@@ -175,7 +215,19 @@ class CalibrationService:
 
     @staticmethod
     def stratum_key(effector: str, assay: str, regime: str) -> str:
-        """``effector|assay|regime`` -- see :meth:`mismatch_regime`."""
+        """``effector|assay|regime`` -- see :meth:`mismatch_regime`.
+
+        A label containing ``|`` would silently produce a four-field key that
+        every read path then fails to parse, so it is rejected where the key is
+        built rather than where it is used.
+        """
+        parts = (effector, assay, regime)
+        offenders = [p for p in parts if "|" in p]
+        if offenders:
+            raise ValueError(
+                f"stratum key fields must not contain '|'; got {offenders}. "
+                "The key format is 'effector|assay|regime'."
+            )
         return f"{effector}|{assay}|{regime}"
 
     def add_observation(
@@ -196,8 +248,21 @@ class CalibrationService:
     # -- fallback chain ------------------------------------------------
     @staticmethod
     def _fallback_chain(key: str) -> list[str]:
-        """Most specific first: exact cell, then regime-agnostic, then global."""
-        effector, assay, regime = key.split("|")
+        """Most specific first: exact cell, then regime-agnostic, then global.
+
+        A key that is not ``effector|assay|regime`` is a caller bug, and the
+        bare tuple-unpack it used to do raised ``ValueError: not enough values
+        to unpack`` -- true, but it names neither the offending key nor the
+        expected shape, and it surfaces deep inside :meth:`interval` where the
+        caller has no idea a string format was involved.
+        """
+        parts = key.split("|")
+        if len(parts) != 3:
+            raise ValueError(
+                f"calibration stratum key must be 'effector|assay|regime'; got {key!r}. "
+                "Build it with CalibrationService.stratum_key()."
+            )
+        effector, assay, _regime = parts
         return [
             key,
             f"{effector}|{assay}|*",
@@ -274,12 +339,23 @@ class CalibrationService:
         if not pairs:
             return CoverageReport(key, 0, 1 - alpha, 0.0)
         covered = 0
+        uncalibrated = 0
         for predicted, observed in pairs:
             iv = self.interval(predicted, key, alpha)
+            # ``imputed`` is set only by Interval.unknown, i.e. only when the
+            # whole fallback chain came up empty. A stratum that resolved to a
+            # broader real stratum is ood but not imputed, and its coverage is
+            # a genuine measurement.
+            if iv.imputed:
+                uncalibrated += 1
             if iv.lower <= observed <= iv.upper:
                 covered += 1
         return CoverageReport(
-            stratum=key, n=len(pairs), nominal=1 - alpha, empirical=covered / len(pairs)
+            stratum=key,
+            n=len(pairs),
+            nominal=1 - alpha,
+            empirical=covered / len(pairs),
+            n_uncalibrated=uncalibrated,
         )
 
     def describe(self) -> dict[str, int]:

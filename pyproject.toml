@@ -6,7 +6,14 @@ build-backend = "setuptools.build_meta"
 name = "cas13guide"
 version = "0.1.0"
 description = "Cas13 target-RNA guide locator and scoring pipeline built on calibrated evidence"
+readme = "README.md"
 requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Typing :: Typed",
+]
 dependencies = ["pydantic>=2.5", "numpy>=1.26"]
 
 [project.optional-dependencies]
@@ -17,6 +24,11 @@ cas13guide = "cas13guide.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Ships the PEP 561 marker so downstream type checkers actually read the
+# annotations this package is fully written with.
+[tool.setuptools.package-data]
+cas13guide = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

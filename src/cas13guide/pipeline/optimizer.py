@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 
 from ..contract.enums import TargetClass
 from ..contract.spec import ResolvedDesignSpec
+from ..metrics.bounds import benefit_lower
 from ..models.evidence import GuideAssessment
 
 
@@ -63,8 +64,8 @@ def _profile(assessment: GuideAssessment) -> _Profile:
     for e in assessment.evidence:
         if e.target_class is TargetClass.REQUIRED and e.hit.target_id:
             tid = e.hit.target_id
-            if e.activity.lower > coverage.get(tid, 0.0):
-                coverage[tid] = e.activity.lower
+            if benefit_lower(e.activity) > coverage.get(tid, 0.0):
+                coverage[tid] = benefit_lower(e.activity)
                 sites[tid] = e.hit.start
         elif not e.is_intended:
             off.add(e.locus_id)
@@ -111,12 +112,19 @@ def select_panel(
     chosen: list[GuideAssessment] = []
     chosen_profiles: list[_Profile] = []
     dropped: list[str] = []
+    # Membership by identity, not by value. ``GuideAssessment`` is a frozen
+    # dataclass holding a tuple of ``PairEvidence``, each of which holds a
+    # ``SearchHit`` and two ``Interval``s, so ``assessment in chosen`` was a
+    # deep structural comparison over the whole evidence tree for every
+    # candidate on every round -- and it is also the wrong question: two
+    # distinct guides that happened to compare equal would collapse.
+    chosen_ids: set[int] = set()
 
     while len(chosen) < size:
         best_gain, best = 0.0, None
         current = _objective(chosen_profiles, weights)
         for assessment, prof in pool:
-            if assessment in chosen:
+            if id(assessment) in chosen_ids:
                 continue
             if not _compatible(prof, chosen_profiles, min_spacing, max_shared_off):
                 continue
@@ -126,6 +134,7 @@ def select_panel(
         if best is None:
             break
         chosen.append(best[0])
+        chosen_ids.add(id(best[0]))
         chosen_profiles.append(best[1])
 
     if len(chosen) < size:

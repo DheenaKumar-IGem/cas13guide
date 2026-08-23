@@ -28,7 +28,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..util.duplex import DuplexProfile, duplex_penalty
+from ..util.duplex import SEED_SPAN, DuplexProfile, duplex_penalty
 from ..util.seq import gc_fraction, max_homopolymer
 
 BASES = ("A", "C", "G", "U")
@@ -123,8 +123,9 @@ class FeatureSpec:
         cursor += 16
 
         # global features
-        seed_lo = int(0.35 * length)
-        seed_hi = max(seed_lo + 1, int(0.75 * length))
+        seed_lo_frac, seed_hi_frac = SEED_SPAN
+        seed_lo = int(seed_lo_frac * length)
+        seed_hi = max(seed_lo + 1, int(seed_hi_frac * length))
 
         x[cursor + 0] = gc_fraction(spacer)
         x[cursor + 1] = gc_fraction(spacer[seed_lo:seed_hi])

@@ -29,7 +29,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 221 tests
+python -m unittest discover -s tests -t tests    # 277 tests
 pytest                              # same suite under pytest
 ```
 
@@ -102,13 +102,21 @@ Two exhaustive indexes ship, and **neither is universally faster**. Backtracking
 over the FM-index costs roughly the size of the mismatch neighbourhood
 (`C(L,k)·3^k` ≈ 590k strings for a 22-mer at k=4) and is nearly independent of
 corpus size; the linear scanner is `O(N·L)` with a tiny constant. Measured per
-query on random RNA:
+query on random RNA in 2 kb loci:
 
 | corpus | build | FM/query | scan/query | queries to amortize |
 |--------|-------|----------|------------|---------------------|
-| 600 kb | 1.19 s | 0.998 s | 0.399 s | never |
-| 1.5 Mb | 4.06 s | 1.778 s | 1.018 s | never |
-| 3 Mb | 9.64 s | 1.939 s | 2.062 s | **78** |
+| 600 kb | 1.16 s | 0.742 s | 0.018 s | never |
+| 1.5 Mb | 5.83 s | 2.990 s | 0.054 s | never |
+| 3 Mb | 12.56 s | 2.758 s | 0.089 s | never |
+
+The scanner is vectorized: windows are compared a position at a time across one
+concatenated array, with the surviving set compacted once the budget starts to
+bind. That is **32× faster than the per-character scan it replaced**, on the
+same machine, for a byte-identical hit set (0.678 → 0.021 s/Mb/query at 3 Mb).
+Locus boundaries survive concatenation by the same two independent defenses the
+FM-index uses — a joiner that is not a base, and an exact span check — and each
+is pinned by its own test.
 
 Suffix arrays are built with **SA-IS** (`services/suffixarray.py`), linear time,
 2.5–2.7× faster than the prefix doubling it replaced and byte-identical in
@@ -117,16 +125,26 @@ caller and orders suffixes exactly as Python's string comparison would, so it
 can be diffed against a brute-force sort.
 
 Selection uses an explicit **cost model**, not a size threshold, because the
-right answer depends on query volume as much as corpus size — at 3 Mb the
-break-even is 78 queries. `services/index_selection.py` makes the call, and the
-reason lands in the provenance ledger:
+right answer depends on query volume as much as corpus size. Speeding the
+scanner up moved the crossover from ~2.5 Mb to **~87 Mb** of searchable
+sequence, so the FM-index is now the right call only at whole-transcriptome
+scale — and the stale constants were actively harmful, building a suffix array
+at 3 Mb where the scanner is ~30× faster per query and free to build. Below the
+crossover no query volume can justify the build, because the scanner is cheaper
+*per query* too. `services/index_selection.py` makes the call, and the reason
+lands in the provenance ledger:
 
 ```python
 ctx = DesignContext.auto("reference", transcriptome, universes, locus_to_target)
 # index/exhaustive-scan/v1
-# "2,391 searchable bases is below the 2,500,000 crossover; the linear
-#  scanner is faster here"
+# "2,400 bases x 1000 queries: scan ~0s beats FM ~2800s
+#  (suffix-array build does not pay back)"
 ```
+
+The constants are machine-specific; `examples/bench_index.py` re-measures them.
+The tests pin the *shape* of the policy (query volume flips the decision above
+the crossover, nothing flips it below) and derive the break-even from the
+constants, so re-measuring cannot silently invalidate them.
 
 Both return **identical hit sets** — there is a randomized differential test
 asserting exactly that across mismatch budgets, repetitive sequence, and locus
@@ -172,9 +190,34 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-221 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+277 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
-behaviour is reverted. Forty-four targeted mutants are all killed: asymmetric seed
+behaviour is reverted.
+
+Fifty-six of those tests were added after a review found bugs the original
+suite did not cover, and each one fails against the code as it stood. The ones
+worth naming, because they were live defects rather than hypotheticals:
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| The FM walk branched over a hard-coded `ACGU` | `N` is a legal base, so any window overlapping an assembly gap was unreachable — the index returned a **smaller hit set than the scanner while still reporting `exhaustive=True`**, and a 1-mismatch paralog off-target simply vanished | `test_search.py` |
+| Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
+| `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
+| `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| `DEFAULT_WEIGHTS` omitted `discrimination_margin` | The one metric an allele task exists for had weight 0, so it could not affect the ranking — while the rationale line still printed it | `test_decision_order.py` |
+| `HazardWeights` replaced its default maps instead of merging | A partial `by_biotype` halved rRNA/mito hazard; a partial `by_class` raised `KeyError` mid-run | `test_context_evidence.py` |
+| Controls were checked against a hand-copied subset of QC | A "matched" control could ship carrying a GC or self-folding violation the gate would FAIL | `test_controls.py` |
+| `already_normalized` ignored `higher_is_better` | A pre-scaled depletion screen loaded with **every label inverted**, silently — the failure `ingest.py` calls fatal | `test_ingest.py` |
+| `record_wetlab_result` dropped the group label | Zero group labels switches the `MIN_STRATUM_GROUPS` check off, so wet-lab feedback from one transcript came back looking certified | `test_benchmark.py` |
+| `run_search` kept the *last* bound, not the weakest | A per-query heuristic bound would be overwritten by a later exhaustive one | `test_search.py` |
+| `profile_duplex("", "")` died in the CIGAR builder | An `IndexError` that named neither the caller nor the cause | `test_duplex.py` |
+
+The vectorized scanner is held to the original per-character implementation as
+an oracle: randomized differential tests over ambiguity codes, loci shorter than
+the spacer, and spacers drawn across locus junctions, plus a test that every
+compaction point yields the same hit set.
+
+The earlier forty-four targeted mutants are still killed: asymmetric seed
 taper, naive min-max normalization, an unfiltered ranker, shallow control
 verification, an unflagged conformal level, a deleted retile loop, averaged
 cross-context hazard, UCB-for-LCB in the optimizer, reference-only evidence at

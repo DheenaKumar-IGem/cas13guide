@@ -13,6 +13,7 @@ from cas13guide.contract.enums import (
     Universe,
     Verdict,
 )
+from cas13guide.contract.enums import AssayType
 from cas13guide.contract.spec import TargetSpec
 from cas13guide.metrics.aggregate import build_metric_vector
 from cas13guide.models.evidence import QCResult
@@ -213,6 +214,118 @@ class TestReviewGrading(unittest.TestCase):
         _, result = run_gate(spec, evidence, gaps=gaps)
         self.assertIs(result.verdict, Verdict.FAIL)
         self.assertIsNone(result.review_tier)
+
+
+
+class TestUniverseAdequacyReadsTheSearchNotTheDeclaration(unittest.TestCase):
+    """A gap is what the index failed to cover, not what the spec forgot to ask for.
+
+    The check used to be ``ASSAY_REQUIRED - declared_universes``, which never
+    looks at the search at all. An index built over a narrower universe set than
+    the spec declares therefore produced a perfectly clean off-target report and
+    the gate saw no gap: in a reproduction the identical spec and transcriptome
+    went from 42 FAIL to 42 PASS with zero off-target rows purely by narrowing
+    the index, with rRNA sites at 5000 TPM simply ceasing to exist.
+    """
+
+    def _bound_over(self, universes):
+        from cas13guide.services.indexes import ExhaustivenessBound
+
+        return ExhaustivenessBound(
+            max_mismatches=4,
+            wobble_aware=True,
+            universes=frozenset(universes),
+            exhaustive=True,
+            method="test",
+        )
+
+    def test_no_gap_when_the_index_covered_everything_declared(self):
+        from cas13guide.pipeline.c_search import universe_gaps
+
+        spec = make_spec(universes=FULL_UNIVERSES)
+        self.assertEqual(universe_gaps(spec, self._bound_over(FULL_UNIVERSES)), frozenset())
+
+    def test_a_narrower_index_is_a_gap_even_though_the_spec_declared_more(self):
+        from cas13guide.pipeline.c_search import universe_gaps
+
+        spec = make_spec(universes=FULL_UNIVERSES)
+        gaps = universe_gaps(spec, self._bound_over({Universe.CODING}))
+        self.assertIn(Universe.RRNA, gaps)
+        self.assertIn(Universe.MITO, gaps)
+        self.assertNotIn(Universe.CODING, gaps)
+
+    def test_that_gap_fails_the_gate(self):
+        spec = make_spec(universes=FULL_UNIVERSES)
+        metrics = build_metric_vector({"reference": ()}, clean_qc(), spec)
+        gaps = None
+        from cas13guide.pipeline.c_search import universe_gaps
+
+        gaps = universe_gaps(spec, self._bound_over({Universe.CODING}))
+        result = gate(metrics, clean_qc(), (), exhaustive_bound(4), gaps, spec)
+        self.assertIs(result.verdict, Verdict.FAIL)
+        self.assertIn(ReasonCode.UNIVERSE_INADEQUATE, result.reasons)
+
+    def test_declaring_a_universe_and_not_searching_it_is_also_a_gap(self):
+        """Under-searching what you promised is the same hole as under-declaring."""
+        from cas13guide.pipeline.c_search import universe_gaps
+
+        spec = make_spec(
+            universes=FULL_UNIVERSES | {Universe.REPEAT},
+            assay=AssayType.CELL_CULTURE_KNOCKDOWN,
+        )
+        # REPEAT is not required by this assay, but it *was* declared.
+        gaps = universe_gaps(spec, self._bound_over(FULL_UNIVERSES))
+        self.assertEqual(gaps, frozenset({Universe.REPEAT}))
+
+
+class TestBothHazardBudgetsAreReported(unittest.TestCase):
+    """One reason code, but the detail must name every budget that blew.
+
+    The two hazard checks were joined by an ``elif``, so a guide over both
+    budgets reported only the worst-single-hit overrun. An operator who fixes
+    that hit re-runs straight into a second, previously invisible FAIL -- and
+    the detail tuple is what the module docstring calls the machine-readable
+    reason surface.
+    """
+
+    def test_detail_names_both_when_both_are_exceeded(self):
+        from cas13guide.models.evidence import MetricVector
+
+        spec = make_spec()
+        metrics = MetricVector(
+            required_coverage=0.9,
+            desired_utility=1.0,
+            worst_off_target=1.5,      # cap 1.0
+            cumulative_burden=40.0,    # cap 5.0
+            robustness=0.9,
+            manufacturability=0.9,
+        )
+        result = gate(metrics, clean_qc(), (), exhaustive_bound(4), frozenset(), spec)
+        self.assertIs(result.verdict, Verdict.FAIL)
+        joined = " | ".join(result.detail)
+        self.assertIn("worst_off_target", joined)
+        self.assertIn("cumulative_burden", joined)
+        # Still exactly one reason code -- the verdict did not change.
+        self.assertEqual(
+            [r for r in result.reasons if r is ReasonCode.HAZARD_BUDGET_EXCEEDED],
+            [ReasonCode.HAZARD_BUDGET_EXCEEDED],
+        )
+
+    def test_each_budget_alone_still_reports_only_itself(self):
+        from cas13guide.models.evidence import MetricVector
+
+        spec = make_spec()
+        only_worst = gate(
+            MetricVector(0.9, 1.0, 1.5, 0.0, 0.9, 0.9),
+            clean_qc(), (), exhaustive_bound(4), frozenset(), spec,
+        )
+        only_burden = gate(
+            MetricVector(0.9, 1.0, 0.0, 40.0, 0.9, 0.9),
+            clean_qc(), (), exhaustive_bound(4), frozenset(), spec,
+        )
+        self.assertNotIn("cumulative_burden", " ".join(only_worst.detail))
+        self.assertNotIn("worst_off_target", " ".join(only_burden.detail))
+
 
 
 if __name__ == "__main__":

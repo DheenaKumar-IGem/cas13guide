@@ -56,41 +56,74 @@ class TargetSpec(_Frozen):
         return self
 
 
+#: Default hazard prior per intent class. Module level so that a partial
+#: override can be completed from it rather than leaving a hole.
+DEFAULT_HAZARD_BY_CLASS: dict[TargetClass, float] = {
+    TargetClass.REQUIRED: 0.0,
+    TargetClass.DESIRED: 0.0,
+    TargetClass.TOLERATED: 0.1,
+    TargetClass.AVOID: 1.0,
+    TargetClass.FORBIDDEN: 5.0,
+}
+
+#: Default hazard prior per sequence universe.
+DEFAULT_HAZARD_BY_BIOTYPE: dict[Universe, float] = {
+    Universe.RRNA: 2.0,
+    Universe.MITO: 1.5,
+    Universe.CODING: 1.0,
+    Universe.NCRNA: 1.0,
+    Universe.PRE_MRNA: 0.7,
+    Universe.CIRCRNA: 0.7,
+    Universe.REPEAT: 0.5,
+    Universe.VIRAL: 0.2,
+    Universe.SYNTHETIC: 0.1,
+}
+
+
 class HazardWeights(_Frozen):
     """Versioned biological hazard priors (fix #7).
 
     These multiply into the off-target burden. They encode judgment, so they
     are versioned and travel in the provenance ledger.
+
+    A partial override means *override these, keep the rest*: both maps are
+    completed from the defaults at construction. Tightening one class used to
+    require restating all five, and restating four of five raised ``KeyError``
+    from deep inside stage D, halfway through a design run.
     """
 
     version: str = "hazard-weights/v1"
     by_class: dict[TargetClass, float] = Field(
-        default_factory=lambda: {
-            TargetClass.REQUIRED: 0.0,
-            TargetClass.DESIRED: 0.0,
-            TargetClass.TOLERATED: 0.1,
-            TargetClass.AVOID: 1.0,
-            TargetClass.FORBIDDEN: 5.0,
-        }
+        default_factory=lambda: dict(DEFAULT_HAZARD_BY_CLASS)
     )
     #: Unannotated hits (not named in the contract) still carry hazard.
     unannotated: float = Field(default=0.6, ge=0.0)
     by_biotype: dict[Universe, float] = Field(
-        default_factory=lambda: {
-            Universe.RRNA: 2.0,
-            Universe.MITO: 1.5,
-            Universe.CODING: 1.0,
-            Universe.NCRNA: 1.0,
-            Universe.PRE_MRNA: 0.7,
-            Universe.CIRCRNA: 0.7,
-            Universe.REPEAT: 0.5,
-            Universe.VIRAL: 0.2,
-            Universe.SYNTHETIC: 0.1,
-        }
+        default_factory=lambda: dict(DEFAULT_HAZARD_BY_BIOTYPE)
     )
 
+    @model_validator(mode="after")
+    def _complete_maps(self):
+        """Fill any class or universe the caller did not mention.
+
+        Every enum member gets an entry, so :meth:`weight_for` cannot raise and
+        -- more importantly -- a class the caller forgot cannot silently become
+        a zero hazard, which is the one direction this system must never fail.
+        """
+        by_class = {**DEFAULT_HAZARD_BY_CLASS, **self.by_class}
+        by_biotype = {**DEFAULT_HAZARD_BY_BIOTYPE, **self.by_biotype}
+        object.__setattr__(self, "by_class", by_class)
+        object.__setattr__(self, "by_biotype", by_biotype)
+        return self
+
     def weight_for(self, target_class: TargetClass | None, biotype: Universe) -> float:
-        base = self.unannotated if target_class is None else self.by_class[target_class]
+        if target_class is None:
+            base = self.unannotated
+        else:
+            # Defence in depth: ``_complete_maps`` guarantees the key exists,
+            # but an unannotated-strength prior is the right answer for an
+            # unknown class -- never 0.0, which would erase the hazard.
+            base = self.by_class.get(target_class, self.unannotated)
         return base * self.by_biotype.get(biotype, 1.0)
 
 

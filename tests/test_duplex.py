@@ -115,5 +115,93 @@ class TestWobble(unittest.TestCase):
         self.assertGreater(mutate(11), mutate(0))
 
 
+
+class TestDegenerateInput(unittest.TestCase):
+    """A zero-length duplex is vacuous, not a crash in the CIGAR builder."""
+
+    def test_empty_duplex_is_vacuously_perfect(self):
+        p = profile_duplex("", "")
+        self.assertEqual(p.length, 0)
+        self.assertEqual(p.cigar, "")
+        self.assertEqual(p.mismatch_positions, ())
+        self.assertEqual(p.wobble_positions, ())
+        self.assertTrue(p.is_perfect)
+
+    def test_length_one_still_reports_the_wobble_asymmetry(self):
+        """The boundary case either side of the empty guard."""
+        self.assertEqual(profile_duplex("A", "U").cigar, "1WC")
+        # spacer G pairs with target U as a wobble (expected C, observed U)
+        self.assertEqual(profile_duplex("G", "U").wobble_positions, (1,))
+        self.assertEqual(profile_duplex("G", "U").cigar, "1GU")
+        # the reverse is a true mismatch
+        self.assertEqual(profile_duplex("U", "U").mismatch_positions, (1,))
+
+    def test_mismatched_lengths_still_raise_a_named_error(self):
+        with self.assertRaises(ValueError):
+            profile_duplex("AUG", "AU")
+
+
+class TestSeedSpanHasOneDefinition(unittest.TestCase):
+    """The seed window is shared with the feature layout and must not drift.
+
+    ``models/features.py`` derives its ``gc_seed`` window from the same span
+    ``seed_weight`` uses. They were two independent literals, so retuning the
+    seed in one place would have left the model's features describing a
+    different seed than its penalty.
+    """
+
+    def test_seed_weight_defaults_to_the_shared_constant(self):
+        from cas13guide.util.duplex import SEED_SPAN
+
+        length = 22
+        lo, hi = SEED_SPAN
+        inside = int(((lo + hi) / 2) * length) + 1
+        self.assertEqual(seed_weight(inside, length), 1.0)
+        self.assertEqual(
+            seed_weight(inside, length), seed_weight(inside, length, seed_span=SEED_SPAN)
+        )
+
+    def test_the_feature_layout_reads_the_same_span(self):
+        from cas13guide.models.features import FeatureSpec
+        from cas13guide.util.duplex import SEED_SPAN
+
+        length = 22
+        spec = FeatureSpec.for_length(length)
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
+        x = spec.transform(spacer, profile_duplex(spacer, revcomp(spacer)), None)
+        lo_frac, hi_frac = SEED_SPAN
+        seed_lo = int(lo_frac * length)
+        seed_hi = max(seed_lo + 1, int(hi_frac * length))
+        expected_gc_seed = (
+            sum(1 for b in spacer[seed_lo:seed_hi] if b in "GC") / (seed_hi - seed_lo)
+        )
+        gc_seed_index = spec.names.index("gc_seed")
+        self.assertAlmostEqual(x[gc_seed_index], expected_gc_seed)
+
+
+class TestComplementRejectsNonRnaCharacters(unittest.TestCase):
+    """``str.translate`` leaves unknown characters alone; that must not happen here.
+
+    Silently passing a stray base through as itself would turn a malformed
+    sequence into a plausible-looking duplex instead of an error.
+    """
+
+    def test_a_foreign_base_raises_rather_than_passing_through(self):
+        from cas13guide.util.seq import complement, revcomp
+
+        with self.assertRaises(KeyError):
+            complement("AUGX")
+        with self.assertRaises(KeyError):
+            revcomp("AUGX")
+
+    def test_the_rna_alphabet_including_n_round_trips(self):
+        from cas13guide.util.seq import complement, revcomp
+
+        self.assertEqual(complement("AUGCN"), "UACGN")
+        self.assertEqual(revcomp("AUGCN"), "NGCAU")
+        self.assertEqual(revcomp(revcomp("AUGCN")), "AUGCN")
+
+
+
 if __name__ == "__main__":
     unittest.main()

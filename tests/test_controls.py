@@ -114,5 +114,49 @@ class TestControlGuides(unittest.TestCase):
                 self.assertIn("no composition-matched scramble", control.note)
 
 
+
+class TestControlsClearTheSameQcAsRealGuides(unittest.TestCase):
+    """A control the pipeline would FAIL is not a usable control.
+
+    ``generate_controls`` re-implemented a two-line subset of stage B -- a
+    hardcoded homopolymer limit and the poly-U check -- so a scramble carrying a
+    GC violation, a self-folding stem or a direct-repeat interaction could ship
+    as a "matched" control while the gate would have rejected the same sequence
+    as deterministically incompatible.
+    """
+
+    def setUp(self):
+        self.spec = make_spec()
+        self.panel = one_guide_panel()
+        self.universes = self.spec.context.declared_universes
+
+    def test_every_generated_control_passes_stage_b_qc(self):
+        from cas13guide.models.evidence import Candidate
+        from cas13guide.pipeline.b_qc import qc_candidate
+
+        index = ExhaustiveScanIndex(world(), self.universes)
+        controls = generate_controls(self.panel, self.spec, index, seed=0)
+        self.assertTrue(controls)
+        for control in controls:
+            if not control.verified_no_hits:
+                continue
+            probe = Candidate(
+                guide_id=control.guide_id,
+                spacer=control.spacer,
+                source_target_id="t1",
+                start=0,
+            )
+            result = qc_candidate(probe, self.spec)
+            self.assertTrue(
+                result.passed,
+                f"control {control.spacer} would FAIL the gate: {result.flags}",
+            )
+
+    def test_composition_is_still_matched_exactly(self):
+        index = ExhaustiveScanIndex(world(), self.universes)
+        [control] = generate_controls(self.panel, self.spec, index, seed=0)
+        self.assertEqual(sorted(control.spacer), sorted(SPACER))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,12 +21,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from ..contract.enums import ReasonCode, TargetClass, Verdict
+from ..contract.enums import ReasonCode, TargetClass, Universe, Verdict
 from ..contract.spec import ResolvedDesignSpec
-from ..models.evidence import GuideAssessment, PairEvidence
+from ..models.evidence import Candidate, GuideAssessment, PairEvidence, QCResult
 from ..services.calibration import CalibrationService
 from ..services.context import ExpressionSource, StaticExpressionSource
-from ..services.indexes import ExhaustivenessBound, SearchIndex
+from ..services.indexes import ExhaustivenessBound, SearchIndex, is_weaker
 from ..services.provenance import ProvenanceLedger
 from ..services.registry import ModelRegistry
 from ..services.transcriptome import Transcriptome
@@ -61,7 +61,7 @@ class DesignContext:
         cls,
         name: str,
         transcriptome: Transcriptome,
-        universes: frozenset,
+        universes: frozenset[Universe],
         locus_to_target: dict[str, str],
         expected_queries: int = 1000,
         expression: ExpressionSource | None = None,
@@ -105,17 +105,9 @@ class RunTelemetry:
     reason_codes: list[ReasonCode] = field(default_factory=list)
 
 
-def _is_weaker(candidate: ExhaustivenessBound, current: ExhaustivenessBound) -> bool:
-    """Order two bounds by how much they actually guarantee.
-
-    A non-exhaustive bound is always weaker than an exhaustive one; between
-    two of the same kind, the shallower mismatch depth wins. Comparing only
-    ``exhaustive`` would ignore an index that honestly reports a shallower
-    supported depth, and ``SEARCH_NOT_EXHAUSTIVE`` would never fire for it.
-    """
-    if candidate.exhaustive != current.exhaustive:
-        return not candidate.exhaustive
-    return candidate.max_mismatches < current.max_mismatches
+#: Bound ordering now has one definition, in ``services.indexes`` -- the same
+#: rule ``c_search`` uses when folding bounds across candidates.
+_is_weaker = is_weaker
 
 
 def _panel_feasible(panel: Panel, spec: ResolvedDesignSpec) -> bool:
@@ -165,16 +157,42 @@ def run_design(
     panel = Panel(guides=(), coverage={}, objective=0.0, guarantee="not computed")
     frontier_ids: tuple[str, ...] = ()
     bound: ExhaustivenessBound | None = None
-    universe_gaps: frozenset = frozenset()
+    universe_gaps: frozenset[Universe] = frozenset()
+
+    # Stages A and B depend only on ``step``, and the C self-loop re-enters the
+    # while-body with ``step`` unchanged -- so every search escalation used to
+    # re-tile and re-QC an identical candidate set. QC is the second most
+    # expensive stage in the pipeline (self-folding and direct-repeat stems are
+    # both quadratic in spacer length), and the escalation budget defaults to 2.
+    tiling_cache: dict[int, tuple[tuple[Candidate, ...], dict[str, QCResult]]] = {}
+
+    # ``design_candidates`` has always accepted junction offsets and nothing
+    # ever passed any, so ``Candidate.spans_junction`` was False on every guide
+    # in every real run -- an advertised capability that silently did nothing.
+    # The data is already on ``Locus.junctions``; this is the missing wire.
+    junctions_by_target = {
+        target_id: reference.transcriptome.loci[locus_id].junctions
+        for locus_id, target_id in reference.locus_to_target.items()
+        if locus_id in reference.transcriptome.loci
+        and reference.transcriptome.loci[locus_id].junctions
+    }
+
+    def tile_and_qc(step: int) -> tuple[tuple[Candidate, ...], dict[str, QCResult]]:
+        cached = tiling_cache.get(step)
+        if cached is None:
+            cands = design_candidates(
+                spec, step=step, junctions_by_target=junctions_by_target
+            )
+            cached = (cands, run_qc(cands, spec))
+            tiling_cache[step] = cached
+        return cached
 
     while True:
         # ---------------- A: candidate design ----------------
-        candidates = design_candidates(spec, step=step)
+        # ---------------- B: deterministic QC ----------------
+        candidates, qc_results = tile_and_qc(step)
         by_id = {c.guide_id: c for c in candidates}
         emit(f"A: {len(candidates)} candidates (step={step})")
-
-        # ---------------- B: deterministic QC ----------------
-        qc_results = run_qc(candidates, spec)
         emit(f"B: {sum(1 for q in qc_results.values() if q.passed)}/{len(qc_results)} passed QC")
 
         # ---------------- C: sensitivity-bounded search -------
@@ -204,14 +222,8 @@ def run_design(
                 )
                 telemetry.reason_codes.append(ReasonCode.BUDGET_EXHAUSTED_SEARCH)
 
-        bound, universe_gaps = outcome.bound, outcome.universe_gaps
         ledger.record("search", "bound", outcome.bound.method,
                       claim=outcome.bound.describe(), note=outcome.bound.note)
-        if universe_gaps:
-            ledger.exclusion(
-                "universes", "not searched but required by assay",
-                missing=sorted(u.value for u in universe_gaps),
-            )
 
         # ---------------- D: pair evidence, per context -------
         spacers = {gid: by_id[gid].spacer for gid in outcome.hits_by_guide}
@@ -219,6 +231,11 @@ def run_design(
             gid: {} for gid in outcome.hits_by_guide
         }
         weakest_bound = outcome.bound
+        # Gaps are unioned across contexts for the same reason the bound is
+        # folded to the weakest: a variant context whose index covers fewer
+        # universes leaves exactly the same hole, and reading the reference
+        # context alone would not see it.
+        universe_gaps: frozenset[Universe] = outcome.universe_gaps
 
         for ctx in contexts:
             ctx_outcome = (
@@ -226,8 +243,9 @@ def run_design(
                 if ctx is reference
                 else run_search(candidates, spec, ctx.index, ctx.locus_to_target, envelope)
             )
-            if _is_weaker(ctx_outcome.bound, weakest_bound):
+            if is_weaker(ctx_outcome.bound, weakest_bound):
                 weakest_bound = ctx_outcome.bound
+            universe_gaps |= ctx_outcome.universe_gaps
             evidence = build_pair_evidence(
                 ctx_outcome.hits_by_guide, spacers, spec, registry, calibration,
                 ctx.transcriptome, ctx.expression_source(), context=ctx.name,
@@ -235,6 +253,11 @@ def run_design(
             for gid, ev in evidence.items():
                 per_guide.setdefault(gid, {})[ctx.name] = ev
         bound = weakest_bound
+        if universe_gaps:
+            ledger.exclusion(
+                "universes", "required by assay but not proven searched",
+                missing=sorted(u.value for u in universe_gaps),
+            )
         emit(f"D: evidence built over {len(contexts)} context(s)")
 
         # ---------------- E + F: aggregate and gate -----------

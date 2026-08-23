@@ -101,7 +101,15 @@ class TestPreferencesCannotRescueAFail(unittest.TestCase):
         self.assertGreaterEqual(ranked[0].score, ranked[-1].score)
         for r in ranked:
             self.assertTrue(r.rationale)
-            self.assertEqual(set(r.sensitivity) & set(DEFAULT_WEIGHTS), set(DEFAULT_WEIGHTS))
+            # Every weighted objective this guide actually *has* must appear in
+            # the sensitivity report -- scoped to the guide's own objective set,
+            # because discrimination_margin is emitted only for allele tasks and
+            # this is a knockdown one. (Asserting against all of DEFAULT_WEIGHTS
+            # would forbid any task-conditional objective from ever having a
+            # default weight.)
+            present = set(r.assessment.metrics.objectives())
+            self.assertEqual(set(r.sensitivity), present & set(DEFAULT_WEIGHTS))
+            self.assertNotIn("discrimination_margin", present)
 
     def test_user_weights_change_the_order(self):
         spec = make_spec()
@@ -243,6 +251,79 @@ class TestReviewRate(unittest.TestCase):
         self.assertIs(reviewing.gate.verdict, Verdict.REVIEW)
         self.assertAlmostEqual(review_rate([passing, reviewing]), 0.5)
         self.assertEqual(review_rate([]), 0.0)
+
+
+
+class TestAlleleTasksAreRankedByTheirGoverningMetric(unittest.TestCase):
+    """``discrimination_margin`` must actually influence the order.
+
+    ``objectives()`` emits it for every allele task, but ``DEFAULT_WEIGHTS``
+    omitted it and ``weights.get(k, 0.0)`` silently gave it weight zero. Two
+    guides identical except for a thousand-fold difference in on/off-allele
+    ratio scored the same, and the order fell back to input order via the
+    stable sort -- while the rationale line still printed the objective, which
+    reads as though it had been considered.
+    """
+
+    def _pair(self):
+        from cas13guide.contract.enums import Task
+        from cas13guide.contract.spec import TargetSpec
+        from cas13guide.models.evidence import (
+            Candidate, GateResult, GuideAssessment, MetricVector,
+        )
+        from cas13guide.contract.enums import ReasonCode
+
+        def one(guide_id, margin):
+            return GuideAssessment(
+                guide_id=guide_id,
+                candidate=Candidate(
+                    guide_id=guide_id, spacer="GCAUUGCUGUGGAGCUGAAGUC",
+                    source_target_id="t1", start=0,
+                ),
+                qc=clean_qc(guide_id),
+                metrics=MetricVector(
+                    required_coverage=0.9, desired_utility=0.0,
+                    worst_off_target=0.0, cumulative_burden=0.0,
+                    robustness=0.9, manufacturability=1.0,
+                    discrimination_margin=margin,
+                ),
+                gate=GateResult(Verdict.PASS, (ReasonCode.CONSTRAINTS_SATISFIED,)),
+            )
+
+        # identical on every other objective; only the margin differs
+        return [one("barely", 2.01), one("excellent", 1_000_000.0)]
+
+    def test_the_better_margin_ranks_first(self):
+        ranked = rank_by_preference(self._pair())
+        self.assertEqual(ranked[0].assessment.guide_id, "excellent")
+
+    def test_it_carries_a_non_zero_weight_in_the_sensitivity_report(self):
+        ranked = rank_by_preference(self._pair())
+        best = next(r for r in ranked if r.assessment.guide_id == "excellent")
+        self.assertIn("discrimination_margin", best.sensitivity)
+        self.assertGreater(best.sensitivity["discrimination_margin"], 0.0)
+
+    def test_reversing_the_input_does_not_change_the_winner(self):
+        forward = rank_by_preference(self._pair())
+        backward = rank_by_preference(list(reversed(self._pair())))
+        self.assertEqual(
+            forward[0].assessment.guide_id, backward[0].assessment.guide_id
+        )
+
+    def test_a_knockdown_task_is_unaffected(self):
+        """The weight is inert for every task that does not emit the objective."""
+        spec = make_spec()
+        guides = [
+            assessment(
+                f"g{i}",
+                (make_evidence(0.7 + i * 0.05, 0.8 + i * 0.05,
+                               target_id="t1", target_class=TargetClass.REQUIRED),),
+                spec,
+            )
+            for i in range(3)
+        ]
+        for r in rank_by_preference(guides):
+            self.assertNotIn("discrimination_margin", r.sensitivity)
 
 
 if __name__ == "__main__":

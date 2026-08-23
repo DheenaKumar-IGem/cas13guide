@@ -128,17 +128,38 @@ def evaluate_dataset(
         )
     )
 
-    worst_coverage = min((c.empirical for c in result.benchmark.coverage), default=0.0)
     nominal = 1.0 - calibration_alpha
-    report.criteria.append(
-        Criterion(
-            "conformal coverage",
-            result.benchmark.coverage_ok,
-            worst_coverage,
-            nominal,
-            note="bounds mean what they claim",
+    uncalibrated = [c for c in result.benchmark.coverage if c.uncalibrated]
+    if uncalibrated:
+        # Report the *cause*, not the number. An uncalibrated stratum scores a
+        # perfect 1.000 by construction -- every observation falls inside the
+        # [0, 1] fallback interval -- so printing `min(empirical)` next to a
+        # FAIL mark showed a passing-looking figure with no hint of why the
+        # criterion failed.
+        names = ", ".join(sorted(c.stratum.rsplit("|", 1)[-1] for c in uncalibrated))
+        report.criteria.append(
+            Criterion(
+                "conformal coverage",
+                False,
+                0.0,
+                nominal,
+                note=(
+                    f"regime(s) {names} had no calibration stratum at all, so their "
+                    "coverage is vacuous rather than measured"
+                ),
+            )
         )
-    )
+    else:
+        worst_coverage = min((c.empirical for c in result.benchmark.coverage), default=0.0)
+        report.criteria.append(
+            Criterion(
+                "conformal coverage",
+                result.benchmark.coverage_ok,
+                worst_coverage,
+                nominal,
+                note="bounds mean what they claim",
+            )
+        )
 
     if probe_split_bias:
         # Ten extra model fits (five grouped folds, five ungrouped). Worth it

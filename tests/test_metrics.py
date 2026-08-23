@@ -175,5 +175,111 @@ class TestRobustness(unittest.TestCase):
         self.assertLess(mv.robustness, mv.required_coverage)
 
 
+
+class TestDiscriminationMarginCountsMissingRequiredTargets(unittest.TestCase):
+    """A required allele with no evidence is the worst case, not an absent one.
+
+    ``on`` was the min over the targets that happened to appear in the evidence
+    rather than over the contract's REQUIRED set, so dropping a required allele
+    entirely *raised* the margin (6.00 vs 5.67 in the case that surfaced this)
+    and ``build_metric_vector``'s cross-context ``min`` then hid the gap. This
+    is the same rule ``required_coverage`` already applied -- the two now agree.
+    """
+
+    def _allele_spec(self):
+        return make_spec(
+            task=Task.ALLELE,
+            targets=(
+                TargetSpec(target_id="mutA", sequence=SEQ_A, target_class=TargetClass.REQUIRED),
+                TargetSpec(target_id="mutB", sequence=SEQ_B, target_class=TargetClass.REQUIRED),
+                TargetSpec(target_id="wt", sequence=SEQ_B, target_class=TargetClass.FORBIDDEN),
+            ),
+        )
+
+    def _evidence(self, include_mut_b):
+        rows = [
+            make_evidence(0.90, 0.95, locus_id="LA", target_id="mutA",
+                          target_class=TargetClass.REQUIRED),
+            make_evidence(0.10, 0.15, locus_id="LW", target_id="wt",
+                          target_class=TargetClass.FORBIDDEN),
+        ]
+        if include_mut_b:
+            rows.insert(1, make_evidence(0.85, 0.90, locus_id="LB", target_id="mutB",
+                                         target_class=TargetClass.REQUIRED))
+        return tuple(rows)
+
+    def test_a_missing_required_allele_drives_the_margin_to_zero(self):
+        spec = self._allele_spec()
+        self.assertEqual(discrimination_margin(self._evidence(False), spec), 0.0)
+
+    def test_and_is_never_better_than_covering_it(self):
+        """The direction that matters: losing a target must not look better."""
+        spec = self._allele_spec()
+        covered = discrimination_margin(self._evidence(True), spec)
+        missing = discrimination_margin(self._evidence(False), spec)
+        self.assertGreater(covered, missing)
+
+    def test_the_gap_survives_aggregation_across_contexts(self):
+        spec = self._allele_spec()
+        mv = build_metric_vector(
+            {"reference": self._evidence(True), "hap2": self._evidence(False)},
+            clean_qc(),
+            spec,
+        )
+        self.assertEqual(mv.discrimination_margin, 0.0)
+
+    def test_it_matches_required_coverage_on_the_same_evidence(self):
+        """Both answer 'how well is the worst required target served?'."""
+        spec = self._allele_spec()
+        evidence = self._evidence(False)
+        self.assertEqual(required_coverage(evidence, spec), 0.0)
+        self.assertEqual(discrimination_margin(evidence, spec), 0.0)
+
+
+class TestHazardHasOneDefinition(unittest.TestCase):
+    """The UCB x UCB x weight product must not be open-coded in three places."""
+
+    def test_pair_hazard_routes_through_the_bound_algebra(self):
+        from cas13guide.metrics.aggregate import pair_hazard
+        from cas13guide.metrics.bounds import hazard_product
+
+        e = make_evidence(0.2, 0.8, expression=(0.3, 0.6), hazard_weight=1.5)
+        self.assertAlmostEqual(
+            pair_hazard(e),
+            hazard_product(e.activity, e.expression, scale=e.hazard_weight),
+        )
+
+    def test_it_reads_the_upper_bound_of_every_factor(self):
+        """A hazard read at a point estimate is the failure fix #6 exists for."""
+        from cas13guide.metrics.aggregate import pair_hazard
+
+        e = make_evidence(0.2, 0.8, expression=(0.3, 0.6), hazard_weight=2.0)
+        self.assertAlmostEqual(pair_hazard(e), 0.8 * 0.6 * 2.0)
+
+    def test_the_report_column_and_the_metric_are_the_same_number(self):
+        """``_off_target_rows`` used to recompute the product by hand."""
+        from cas13guide.metrics.aggregate import pair_hazard, worst_off_target
+        from cas13guide.pipeline.g_output import _off_target_rows
+        from cas13guide.models.evidence import (
+            Candidate, GateResult, GuideAssessment, MetricVector,
+        )
+        from cas13guide.contract.enums import ReasonCode, Verdict
+
+        off = make_evidence(0.2, 0.8, locus_id="OFF1", expression=(0.3, 0.6),
+                            hazard_weight=1.5)
+        assessment = GuideAssessment(
+            guide_id="g1",
+            candidate=make_candidate("g1"),
+            qc=clean_qc("g1"),
+            metrics=MetricVector(0.9, 0.0, worst_off_target((off,)), 0.0, 0.9, 1.0),
+            gate=GateResult(Verdict.PASS, (ReasonCode.CONSTRAINTS_SATISFIED,)),
+            evidence=(off,),
+        )
+        [row] = _off_target_rows([assessment])
+        self.assertAlmostEqual(row["hazard"], round(pair_hazard(off), 4))
+        self.assertAlmostEqual(row["hazard"], round(assessment.metrics.worst_off_target, 4))
+
+
+
 if __name__ == "__main__":
     unittest.main()

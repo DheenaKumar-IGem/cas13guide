@@ -254,5 +254,43 @@ class TestWarnings(ScreenFileTestCase):
         self.assertIn("duplicate spacer", " ".join(report.warnings))
 
 
+
+class TestContradictoryOptionsAreRefused(ScreenFileTestCase):
+    """``already_normalized`` takes values verbatim, so it cannot also flip them.
+
+    Rank normalization is what makes the depletion direction *exact*, and
+    ``already_normalized`` skips it entirely -- so the branch simply ignored
+    ``higher_is_better=False`` and loaded a depletion screen with every label
+    inverted. That is the precise failure the module docstring calls fatal, and
+    it produced no warning at all.
+    """
+
+    def test_already_normalized_with_depletion_direction_is_fatal(self):
+        path = self.write(
+            "both.csv",
+            [[e.spacer, e.observed_activity, e.group] for e in self.examples],
+            ["spacer", "activity", "transcript"],
+        )
+        examples, report = load_screen(
+            path, columns=ColumnMap(higher_is_better=False), already_normalized=True
+        )
+        self.assertFalse(report.ok)
+        self.assertEqual(examples, [])
+        joined = " ".join(report.errors)
+        self.assertIn("already_normalized", joined)
+        self.assertIn("higher_is_better", joined)
+
+    def test_each_option_alone_still_works(self):
+        path = self.write(
+            "solo.csv",
+            [[e.spacer, e.observed_activity, e.group] for e in self.examples],
+            ["spacer", "activity", "transcript"],
+        )
+        _, normalized = load_screen(path, already_normalized=True)
+        _, depletion = load_screen(path, columns=ColumnMap(higher_is_better=False))
+        self.assertTrue(normalized.ok, normalized.summary())
+        self.assertTrue(depletion.ok, depletion.summary())
+
+
 if __name__ == "__main__":
     unittest.main()

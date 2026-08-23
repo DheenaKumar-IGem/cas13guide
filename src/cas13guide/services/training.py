@@ -287,9 +287,26 @@ class CVReport:
     spearman_std: float
     mae_mean: float
     per_fold: tuple[float, ...] = field(default_factory=tuple)
+    #: Folds asked for, as opposed to :attr:`folds`, which counts the ones that
+    #: actually ran. They differ when a fold had an empty train or test side --
+    #: which happens for real, e.g. a three-group screen leaves the training
+    #: split with a single group and every fold is skipped.
+    requested_folds: int = 0
+
+    @property
+    def measured(self) -> bool:
+        """False when no fold ran, so the numbers below mean nothing."""
+        return self.folds > 0
 
     def summary(self) -> str:
         kind = "grouped" if self.grouped else "ungrouped"
+        if not self.measured:
+            # 0.000 formatted like a measurement is worse than saying nothing:
+            # it reads as "no skill" rather than "not measured".
+            return (
+                f"{kind} {self.requested_folds}-fold: NOT MEASURED "
+                "(every fold had an empty train or test split -- too few groups)"
+            )
         return (
             f"{kind} {self.folds}-fold: spearman "
             f"{self.spearman_mean:.3f} +/- {self.spearman_std:.3f}, "
@@ -335,6 +352,7 @@ def cross_validate(
         spearman_std=float(np.std(scores)) if scores else 0.0,
         mae_mean=float(np.mean(maes)) if maes else 0.0,
         per_fold=tuple(scores),
+        requested_folds=k,
     )
 
 

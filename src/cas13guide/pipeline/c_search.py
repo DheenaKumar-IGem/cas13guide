@@ -15,10 +15,10 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 
-from ..contract.enums import Universe
+from ..contract.enums import ASSAY_REQUIRED_UNIVERSES, Universe
 from ..contract.spec import ResolvedDesignSpec
 from ..models.evidence import Candidate, SearchHit
-from ..services.indexes import ExhaustivenessBound, SearchIndex
+from ..services.indexes import ExhaustivenessBound, SearchIndex, is_weaker
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +30,31 @@ class SearchOutcome:
     @property
     def universe_adequate(self) -> bool:
         return not self.universe_gaps
+
+
+def universe_gaps(
+    spec: ResolvedDesignSpec, bound: ExhaustivenessBound
+) -> frozenset[Universe]:
+    """Universes this assay is exposed to that the search did not actually cover.
+
+    Keyed on what the index *proved* it searched (``bound.universes``), not on
+    what the spec declared. Those are different things, and trusting the
+    declaration was a hole straight through the universe-adequacy gate: an
+    index built over a narrower universe set than the spec declares returns a
+    perfectly clean off-target report, and because ``missing_universes`` only
+    ever compared ``ASSAY_REQUIRED`` against ``declared_universes`` the gate saw
+    no gap, raised no REVIEW and recorded no shortfall. In a reproduction, the
+    same spec and transcriptome went from 42 FAIL to 42 PASS with zero
+    off-target rows purely by narrowing the index -- rRNA hits at 5000 TPM
+    simply ceased to exist.
+
+    The declared set is unioned in so that declaring a universe and then not
+    searching it is also a gap; when the index is built from
+    ``declared_universes`` (as every caller in this package does) the result is
+    identical to the old computation.
+    """
+    required = ASSAY_REQUIRED_UNIVERSES[spec.profile.assay]
+    return frozenset((required | spec.context.declared_universes) - bound.universes)
 
 
 def annotate_hit(hit: SearchHit, spec: ResolvedDesignSpec, locus_to_target: dict[str, str]) -> SearchHit:
@@ -60,7 +85,15 @@ def run_search(
 
     for cand in candidates:
         result = index.search(cand.guide_id, cand.spacer, envelope)
-        bound = result.bound
+        # Keep the *weakest* bound rather than the last one written. Both
+        # shipped indexes return a query-independent bound, so today every
+        # iteration writes an equivalent value -- but the SearchIndex Protocol
+        # constrains only the return type, and an index that degrades to a
+        # heuristic for some spacers would have its exhaustive=False bound
+        # overwritten by the next candidate's exhaustive=True one, and the gate
+        # would then pass a guide whose search was never exhaustive.
+        if bound is None or is_weaker(result.bound, bound):
+            bound = result.bound
         hits_by_guide[cand.guide_id] = tuple(
             annotate_hit(h, spec, locus_to_target) for h in result.hits
         )
@@ -78,5 +111,5 @@ def run_search(
     return SearchOutcome(
         hits_by_guide=hits_by_guide,
         bound=bound,
-        universe_gaps=spec.context.missing_universes(spec.profile.assay),
+        universe_gaps=universe_gaps(spec, bound),
     )

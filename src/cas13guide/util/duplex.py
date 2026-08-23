@@ -34,6 +34,13 @@ from .seq import revcomp
 #: Positional weight of a mismatch at either spacer terminus.
 TERMINAL_WEIGHT = 0.25
 
+#: The seed region, as a fraction of spacer length. Inside it a mismatch
+#: carries full weight. Declared once here because ``models/features.py``
+#: derives its ``gc_seed`` window from the same span -- retuning the seed in
+#: one place while the other kept its own literal would leave the model's
+#: features describing a different seed than its penalty.
+SEED_SPAN: tuple[float, float] = (0.35, 0.75)
+
 #: expected_base -> observed_base substitutions that still pair (G-U wobble).
 WOBBLE_SUBSTITUTIONS: frozenset[tuple[str, str]] = frozenset({("C", "U"), ("A", "G")})
 
@@ -90,6 +97,15 @@ def profile_duplex(spacer: str, target_site: str) -> DuplexProfile:
     expected = revcomp(spacer)  # the perfect target site
     length = len(spacer)
 
+    if length == 0:
+        # An empty duplex is vacuously perfect. Returning it beats the
+        # ``IndexError: list index out of range`` the CIGAR builder used to
+        # raise from ``ordered[0]``: nothing about that traceback says
+        # "you passed an empty sequence".
+        return DuplexProfile(
+            length=0, mismatch_positions=(), wobble_positions=(), cigar=""
+        )
+
     mismatches: list[int] = []
     wobbles: list[int] = []
     cigar_parts: list[str] = []
@@ -124,7 +140,7 @@ def profile_duplex(spacer: str, target_site: str) -> DuplexProfile:
     )
 
 
-def seed_weight(spacer_pos: int, length: int, seed_span: tuple[float, float] = (0.35, 0.75)) -> float:
+def seed_weight(spacer_pos: int, length: int, seed_span: tuple[float, float] = SEED_SPAN) -> float:
     """Positional disruption weight for a mismatch at ``spacer_pos``.
 
     Cas13 tolerates terminal mismatches far better than central ones: the

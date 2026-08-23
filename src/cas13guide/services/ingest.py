@@ -243,6 +243,21 @@ def load_screen(
         )
 
     if already_normalized:
+        if not columns.higher_is_better:
+            # The two options contradict each other and the wrong resolution
+            # inverts every training label -- the exact failure this module's
+            # docstring calls fatal. Rank normalization is what makes the
+            # direction flip exact, and already_normalized skips it, so there
+            # is no safe way to honour both. Refuse rather than pick one.
+            report.errors.append(
+                "already_normalized=True with higher_is_better=False: these "
+                "contradict. Pre-normalized values are taken verbatim, so the "
+                "depletion direction cannot be applied without inverting the "
+                "labels. Either pre-flip the values yourself and pass "
+                "higher_is_better=True, or drop already_normalized and let "
+                "rank normalization apply the flip exactly."
+            )
+            return [], report
         out_of_range = [v for v in raw_activity if not 0.0 <= v <= 1.0]
         if out_of_range:
             report.errors.append(

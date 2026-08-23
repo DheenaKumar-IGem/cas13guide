@@ -134,6 +134,7 @@ def record_wetlab_result(
     stratum: str,
     predicted: float,
     observed: float,
+    group: str | None = None,
 ) -> None:
     """Route a measured assay outcome to the calibration service (fix #9).
 
@@ -141,5 +142,13 @@ def record_wetlab_result(
     destination -- it changes what you asked for, not how well you can answer.
     Sent here instead, every experiment narrows the intervals that the gate,
     the metrics and the ranking all read.
+
+    ``group`` is the independent unit the measurement came from -- the
+    transcript, not the well. Without it the stratum accumulates rows with no
+    group labels, and ``CalibrationService._groups_adequate`` treats a stratum
+    with zero labels as unjudgeable-so-acceptable: the MIN_STRATUM_GROUPS check
+    switches itself off for exactly the feedback path, and a bound built from
+    a single transcript's worth of wet-lab data comes back looking certified.
+    Pass it whenever the transcript is known.
     """
-    calibration.add_observation(stratum, predicted, observed)
+    calibration.add_observation(stratum, predicted, observed, group=group)
