@@ -9,7 +9,7 @@ number from being produced for a case nobody ever validated.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from ..contract.effectors import EFFECTORS
@@ -52,6 +52,12 @@ class ActivityModel(Protocol):
 @runtime_checkable
 class AccessibilityModel(Protocol):
     version: str
+    #: True only for a source independent of the activity model -- a probing
+    #: experiment (SHAPE, DMS-seq, icSHAPE). A thermodynamic fold is a
+    #: prediction from the same sequence the model already sees, so it sets
+    #: this False and is used to rank rather than to tighten a bound. See
+    #: ``services/accessibility.py``.
+    is_independent_evidence: bool
 
     def accessibility(self, sequence: str, start: int, length: int) -> float | None: ...
 
@@ -104,9 +110,47 @@ class NullAccessibilityModel:
     """
 
     version = "accessibility/none/v1"
+    #: Moot -- this model never returns a value -- but the attribute has to
+    #: exist for the Protocol to be satisfiable.
+    is_independent_evidence = False
 
     def accessibility(self, sequence: str, start: int, length: int) -> float | None:
         return None
+
+
+@runtime_checkable
+class DuplexEnergyModel(Protocol):
+    """Seam for guide:target hybridization energy (FR5.1)."""
+
+    version: str
+
+    def duplex_dg_per_nt(self, spacer: str, target_site: str) -> float | None: ...
+
+
+class NullDuplexEnergyModel:
+    """No thermodynamic evidence. ``None`` means unmeasured, not zero."""
+
+    version = "thermodynamics/none/v1"
+
+    def duplex_dg_per_nt(self, spacer: str, target_site: str) -> float | None:
+        return None
+
+
+@runtime_checkable
+class KineticsModel(Protocol):
+    """Seam for collateral-cleavage signal prediction (FR6.1, FR6.2)."""
+
+    version: str
+
+    def predict(self, activity_lower: float, accessibility: float | None = None): ...
+
+
+def _null_kinetics():
+    # Imported lazily: services.kinetics pulls in numpy, and registry is on the
+    # import path of every module in the package.
+    from .kinetics import NullKineticsModel
+
+    return NullKineticsModel()
 
 
 @dataclass(slots=True)
@@ -115,6 +159,16 @@ class ModelRegistry:
 
     activity: ActivityModel
     accessibility: AccessibilityModel
+    #: Optional so every existing two-argument construction keeps working.
+    energy: DuplexEnergyModel = field(default_factory=NullDuplexEnergyModel)
+    #: Collateral-cleavage kinetics (FR6). Only consulted when the assay treats
+    #: collateral activity as the *readout* rather than as a hazard.
+    kinetics: "KineticsModel" = field(default_factory=lambda: _null_kinetics())
 
     def versions(self) -> dict[str, str]:
-        return {"activity": self.activity.version, "accessibility": self.accessibility.version}
+        return {
+            "activity": self.activity.version,
+            "accessibility": self.accessibility.version,
+            "energy": self.energy.version,
+            "kinetics": self.kinetics.version,
+        }

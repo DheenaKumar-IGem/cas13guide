@@ -146,6 +146,18 @@ class Thresholds(_Frozen):
     required_search_mismatches: int = 4
     #: Nominal miscoverage for the conformal calibration service.
     alpha: Fraction = 0.10
+    #: FR3.4 -- mean unpaired probability below which the intended site counts
+    #: as too structured, raising an R1 REVIEW. ``0.0`` disables the check, which
+    #: is the default: what counts as "too structured" is an assay decision, and
+    #: a threshold nobody chose should not silently start flagging designs.
+    min_accessibility: Fraction = 0.0
+    #: FR5.2 -- optimal guide:target duplex free-energy window, kcal/mol/nt.
+    #: ``low`` is the more-negative (more stable) end. Both default to ``None``
+    #: (no flagging): the window is assay-specific, and
+    #: ``services.thermodynamics.summarize`` derives one from your own
+    #: candidates rather than this package asserting a number it did not measure.
+    duplex_dg_per_nt_min: float | None = None
+    duplex_dg_per_nt_max: float | None = None
 
 
 class SearchBudget(_Frozen):

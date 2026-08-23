@@ -17,7 +17,12 @@ classifiers = [
 dependencies = ["pydantic>=2.5", "numpy>=1.26"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "hypothesis>=6.90"]
+# ViennaRNA (DR2) powers structural accessibility (FR3.x) and duplex free
+# energy (FR5.x). Optional rather than required: the pipeline runs without it
+# via NullAccessibilityModel / NullDuplexEnergyModel, which report "no
+# evidence" rather than guessing, and the tests that need it skip themselves.
+structure = ["ViennaRNA>=2.6"]
+dev = ["pytest>=7.4", "hypothesis>=6.90", "ViennaRNA>=2.6"]
 
 [project.scripts]
 cas13guide = "cas13guide.cli:main"

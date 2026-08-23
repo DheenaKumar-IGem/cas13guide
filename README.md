@@ -29,7 +29,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 302 tests
+python -m unittest discover -s tests -t tests    # 335 tests
 pytest                              # same suite under pytest
 ```
 
@@ -152,6 +152,68 @@ uncalibrated, the gate now says so: the verdict is still FAIL, but the reason
 distinguishes "nothing has been measured" from "this guide misses its target",
 which point at completely different fixes.
 
+## Diagnostic scoring: accessibility, thermodynamics, signal
+
+Three axes that a knockdown designer does not need and a diagnostic one cannot
+work without. All three sit behind Protocols with Null implementations, so the
+package still runs — reporting *no evidence* rather than guessing — when
+ViennaRNA is absent.
+
+```bash
+pip install -e ".[structure]"      # adds ViennaRNA (DR2)
+python examples/demo_diagnostic.py
+```
+
+**Structural accessibility (FR3.x)** — `RNAplfold` in sliding 70-nt windows,
+not a global fold: base pairs spanning kilobases dominate a global partition
+function while being far less relevant in a cell, and local folding is
+`O(n·W²)` instead of `O(n³)`.
+
+A fold is deliberately **not** fed to the activity model. The design credits
+accessibility to the model only from a source independent of it — SHAPE,
+DMS-seq, icSHAPE — and a ViennaRNA fold is a prediction from the very sequence
+the model already sees. Letting it in would have one computation vouch for
+another and narrow a bound nothing new has constrained. So a computed fold
+carries `is_independent_evidence = False`: it *ranks* candidates and can raise a
+review, but never tightens a calibrated interval. A real probing track plugs
+into the same Protocol, sets the flag `True`, and does reach the model.
+
+**Duplex free energy (FR5.x)** — `RNAduplex`, reported per nucleotide so specs
+transfer across spacer lengths. It is the one quantity here that is **never a
+Pareto objective**, because it has an *optimum rather than a direction*: too
+weak and the guide will not stay bound (no signal), too strong and it tolerates
+mismatches it should reject (no discrimination). Every objective in
+`MetricVector.objectives()` is oriented larger-is-better, and forcing an
+interior optimum into that frame would make the frontier claim the most tightly
+bound guide dominates — exactly backwards. It is reported and range-flagged
+instead. The window is assay-specific, so it defaults to *off*;
+`thermodynamics.summarize()` derives one from your own candidates.
+
+**Predicted signal (FR6.x)** — a two-state ODE (activation, then
+Michaelis–Menten trans-cleavage of the reporter) integrated over the assay
+window with RK4. Effective target concentration is the nominal concentration
+scaled by the guide's calibrated activity **lower** bound and its site
+accessibility: a bright signal predicted off the wide end of an uncertain
+interval is a hope, not a prediction.
+
+Two things this refuses to do:
+
+- **It will not emit absolute units from placeholder constants.** The real rate
+  constants (Feng et al. 2024) are not in this repository. `relative_signal()`
+  works regardless — a within-run ranking is invariant to the constants that
+  scale it — but `absolute_signal()` raises until constants are supplied with
+  `provisional=False`. A fluorescence figure in nM derived from stand-ins is a
+  fabricated measurement wearing a unit label.
+- **It will not rank knockdown guides by collateral cleavage.** Collateral is
+  the *readout* of a detection assay and a *hazard* in a cell assay;
+  `EffectorAssayProfile.collateral_is_hazard` already records which, and the
+  objective is emitted only where signal is a benefit.
+
+The shipped placeholder constants are also tuned to keep the assay in its
+linear regime. A saturating assay scores every candidate 1.0 — not a weak
+ranking but no ranking at all — and `SignalPrediction.saturated` says when real
+constants have that problem.
+
 ## Choosing a search index
 
 Two exhaustive indexes ship, and **neither is universally faster**. Backtracking
@@ -237,7 +299,9 @@ implementation:
 |------|----------------|---------|
 | `SearchIndex` | `ExhaustiveScanIndex`, `FMIndexSearchIndex` (both provably complete), `SeedHeuristicIndex` (honest heuristic) | — already production-shaped |
 | `ActivityModel` | `HeuristicCas13Model`, **`TrainedActivityModel`** (fit by `services/training.py`) | trained CNN, TIGER-style model |
-| `AccessibilityModel` | `NullAccessibilityModel` (returns `None`) | SHAPE / DMS-seq / icSHAPE |
+| `AccessibilityModel` | `NullAccessibilityModel`, **`ViennaRNAAccessibilityModel`** (fold, not independent) | SHAPE / DMS-seq / icSHAPE via `StaticAccessibilityModel` |
+| `DuplexEnergyModel` | `NullDuplexEnergyModel`, **`ViennaRNADuplexEnergyModel`** | any hybridization model |
+| `KineticsModel` | `NullKineticsModel`, **`CollateralKineticsModel`** (provisional constants) | PanCRISP constants from Feng et al. 2024 |
 | `ExpressionSource` | `StaticExpressionSource` | GTEx, user RNA-seq, scRNA panel |
 
 Accessibility returning `None` is deliberate: the design credits it only when it
@@ -246,7 +310,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-302 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+335 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -316,6 +380,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_benchmark.py` | skill/coverage regression gates, wet-lab → calibration |
 | `test_suffixarray.py` | SA-IS vs brute force, edge cases, deliberate recursion-path coverage |
 | `test_presets.py` | miRBase accessions and provenance, mature-miRNA geometry, the amplicon path |
+| `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_ingest.py` | direction flip exactness, fatal vs survivable data problems |
 | `test_acceptance.py` | each criterion measured, rejection names the failure |
 | `test_training.py` | IRLS vs sklearn oracle, grouped splitting, the measured split-bias regimes, unpenalized intercept |

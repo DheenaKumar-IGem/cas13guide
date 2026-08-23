@@ -218,6 +218,18 @@ class DesignReport:
                     "pfs_3prime": r.assessment.candidate.three_prime_flank,
                     "pfs_preferred": r.assessment.qc.pfs_preference == 1.0,
                     "qc_warnings": [w.value for w in r.assessment.qc.warnings],
+                    "accessibility": (
+                        None if r.assessment.metrics.accessibility is None
+                        else round(r.assessment.metrics.accessibility, 4)
+                    ),
+                    "duplex_dg_per_nt": (
+                        None if r.assessment.metrics.duplex_dg_per_nt is None
+                        else round(r.assessment.metrics.duplex_dg_per_nt, 3)
+                    ),
+                    "predicted_signal": (
+                        None if r.assessment.metrics.predicted_signal is None
+                        else round(r.assessment.metrics.predicted_signal, 4)
+                    ),
                     "score": round(r.score, 4),
                     "verdict": r.assessment.gate.verdict.value,
                     "review_tier": (

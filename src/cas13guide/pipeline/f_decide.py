@@ -183,6 +183,48 @@ def gate(
             )
         )
 
+    # FR3.4 -- a site buried in secondary structure. R1, not R2: this is a
+    # borderline *number* from a model we have, not a gap in the evidence. Off
+    # unless the spec sets a floor, because what counts as too structured is an
+    # assay decision.
+    if (
+        t.min_accessibility > 0.0
+        and metrics.accessibility is not None
+        and metrics.accessibility < t.min_accessibility
+    ):
+        review.append(
+            (
+                ReviewTier.R1,
+                ReasonCode.TARGET_INACCESSIBLE,
+                f"intended site mean unpaired probability {metrics.accessibility:.3f} "
+                f"< {t.min_accessibility:.3f}; the target region is highly structured",
+            )
+        )
+
+    # FR5.2 -- duplex free energy outside the optimal window. R1: a borderline
+    # number, not an evidence gap. Silent unless the spec chose a window, since
+    # the optimum is assay-specific and this package does not assert one.
+    if metrics.duplex_dg_per_nt is not None and (
+        t.duplex_dg_per_nt_min is not None or t.duplex_dg_per_nt_max is not None
+    ):
+        low, high = t.duplex_dg_per_nt_min, t.duplex_dg_per_nt_max
+        value = metrics.duplex_dg_per_nt
+        if (low is not None and value < low) or (high is not None and value > high):
+            direction = (
+                "over-stable: tolerates mismatches it should reject, costing "
+                "discrimination"
+                if low is not None and value < low
+                else "too weak: the guide may not stay bound, costing signal"
+            )
+            review.append(
+                (
+                    ReviewTier.R1,
+                    ReasonCode.DUPLEX_ENERGY_OUT_OF_RANGE,
+                    f"duplex {value:.2f} kcal/mol/nt outside "
+                    f"[{low}, {high}] -- {direction}",
+                )
+            )
+
     if review:
         tier = max((r[0] for r in review), key=lambda x: SEVERITY[x.value])
         return GateResult(
@@ -257,6 +299,13 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     # real efficacy signal, but it is a base-composition prior, and it must not
     # be able to outrank evidence about whether the guide hits its target.
     "pfs_preference": 1.0,
+    # Structural accessibility. Only present when an accessibility model was
+    # configured, so this weight is inert on a run without one.
+    "accessibility": 1.5,
+    # Predicted diagnostic signal. Present only for assays where collateral
+    # cleavage is the readout, and weighted high there because it is the thing
+    # the assay actually measures.
+    "predicted_signal": 2.5,
     # Only present in the objective set for allele/SNV tasks, so this weight is
     # inert for every other task. Omitting it did not make the margin a pure
     # constraint -- the gate already enforces tau -- it made the one metric the

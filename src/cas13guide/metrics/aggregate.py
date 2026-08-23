@@ -141,16 +141,81 @@ def discrimination_margin(
     return on / worst_off
 
 
+def intended_accessibility(evidence: tuple[PairEvidence, ...]) -> float | None:
+    """Structural accessibility at the *best* intended site (FR3.3).
+
+    Read at the site the guide is actually judged on -- the highest-LCB
+    intended pair -- rather than averaged over every hit, for the same reason
+    ``required_coverage`` takes a min over targets rather than a mean: an
+    average lets an accessible off-target site paper over a buried on-target
+    one. ``None`` when no accessibility model was configured.
+    """
+    best: tuple[float, float] | None = None
+    for e in evidence:
+        if not e.is_intended or e.accessibility is None:
+            continue
+        rank = benefit_lower(e.activity)
+        if best is None or rank > best[0]:
+            best = (rank, e.accessibility.point)
+    return None if best is None else best[1]
+
+
+def intended_duplex_energy(evidence: tuple[PairEvidence, ...]) -> float | None:
+    """Duplex free energy at the best intended site, kcal/mol/nt (FR5.1).
+
+    Same "best intended site" rule as :func:`intended_accessibility`, so every
+    per-site fact in the metric vector describes the *same* site rather than a
+    flattering mixture of several.
+    """
+    best: tuple[float, float] | None = None
+    for e in evidence:
+        if not e.is_intended or e.duplex_dg_per_nt is None:
+            continue
+        rank = benefit_lower(e.activity)
+        if best is None or rank > best[0]:
+            best = (rank, e.duplex_dg_per_nt)
+    return None if best is None else best[1]
+
+
 def manufacturability(qc: QCResult) -> float:
     """Synthesis/cloning friendliness in ``[0, 1]``; QC failures already gate."""
     score = qc.manufacturability
     return min(max(score, 0.0), 1.0)
 
 
+def predicted_signal(
+    evidence: tuple[PairEvidence, ...],
+    spec: ResolvedDesignSpec,
+    kinetics=None,
+) -> float | None:
+    """Relative predicted fluorescence at the best intended site (FR6.2).
+
+    ``None`` unless the assay treats collateral cleavage as its **readout**.
+    In a knockdown assay collateral is a hazard -- ``EffectorAssayProfile``
+    already records which it is -- and ranking guides by how much collateral
+    they produce would be precisely inverted there.
+    """
+    if kinetics is None or spec.profile.collateral_is_hazard:
+        return None
+    best: tuple[float, float | None] | None = None
+    for e in evidence:
+        if not e.is_intended:
+            continue
+        rank = benefit_lower(e.activity)
+        access = None if e.accessibility is None else e.accessibility.point
+        if best is None or rank > best[0]:
+            best = (rank, access)
+    if best is None:
+        return None
+    prediction = kinetics.predict(best[0], best[1])
+    return None if prediction is None else prediction.relative_signal
+
+
 def build_metric_vector(
     evidence_by_context: dict[str, tuple[PairEvidence, ...]],
     qc: QCResult,
     spec: ResolvedDesignSpec,
+    kinetics=None,
 ) -> MetricVector:
     """Aggregate every context into one metric vector.
 
@@ -186,4 +251,7 @@ def build_metric_vector(
         manufacturability=manufacturability(qc),
         discrimination_margin=min(margins) if margins else None,
         pfs_preference=qc.pfs_preference,
+        accessibility=intended_accessibility(reference),
+        duplex_dg_per_nt=intended_duplex_energy(reference),
+        predicted_signal=predicted_signal(reference, spec, kinetics),
     )

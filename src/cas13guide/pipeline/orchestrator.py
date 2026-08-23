@@ -262,7 +262,8 @@ def run_design(
 
         # ---------------- E + F: aggregate and gate -----------
         assessments = assess_guides(
-            by_id, qc_results, per_guide, bound, universe_gaps, spec
+            by_id, qc_results, per_guide, bound, universe_gaps, spec,
+            kinetics=registry.kinetics,
         )
         passing = [a for a in assessments if a.gate.verdict is Verdict.PASS]
         emit(f"E/F: {len(passing)} PASS of {len(assessments)}")

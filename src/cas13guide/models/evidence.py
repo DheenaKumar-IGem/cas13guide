@@ -84,6 +84,11 @@ class PairEvidence:
     expression: Interval
     hazard_weight: float
     accessibility: Interval | None = None
+    #: Guide:target hybridization free energy, kcal/mol/nt (FR5.1). ``None``
+    #: when no thermodynamics model was configured. Not an Interval and not an
+    #: objective: it has an optimum rather than a direction, so it is reported
+    #: and range-flagged rather than maximized.
+    duplex_dg_per_nt: float | None = None
     #: False when the activity model was asked about a case outside its
     #: declared domain. Distinct from ``activity.ood``, which also covers a
     #: missing calibration stratum -- the gate reports the two separately.
@@ -121,6 +126,20 @@ class MetricVector:
     #: Ortholog PFS *preference* in ``(0, 1]``. A soft efficacy signal, so it
     #: ranks rather than gates -- see ``contract/effectors.py``.
     pfs_preference: float = 1.0
+    #: Mean unpaired probability at the best intended site, or None when no
+    #: accessibility model was supplied. Monotone -- a more open site is a
+    #: better site -- so unlike duplex free energy it can be a Pareto
+    #: objective. Free energy has an *optimum* rather than a direction, so it
+    #: is reported and flagged instead of ranked.
+    accessibility: float | None = None
+    #: Duplex free energy at the best intended site, kcal/mol/nt. Deliberately
+    #: absent from :meth:`objectives`: see ``services/thermodynamics.py``.
+    duplex_dg_per_nt: float | None = None
+    #: Relative predicted fluorescence signal in ``[0, 1]`` (FR6.2). Present
+    #: only when collateral activity is the assay's *readout*; in a knockdown
+    #: assay collateral is a hazard, and ranking guides by how much of it they
+    #: produce would be exactly backwards.
+    predicted_signal: float | None = None
 
     def objectives(self) -> dict[str, float]:
         """Metrics oriented so that larger is always better, for Pareto."""
@@ -135,6 +154,10 @@ class MetricVector:
         }
         if self.discrimination_margin is not None:
             out["discrimination_margin"] = self.discrimination_margin
+        if self.accessibility is not None:
+            out["accessibility"] = self.accessibility
+        if self.predicted_signal is not None:
+            out["predicted_signal"] = self.predicted_signal
         return out
 
 

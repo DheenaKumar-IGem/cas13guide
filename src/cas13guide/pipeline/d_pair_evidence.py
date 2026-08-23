@@ -57,10 +57,17 @@ def evidence_for_hit(
             locus.sequence, hit.start, len(hit.target_site)
         )
 
+    # A computed fold is not independent evidence: it is a prediction from the
+    # same sequence the activity model already sees, and letting it into
+    # predict() would have one computation vouch for another. It is still
+    # recorded below, and it still ranks -- it just does not move the bound.
+    independent = getattr(registry.accessibility, "is_independent_evidence", False)
+    model_accessibility = accessibility_value if independent else None
+
     in_domain = registry.activity.domain.supports(
         spec.profile.effector, len(spacer), hit.duplex.n_mismatch
     )
-    prediction = registry.activity.predict(spacer, hit.duplex, accessibility_value)
+    prediction = registry.activity.predict(spacer, hit.duplex, model_accessibility)
 
     stratum = _stratum_for(spec, hit)
     activity = calibration.interval(prediction, stratum, spec.thresholds.alpha)
@@ -80,7 +87,12 @@ def evidence_for_hit(
 
     accessibility_iv = None
     if accessibility_value is not None:
-        accessibility_iv = Interval.exact(accessibility_value, stratum="accessibility")
+        accessibility_iv = Interval.exact(
+            accessibility_value,
+            stratum="accessibility" if independent else "accessibility/predicted",
+        )
+
+    energy = registry.energy.duplex_dg_per_nt(spacer, hit.target_site)
 
     return PairEvidence(
         guide_id=hit.guide_id,
@@ -91,6 +103,7 @@ def evidence_for_hit(
         expression=expression_iv,
         hazard_weight=hazard_weight,
         accessibility=accessibility_iv,
+        duplex_dg_per_nt=energy,
         domain_ok=in_domain,
     )
 

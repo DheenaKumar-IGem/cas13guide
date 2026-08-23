@@ -23,6 +23,7 @@ def assess_guides(
     bound: ExhaustivenessBound,
     universe_gaps: frozenset[Universe],
     spec: ResolvedDesignSpec,
+    kinetics=None,
 ) -> list[GuideAssessment]:
     assessments: list[GuideAssessment] = []
 
@@ -32,7 +33,7 @@ def assess_guides(
         if not by_context:
             by_context = {"reference": ()}
 
-        metrics = build_metric_vector(by_context, qc, spec)
+        metrics = build_metric_vector(by_context, qc, spec, kinetics)
         # ``is None``, not ``or``: an empty reference tuple is falsy but is
         # still the reference, and must not silently fall through to a
         # variant context whose evidence the metrics were not computed from.

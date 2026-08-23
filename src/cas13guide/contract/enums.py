@@ -127,6 +127,8 @@ class ReasonCode(str, Enum):
     EXPRESSION_UNKNOWN = "expression_unknown"
     BORDERLINE_OFF_TARGET = "borderline_off_target"
     BORDERLINE_COVERAGE = "borderline_coverage"
+    TARGET_INACCESSIBLE = "target_inaccessible"
+    DUPLEX_ENERGY_OUT_OF_RANGE = "duplex_energy_out_of_range"
 
     # --- PASS ---
     CONSTRAINTS_SATISFIED = "constraints_satisfied"
