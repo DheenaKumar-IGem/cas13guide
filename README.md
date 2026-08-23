@@ -68,9 +68,55 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 478 tests
+python -m unittest discover -s tests -t tests    # 502 tests
 pytest                              # same suite under pytest
 ```
+
+## A real trained model on the ActivityModel seam
+
+The built-in `HeuristicCas13Model` saturates — a perfect duplex scores ≈0.93
+whatever the sequence — so the ranking among well-matched guides carries almost
+no information. `services/arc_model.py` replaces it with the **Arc RNAtargeting
+CNN** (Wei et al., *Cell Systems* 2023), running the authors' published
+`guide_nolin_threef` weights as a three-fold ensemble. The weights ship in the
+package under MIT; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+```bash
+pip install -e ".[arc]"      # adds onnxruntime
+```
+
+**Parity is the gate.** `tests/test_arc_model.py` drives 133 guides from the
+reference implementation and reproduces its scores to `<1e-6`. Four things in an
+adapter like this keep every tensor shape valid and every score in range while
+being wrong, and only end-to-end parity sees all four:
+
+| Trap | What it costs |
+|---|---|
+| One-hot channel order is **A, T, C, G**, not ACGT | every score plausible and wrong |
+| Ensemble averages **logits**, then sigmoids | measured: up to 0.037 of score, mean 0.007 — enough to reorder guides |
+| Scalars ordered `linearfold_val, isoform_percent, target_unfold_energy` | silently shifts every prediction |
+| Normalizers `6.48 / 11.93 / 15.67` are training-time values | ditto |
+
+**It needs LinearFold, and there is deliberately no ViennaRNA fallback.** Two of
+the three scalars are folding free energies in LinearFold's **CONTRAfold**
+parameterisation. ViennaRNA — which this package *does* ship — uses the Turner
+model, and its energies are simply different numbers. Substituting them yields a
+confident, in-range, wrong score, which is the one failure this codebase exists
+to prevent. `MFESource` is the seam; without one, `features_for_target()`
+refuses and says why.
+
+**Its domain is one perfect duplex.** The network sees the spacer and its
+intended target's folding; it never sees a mismatched site, so `max_mismatches`
+is `0`. Ask it about an off-target and the pipeline marks the answer
+out-of-domain and widens the interval rather than passing an on-target efficacy
+prediction off as an off-target risk estimate.
+
+> **Two direct repeats are in play.** The Arc training prefix ends in
+> `AACCCCUACCAACUGGUCGGGGUUUGAAAC`; `contract/effectors.py` records
+> `CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU` for RfxCas13d. Neither is a
+> typo of the other, and this package does not pick — a test pins that they
+> differ so nobody "reconciles" them by editing one. Which construct is right
+> for a given experiment is a question for whoever orders the guide.
 
 ## A ranked list is not a panel
 
@@ -511,7 +557,7 @@ implementation:
 | Seam | Reference impl | Drop-in |
 |------|----------------|---------|
 | `SearchIndex` | `ExhaustiveScanIndex`, `FMIndexSearchIndex` (both provably complete), `SeedHeuristicIndex` and **`BlastOffTargetIndex`** (honest heuristics) | — already production-shaped |
-| `ActivityModel` | `HeuristicCas13Model`, **`TrainedActivityModel`** (fit by `services/training.py`) | trained CNN, TIGER-style model |
+| `ActivityModel` | `HeuristicCas13Model`, `TrainedActivityModel` (fit by `services/training.py`), **`ArcActivityModel`** (Wei et al. 2023 weights) | TIGER-style model |
 | `AccessibilityModel` | `NullAccessibilityModel`, **`ViennaRNAAccessibilityModel`** (fold, not independent) | SHAPE / DMS-seq / icSHAPE via `StaticAccessibilityModel` |
 | `DuplexEnergyModel` | `NullDuplexEnergyModel`, **`ViennaRNADuplexEnergyModel`** | any hybridization model |
 | `KineticsModel` | `NullKineticsModel`, **`CollateralKineticsModel`** (provisional constants) | PanCRISP constants from Feng et al. 2024 |
@@ -523,7 +569,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-478 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+502 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -596,6 +642,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_arc_model.py` | 133-guide parity with the reference, channel order, ensemble space, the ViennaRNA refusal |
 | `test_limitations.py` | each warning appears exactly when its condition holds, and not otherwise |
 | `test_webapp.py` | upload and paste round trips, defaults shared with the CLI, errors as messages not tracebacks |
 | `test_blast.py` | short-query flags, strand and length filtering, wobble re-scoring, never claims exhaustiveness |

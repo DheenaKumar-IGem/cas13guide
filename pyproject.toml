@@ -22,7 +22,12 @@ dependencies = ["pydantic>=2.5", "numpy>=1.26"]
 # via NullAccessibilityModel / NullDuplexEnergyModel, which report "no
 # evidence" rather than guessing, and the tests that need it skip themselves.
 structure = ["ViennaRNA>=2.6"]
-dev = ["pytest>=7.4", "hypothesis>=6.90", "ViennaRNA>=2.6"]
+# The Arc RNAtargeting CNN (services/arc_model.py). The weights ship in the
+# package; onnxruntime does not. Note it still needs a LinearFold CONTRAfold
+# energy source, which this package deliberately does not supply -- see
+# THIRD_PARTY_LICENSES.md and the module docstring.
+arc = ["onnxruntime>=1.17"]
+dev = ["pytest>=7.4", "hypothesis>=6.90", "ViennaRNA>=2.6", "onnxruntime>=1.17"]
 
 [project.scripts]
 cas13guide = "cas13guide.cli:main"
@@ -33,7 +38,7 @@ where = ["src"]
 # Ships the PEP 561 marker so downstream type checkers actually read the
 # annotations this package is fully written with.
 [tool.setuptools.package-data]
-cas13guide = ["py.typed"]
+cas13guide = ["py.typed", "models/arc/*.onnx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
