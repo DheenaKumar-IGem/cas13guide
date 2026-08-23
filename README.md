@@ -50,7 +50,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 380 tests
+python -m unittest discover -s tests -t tests    # 401 tests
 pytest                              # same suite under pytest
 ```
 
@@ -235,6 +235,30 @@ linear regime. A saturating assay scores every candidate 1.0 — not a weak
 ranking but no ranking at all — and `SignalPrediction.saturated` says when real
 constants have that problem.
 
+## The report
+
+`design --out DIR` writes four files: `candidates.csv`, `candidates.fasta`,
+`candidates_controls.fasta`, and `candidates.html`.
+
+The HTML is one self-contained page — inline CSS and JS, an SVG accessibility
+track drawn from the data, **no CDN and no external requests**. That is not
+fussiness: a report that fetches a script at open time stops working on an
+air-gapped lab machine, behind a proxy, or in three years. It sorts and filters
+client-side (FR8.2), marks the top guides on the target's accessibility track
+(FR8.4), reflows to a phone (NFR5), and explains every score in plain English
+(NFR6) — including the two things the numbers cannot say for themselves: that a
+bundled calibration is synthetic, and that predicted signal is relative.
+
+Sequence names come from user files, so everything is HTML-escaped on the way
+in; there are tests for a `<script>` in a spacer and for a label trying to break
+out of an SVG `<title>`.
+
+What this is **not** is a web server. FR1.2's upload and NFR2's "no command-line
+knowledge" need one, and the framework choice belongs to whoever deploys it.
+Everything a server would render is a pure function of
+`DesignReport.to_dict()`, so wrapping it is a handful of lines rather than a
+rewrite.
+
 ## Variants and conserved regions
 
 ```bash
@@ -356,7 +380,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-380 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+401 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -429,6 +453,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_report_html.py` | balanced markup, no external requests, sort keys on every cell, escaping of untrusted names, score glossary completeness |
 | `test_ingest.py` | direction flip exactness, fatal vs survivable data problems |
 | `test_acceptance.py` | each criterion measured, rejection names the failure |
 | `test_training.py` | IRLS vs sklearn oracle, grouped splitting, the measured split-bias regimes, unpenalized intercept |

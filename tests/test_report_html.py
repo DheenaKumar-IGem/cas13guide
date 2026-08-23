@@ -1,0 +1,228 @@
+"""The HTML report (FR8.2, FR8.4, NFR5, NFR6)."""
+
+import html.parser
+import re
+import tempfile
+import unittest
+from pathlib import Path
+
+from helpers import *  # noqa: F401,F403
+
+from cas13guide.services.report_html import (
+    SCORE_GLOSSARY,
+    TABLE_COLUMNS,
+    AccessibilityTrack,
+    render_report,
+    write_report,
+)
+
+REPORT = {
+    "spec_fingerprint": "abc123",
+    "verdict_counts": {"PASS": 2, "REVIEW": 1, "FAIL": 4},
+    "review_rate": 0.1429,
+    "ranked": [
+        {
+            "rank": 1, "guide_id": "g_one", "spacer": "AUGCAUGCAUGCAUGCAUGCAU",
+            "score": 7.5, "verdict": "PASS", "review_tier": None, "start": 10,
+            "spans_junction": False, "pfs_3prime": "A", "pfs_preferred": True,
+            "accessibility": 0.61, "duplex_dg_per_nt": -1.9, "predicted_signal": 0.14,
+            "reasons": ["constraints_satisfied"], "qc_warnings": [],
+            "metrics": {"required_coverage": 0.81, "worst_off_target": 0.0,
+                        "cumulative_burden": 0.0, "robustness": 0.79},
+        },
+        {
+            "rank": 2, "guide_id": "g_two", "spacer": "GCAUGCAUGCAUGCAUGCAUGC",
+            "score": 5.1, "verdict": "REVIEW", "review_tier": "R2", "start": 40,
+            "spans_junction": True, "pfs_3prime": "G", "pfs_preferred": False,
+            "accessibility": 0.22, "duplex_dg_per_nt": -2.4, "predicted_signal": 0.05,
+            "reasons": ["expression_unknown"], "qc_warnings": ["pfs_disfavoured"],
+            "metrics": {"required_coverage": 0.55, "worst_off_target": 0.3,
+                        "cumulative_burden": 0.4, "robustness": 0.51},
+        },
+    ],
+    "controls": [
+        {"guide_id": "ctrl_one", "spacer": "UACGUACGUACGUACGUACGUA",
+         "matched_to": "g_one", "gc": 0.5, "verified_no_hits": True},
+    ],
+    "shortfalls": ["search escalation budget exhausted"],
+    "validation_plan": ["Transfect the panel alongside controls."],
+    "provenance": {"records": [{"kind": "model", "name": "activity",
+                                "version": "model/heuristic-cas13/v1"}]},
+}
+
+
+class _Balanced(html.parser.HTMLParser):
+    VOID = {"meta", "br", "input", "img", "hr", "link", "rect", "polyline", "text", "path"}
+
+    def __init__(self):
+        super().__init__()
+        self.stack: list[str] = []
+        self.mismatched: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in self.VOID:
+            self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if self.stack and self.stack[-1] == tag:
+            self.stack.pop()
+        elif tag in self.stack:
+            self.mismatched.append(tag)
+            self.stack.remove(tag)
+
+
+class TestRenderedPage(unittest.TestCase):
+    def setUp(self):
+        self.text = render_report(REPORT, title="T", subtitle="S")
+
+    def test_the_markup_is_balanced(self):
+        parser = _Balanced()
+        parser.feed(self.text)
+        self.assertEqual(parser.stack, [])
+        self.assertEqual(parser.mismatched, [])
+
+    def test_it_is_self_contained(self):
+        """A report that fetches a script stops working offline or in 3 years."""
+        self.assertEqual(re.findall(r'(?:src|href)\s*=\s*["\']https?://', self.text), [])
+        self.assertNotIn("cdn.", self.text)
+        self.assertIn("<style>", self.text)
+        self.assertIn("<script>", self.text)
+
+    def test_every_ranked_guide_has_a_row(self):
+        self.assertEqual(self.text.count("<tr data-verdict="), len(REPORT["ranked"]))
+
+    def test_rows_carry_their_verdict_for_filtering(self):
+        self.assertIn('data-verdict="PASS"', self.text)
+        self.assertIn('data-verdict="REVIEW"', self.text)
+
+    def test_every_cell_carries_a_sort_key(self):
+        """FR8.2 sorting is by data-sort, so a missing one silently mis-sorts."""
+        rows = re.findall(r"<tr data-verdict=.*?</tr>", self.text, re.S)
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row.count("<td"), len(TABLE_COLUMNS))
+            self.assertEqual(row.count("data-sort="), len(TABLE_COLUMNS))
+
+    def test_metrics_are_pulled_out_of_the_nested_dict(self):
+        """Coverage and robustness live under `metrics`, not at the top level."""
+        self.assertIn("0.81", self.text)     # required_coverage
+        self.assertIn("0.79", self.text)     # robustness
+
+    def test_missing_values_render_as_a_dash_not_none(self):
+        self.assertNotIn(">None<", self.text)
+        self.assertIn("—", self.text)
+
+    def test_html_in_the_data_is_escaped(self):
+        """Sequence names come from user files, so they are untrusted input."""
+        hostile = {
+            **REPORT,
+            "ranked": [{**REPORT["ranked"][0],
+                        "spacer": "<script>alert(1)</script>",
+                        "pfs_3prime": "A&B<C"}],
+            "controls": [{**REPORT["controls"][0],
+                          "guide_id": "<img src=x onerror=alert(1)>"}],
+            "shortfalls": ["<b>bold</b>"],
+        }
+        text = render_report(hostile)
+        self.assertNotIn("<script>alert(1)</script>", text)
+        self.assertNotIn("<img src=x", text)
+        self.assertNotIn("<b>bold</b>", text)
+        self.assertIn("&lt;script&gt;", text)
+        self.assertIn("A&amp;B&lt;C", text)
+
+    def test_a_hostile_guide_label_cannot_break_out_of_the_svg(self):
+        track = AccessibilityTrack(
+            name="x", profile=[0.5, 0.5, 0.5],
+            guides=[(0, 2, "</title><script>alert(1)</script>")],
+        )
+        text = render_report(REPORT, tracks=[track])
+        self.assertNotIn("<script>alert(1)</script>", text)
+        self.assertIn("&lt;/title&gt;", text)
+
+
+class TestScoreExplanations(unittest.TestCase):
+    """NFR6 -- a reviewer should not have to read the source."""
+
+    def test_every_displayed_column_is_explained(self):
+        for column in TABLE_COLUMNS:
+            self.assertIn(column, SCORE_GLOSSARY, f"{column} has no explanation")
+
+    def test_the_glossary_is_rendered(self):
+        text = render_report(REPORT)
+        self.assertEqual(text.count("<dt>"), len(TABLE_COLUMNS))
+        for column in TABLE_COLUMNS:
+            self.assertIn(SCORE_GLOSSARY[column][0], text)
+
+    def test_the_bound_asymmetry_is_explained_not_just_shown(self):
+        coverage = SCORE_GLOSSARY["required_coverage"][1].lower()
+        hazard = SCORE_GLOSSARY["worst_off_target"][1].lower()
+        self.assertIn("lower", coverage)
+        self.assertIn("upper", hazard)
+
+    def test_the_signal_caveat_is_stated(self):
+        self.assertIn("within this run", SCORE_GLOSSARY["predicted_signal"][1])
+
+    def test_caller_notes_are_shown_prominently(self):
+        text = render_report(REPORT, notes=["calibration is SYNTHETIC"])
+        self.assertIn("calibration is SYNTHETIC", text)
+        self.assertIn('class="note"', text)
+
+
+class TestAccessibilityTrackVisual(unittest.TestCase):
+    """FR8.4 -- a visual for the top-ranked candidates."""
+
+    def _track(self):
+        return AccessibilityTrack(
+            name="target (60 nt)",
+            profile=[i / 60 for i in range(60)],
+            guides=[(10, 22, "#1 g_one"), (40, 22, "#2 g_two")],
+        )
+
+    def test_the_track_is_drawn_as_inline_svg(self):
+        text = render_report(REPORT, tracks=[self._track()])
+        self.assertIn('<svg class="track"', text)
+        self.assertIn("<polyline", text)
+
+    def test_guides_are_marked_and_labelled(self):
+        text = render_report(REPORT, tracks=[self._track()])
+        svg = re.search(r"<svg class=\"track\".*?</svg>", text, re.S).group(0)
+        self.assertEqual(svg.count("<title>"), 2)   # page <title> is not in here
+        self.assertIn("#1 g_one", svg)
+        self.assertIn("#2 g_two", svg)
+
+    def test_an_empty_profile_says_so_rather_than_drawing_nothing(self):
+        text = render_report(
+            REPORT, tracks=[AccessibilityTrack(name="x", profile=[])]
+        )
+        self.assertIn("no accessibility profile", text)
+
+    def test_probabilities_outside_the_unit_interval_are_clamped(self):
+        """A bad profile must not draw a line off the top of the chart."""
+        track = AccessibilityTrack(name="x", profile=[-1.0, 0.5, 2.0])
+        text = render_report(REPORT, tracks=[track])
+        points = re.search(r'points="([^"]+)"', text).group(1)
+        ys = [float(pair.split(",")[1]) for pair in points.split()]
+        self.assertTrue(all(0 <= y <= 92 for y in ys), ys)
+
+
+class TestEmptyAndDegenerateReports(unittest.TestCase):
+    def test_no_candidates_explains_itself(self):
+        text = render_report({"verdict_counts": {"PASS": 0, "REVIEW": 0, "FAIL": 9},
+                              "ranked": [], "shortfalls": ["nothing cleared the gate"]})
+        self.assertIn("No guide cleared the gate", text)
+        self.assertIn("nothing cleared the gate", text)
+
+    def test_a_bare_report_still_renders(self):
+        parser = _Balanced()
+        parser.feed(render_report({}))
+        self.assertEqual(parser.stack, [])
+
+    def test_write_report_creates_missing_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = write_report(REPORT, Path(directory) / "nested" / "r.html")
+            self.assertTrue(path.exists())
+            self.assertGreater(path.stat().st_size, 1000)
+
+
+if __name__ == "__main__":
+    unittest.main()

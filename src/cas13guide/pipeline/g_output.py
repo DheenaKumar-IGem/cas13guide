@@ -215,6 +215,9 @@ class DesignReport:
                     "guide_id": r.assessment.guide_id,
                     "spacer": r.assessment.spacer,
                     "spans_junction": r.assessment.candidate.spans_junction,
+                    # 0-based start of the target site on its source target,
+                    # so a report can place the guide on an accessibility track.
+                    "start": r.assessment.candidate.start,
                     "pfs_3prime": r.assessment.candidate.three_prime_flank,
                     "pfs_preferred": r.assessment.qc.pfs_preference == 1.0,
                     "qc_warnings": [w.value for w in r.assessment.qc.warnings],

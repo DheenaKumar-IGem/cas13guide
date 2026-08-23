@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import pathlib
 import sys
 from pathlib import Path
 
@@ -332,7 +333,50 @@ def _design(args: argparse.Namespace) -> int:
             print(f"  ! {shortfall}")
 
     if args.out:
+        # FR8.2/FR8.4/NFR5/NFR6 -- one self-contained page: sortable, filterable,
+        # with an accessibility track and an explanation of every score.
+        from .services.report_html import AccessibilityTrack, write_report
+
+        tracks = []
+        profile_source = getattr(accessibility, "unpaired_profile", None)
+        if profile_source is not None and records:
+            # Mark the top-ranked guides on the track so a reader can see
+            # whether the ranking simply followed the open regions.
+            marks = [
+                (row.get("start", 0), spec.spacer_length,
+                 f"#{row['rank']} {row['guide_id']}")
+                for row in data["ranked"][: args.track_guides]
+            ]
+            try:
+                tracks = [
+                    AccessibilityTrack(
+                        name=f"{records[0].name} ({len(records[0].sequence)} nt)",
+                        profile=profile_source(records[0].sequence),
+                        guides=marks,
+                    )
+                ]
+            except Exception:
+                tracks = []
+
+        html_path = write_report(
+            data,
+            pathlib.Path(args.out) / f"{args.stem}.html",
+            title=f"Cas13 guide design - {records[0].name}",
+            subtitle=(
+                f"{effector.value} / {assay.value} / {spec.spacer_length} nt spacer  |  "
+                f"spec {spec.fingerprint()}"
+            ),
+            tracks=tracks,
+            notes=[
+                "The bundled calibration is SYNTHETIC. Bounds here are "
+                "exercisable, not earned - supply real screen data before "
+                "relying on them.",
+                "Predicted signal is RELATIVE and comparable only within this "
+                "run: the kinetic constants shipped by default are placeholders.",
+            ],
+        )
         written = write_exports(data, args.out, stem=args.stem)
+        written["html"] = html_path
         print("\nwrote:")
         for label, path in written.items():
             print(f"  {label:9s} {path}")
@@ -411,6 +455,8 @@ def main(argv: list[str] | None = None) -> int:
     design.add_argument("--calibration-noise", type=float, default=0.10)
     design.add_argument("--out", help="directory to write CSV/FASTA exports into (FR8.3)")
     design.add_argument("--stem", default="candidates")
+    design.add_argument("--track-guides", type=int, default=5,
+                        help="how many top guides to mark on the accessibility track")
     design.set_defaults(func=_design)
 
     args = parser.parse_args(argv)
