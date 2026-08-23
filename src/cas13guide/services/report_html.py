@@ -64,7 +64,9 @@ class AccessibilityTrack:
     guides: Sequence[tuple[int, int, str]] = ()
 
 
-_CSS = """
+#: Shared with ``services/webapp.py`` so the form and the report look like one
+#: product. Public because it crosses a module boundary.
+REPORT_CSS = """
 :root{--bg:#fbfbfd;--fg:#16181d;--muted:#5b6270;--line:#e3e6ec;--card:#fff;
 --pass:#0f7b4f;--review:#a86a00;--fail:#b4232c;--accent:#2f5fd0;--track:#dfe5f3}
 @media (prefers-color-scheme:dark){:root{--bg:#14161b;--fg:#e9ecf2;--muted:#9aa3b2;
@@ -323,7 +325,7 @@ def render_report(
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(title)}</title><style>{_CSS}</style></head>
+<title>{html.escape(title)}</title><style>{REPORT_CSS}</style></head>
 <body><div class="wrap">
 <h1>{html.escape(title)}</h1>
 <div class="sub">{html.escape(subtitle)}</div>

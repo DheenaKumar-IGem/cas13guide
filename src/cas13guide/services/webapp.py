@@ -30,7 +30,7 @@ from urllib.parse import parse_qs
 
 from ..contract.enums import AssayType, Effector, Task
 from ..contract.presets import get_preset, preset_ids
-from .report_html import AccessibilityTrack, _CSS, render_report
+from .report_html import REPORT_CSS, AccessibilityTrack, render_report
 from .workflow import DesignRequest, DesignRequestError, run_request
 
 #: Upload ceiling. A transcript is kilobytes; anything past this is a mistake or
@@ -65,7 +65,7 @@ def _form_page(message: str = "", is_error: bool = False) -> str:
     )
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cas13 guide design</title><style>{_CSS}
+<title>Cas13 guide design</title><style>{REPORT_CSS}
 label{{display:block;font-size:.85rem;font-weight:600;margin:14px 0 4px}}
 textarea{{width:100%;min-height:130px;background:var(--card);color:var(--fg);
 border:1px solid var(--line);border-radius:8px;padding:10px;

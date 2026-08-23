@@ -61,7 +61,6 @@ coverage. All three are grouped by transcript.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 import numpy as np
