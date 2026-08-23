@@ -275,11 +275,38 @@ def _design(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
 
-    context = DesignContext(
-        "reference", world, ExhaustiveScanIndex(world, universes),
-        {record.name: record.name for record in records},
-    )
-    report = run_design(spec, [context], registry, calibration,
+    contexts = [
+        DesignContext(
+            "reference", world, ExhaustiveScanIndex(world, universes),
+            {record.name: record.name for record in records},
+        )
+    ]
+
+    # ---------------- variants (FR7.1, FR7.2) ----------------
+    if args.variants:
+        from .services.conservation import summarize_conservation, variant_contexts
+
+        variant_records = read_fasta(args.variants)
+        primary = records[0]
+        combined = [primary] + list(variant_records)
+
+        # FR7.1 -- can a single shared guide exist at all, and where?
+        summary = summarize_conservation(
+            combined, spec.spacer_length, max_mismatches=args.conserved_mismatches
+        )
+        print(f"\nconservation ({len(variant_records)} variant(s)): {summary.summary()}")
+        if not summary.designable:
+            print("  proceeding anyway; robustness will show which variants each "
+                  "guide loses.", file=sys.stderr)
+
+        # FR7.2 -- one context per variant, so `robustness` (the minimum
+        # required coverage across contexts) flags any guide that loses one.
+        contexts = variant_contexts(
+            combined, universes, target_id=primary.name,
+            biotype=Universe.NCRNA, expression=args.expression,
+        )
+
+    report = run_design(spec, contexts, registry, calibration,
                         panel_size=args.panel_size)
 
     # ---------------- output (FR8.1, FR8.2, FR8.3) ----------------
@@ -288,12 +315,17 @@ def _design(args: argparse.Namespace) -> int:
           f"review_rate={report.review_rate:.0%}")
     rows = data["ranked"][: args.top]
     if rows:
+        robust = "robust" if args.variants else ""
         print(f"\n{'rank':>4}  {'spacer':32s} {'score':>6} {'access':>7} "
-              f"{'dG/nt':>7} {'signal':>7} {'PFS':>4}")
+              f"{'dG/nt':>7} {'signal':>7} {'PFS':>4} {robust:>7}")
         for row in rows:
+            # FR7.2: robustness is the worst required coverage across the
+            # variant contexts, so a guide that loses one shows it here.
+            worst = (f"{row['metrics']['robustness']:.3f}" if args.variants else "")
             print(f"{row['rank']:>4}  {row['spacer']:32s} {row['score']:>6.2f} "
                   f"{str(row['accessibility']):>7} {str(row['duplex_dg_per_nt']):>7} "
-                  f"{str(row['predicted_signal']):>7} {str(row['pfs_3prime']):>4}")
+                  f"{str(row['predicted_signal']):>7} {str(row['pfs_3prime']):>4} "
+                  f"{worst:>7}")
     else:
         print("\nno guide cleared the gate.")
         for shortfall in data["shortfalls"]:
@@ -344,6 +376,11 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--list-presets", action="store_true",
                         help="list the built-in targets and exit")
     source.add_argument("--background", help="FASTA of additional off-target sequences")
+    source.add_argument("--variants", help="FASTA of related sequences (isoforms, "
+                                           "strain variants) a shared guide must "
+                                           "also work against (FR7.1, FR7.2)")
+    source.add_argument("--conserved-mismatches", type=int, default=0,
+                        help="mismatches tolerated when calling a region conserved")
 
     design.add_argument("--effector", default="LwaCas13a",
                         choices=["LwaCas13a", "RfxCas13d", "PspCas13b"])

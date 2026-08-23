@@ -50,7 +50,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 364 tests
+python -m unittest discover -s tests -t tests    # 380 tests
 pytest                              # same suite under pytest
 ```
 
@@ -235,6 +235,31 @@ linear regime. A saturating assay scores every candidate 1.0 — not a weak
 ranking but no ranking at all — and `SignalPrediction.saturated` says when real
 constants have that problem.
 
+## Variants and conserved regions
+
+```bash
+cas13guide design --fasta target.fa --variants isoforms.fa
+# conservation (2 variant(s)): 58/193 windows reach every variant within <=0 mismatches
+```
+
+**Conservation is measured in duplex space, not sequence space.** The obvious
+implementation compares variants for identity, and that is the wrong question:
+what matters is not whether two variants carry the same letter but whether one
+spacer still *pairs* with both — and Cas13 binds RNA:RNA, so a G–U wobble is a
+real base pair at a position where the variants differ. An identity-based
+comparison discards guides that work perfectly well against every variant, and
+does it silently. A window's conservation is therefore the worst *duplex*
+mismatch its spacer incurs against any variant, computed by the same
+wobble-aware exhaustive index the off-target search uses.
+
+FR7.1 (*where can a shared guide exist*) is `services/conservation.py`. FR7.2
+(*flag guides that lose a variant*) is the pipeline's existing `robustness`
+metric — the minimum required coverage across contexts — and
+`variant_contexts()` is what feeds it, one context per variant, all naming the
+same target. A window that reaches no site at all in some variant reports
+`worst_mismatches = None` rather than a large number: "no site" is worse than
+any finite mismatch count and must not be flattened into one.
+
 ## Choosing a search index
 
 Two exhaustive indexes ship, and **neither is universally faster**. Backtracking
@@ -331,7 +356,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-364 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+380 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -403,6 +428,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_presets.py` | miRBase accessions and provenance, mature-miRNA geometry, the amplicon path |
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
+| `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
 | `test_ingest.py` | direction flip exactness, fatal vs survivable data problems |
 | `test_acceptance.py` | each criterion measured, rejection names the failure |
 | `test_training.py` | IRLS vs sklearn oracle, grouped splitting, the measured split-bias regimes, unpenalized intercept |
