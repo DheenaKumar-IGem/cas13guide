@@ -1,0 +1,191 @@
+"""End-to-end demo: knock down a transcript in cell culture.
+
+Builds a small but structurally honest world -- an intended transcript, a
+paralog that shares a near-cognate site, an unmeasured lncRNA, an rRNA decoy
+and a variant haplotype context -- then runs the full pipeline and prints the
+report.
+"""
+
+from __future__ import annotations
+
+import json
+import random
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from cas13guide.contract.enums import AssayType, Effector, Task, TargetClass, Universe
+from cas13guide.contract.spec import (
+    ContextScope,
+    EffectorAssayProfile,
+    ResolvedDesignSpec,
+    TargetContract,
+    TargetSpec,
+)
+from cas13guide.pipeline.orchestrator import DesignContext, run_design
+from cas13guide.services.calibration import CalibrationService
+from cas13guide.services.registry import (
+    HeuristicCas13Model,
+    ModelRegistry,
+    NullAccessibilityModel,
+)
+from cas13guide.services.transcriptome import Locus, Transcriptome
+
+RNG = random.Random(11)
+
+
+def random_rna(n: int) -> str:
+    return "".join(RNG.choice("AUGC") for _ in range(n))
+
+
+TARGET = (
+    "AUGGCACUGAAGUCCAUCGACUGGAACUUCCGAGUGCAUGGCAUUACCGAGUCCUAUGGCAAGUUCGAC"
+    "CUGAUCGAGAAGUGCCUGGAAUCCAUGGGCUACCGAGAUCUGGCCAAGUUCGGCAUCUAA"
+)
+
+
+def build_world() -> tuple[Transcriptome, Transcriptome, dict[str, str]]:
+    """Reference transcriptome, a variant-haplotype context, and locus->target."""
+    reference = Transcriptome("GRCh38", "v44")
+    reference.add(Locus("TGT1", TARGET, Universe.CODING, gene="TGT", expression=120.0))
+
+    # A paralog sharing a near-cognate site (3 mismatches from one target site).
+    site = TARGET[30:52]
+    paralog_site = list(site)
+    for pos in (4, 11, 18):
+        paralog_site[pos] = RNG.choice([b for b in "AUGC" if b != paralog_site[pos]])
+    paralog = random_rna(120) + "".join(paralog_site) + random_rna(120)
+    reference.add(Locus("PAR1", paralog, Universe.CODING, gene="TGTL", expression=45.0))
+
+    # An unmeasured lncRNA: "not detected" is not "absent".
+    reference.add(Locus("LNC1", random_rna(400), Universe.NCRNA, gene="LINC01", expression=None))
+    # Universes the assay is exposed to and that must therefore be searched.
+    reference.add(Locus("RRNA1", random_rna(600), Universe.RRNA, gene="RN18S", expression=9000.0))
+    reference.add(Locus("MT1", random_rna(300), Universe.MITO, gene="MT-CO1", expression=2500.0))
+    reference.add(Locus("PRE1", random_rna(700), Universe.PRE_MRNA, gene="TGT", expression=8.0))
+
+    # A variant haplotype: same world, one SNV inside the target transcript.
+    variant = Transcriptome("GRCh38", "v44+hap2")
+    for locus in reference.loci.values():
+        variant.add(locus)
+    mutated = list(TARGET)
+    mutated[60] = "G" if mutated[60] != "G" else "A"
+    variant.add(
+        Locus("TGT1", "".join(mutated), Universe.CODING, gene="TGT", expression=120.0)
+    )
+    return reference, variant, {"TGT1": "t_tgt"}
+
+
+def seed_calibration(spec: ResolvedDesignSpec) -> CalibrationService:
+    """Stand in for held-out tiling-screen data."""
+    cs = CalibrationService()
+    effector = spec.profile.effector.value
+    assay = spec.profile.assay.value
+    # Strata are error regimes (mismatch depth), not intent labels.
+    for regime in ("mm0", "mm1-2", "mm3+"):
+        key = CalibrationService.stratum_key(effector, assay, regime)
+        for _ in range(120):
+            truth = RNG.random()
+            pred = min(1.0, max(0.0, truth + RNG.gauss(0, 0.13)))
+            cs.add_observation(key, pred, truth)
+    return cs
+
+
+def main() -> None:
+    reference, variant, locus_to_target = build_world()
+
+    contract = TargetContract(
+        task=Task.KNOCKDOWN,
+        targets=(
+            TargetSpec(
+                target_id="t_tgt",
+                sequence=TARGET,
+                target_class=TargetClass.REQUIRED,
+                gene="TGT",
+                transcript="TGT1",
+                expression=120.0,
+            ),
+        ),
+    )
+    profile = EffectorAssayProfile(
+        effector=Effector.RFX_CAS13D, assay=AssayType.CELL_CULTURE_KNOCKDOWN
+    )
+    context = ContextScope(
+        organism="Homo sapiens",
+        genome_build="GRCh38",
+        annotation_version="v44",
+        cell_or_tissue="HEK293T",
+        # Declaring every universe the assay is exposed to; drop one and the
+        # universe-adequacy gate FAILs the whole run by design.
+        declared_universes=frozenset(
+            {Universe.CODING, Universe.NCRNA, Universe.PRE_MRNA, Universe.RRNA, Universe.MITO}
+        ),
+    )
+    spec = ResolvedDesignSpec(contract=contract, profile=profile, context=context)
+
+    universes = context.declared_universes
+    # Let the system pick the index. At this toy scale it will choose the
+    # linear scanner; on a real transcriptome it switches to the FM-index.
+    contexts = [
+        DesignContext.auto("reference", reference, universes, locus_to_target),
+        DesignContext.auto("hap2", variant, universes, locus_to_target),
+    ]
+    registry = ModelRegistry(HeuristicCas13Model(), NullAccessibilityModel())
+    calibration = seed_calibration(spec)
+
+    print(f"spec fingerprint : {spec.fingerprint()}")
+    print(f"spacer length    : {spec.spacer_length}")
+    print(f"index            : {contexts[0].index.version}")
+    print(f"                   {contexts[0].index_rationale}\n")
+
+    report = run_design(
+        spec, contexts, registry, calibration, panel_size=3,
+        on_event=lambda m: print("  " + m),
+    )
+
+    print("\n--- verdicts ---")
+    print(report.verdict_counts, f"review_rate={report.review_rate:.2%}")
+
+    print("\n--- top ranked (PASS only) ---")
+    for r in report.ranked[:5]:
+        m = r.assessment.metrics
+        print(
+            f"  #{r.rank} {r.assessment.guide_id} {r.assessment.spacer} "
+            f"score={r.score:.2f} cov={m.required_coverage:.3f} "
+            f"worst_off={m.worst_off_target:.3f} burden={m.cumulative_burden:.3f} "
+            f"robust={m.robustness:.3f}"
+        )
+
+    print("\n--- panel ---")
+    print(f"  guides   : {[g.guide_id for g in report.panel.guides]}")
+    print(f"  coverage : { {k: round(v,4) for k,v in report.panel.coverage.items()} }")
+    print(f"  guarantee: {report.panel.guarantee}")
+
+    print("\n--- controls ---")
+    for c in report.controls:
+        print(f"  {c.guide_id} {c.spacer} gc={c.gc:.2f} verified_no_hits={c.verified_no_hits}")
+
+    print("\n--- top off-targets ---")
+    for row in report.off_target_rows[:5]:
+        print(
+            f"  {row['guide_id']} -> {row['locus']} ({row['gene']},{row['biotype']}) "
+            f"{row['mismatches']}mm hazard={row['hazard']:.4f} "
+            f"expr_unknown={row['expression_unknown']}"
+        )
+
+    print("\n--- validation plan ---")
+    for line in report.validation_plan:
+        print(f"  - {line}")
+
+    if report.shortfalls:
+        print("\n--- shortfalls ---")
+        for s in report.shortfalls:
+            print(f"  ! {s}")
+
+    Path("report.json").write_text(json.dumps(report.to_dict(), indent=2, default=str))
+    print("\nwrote report.json")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,212 @@
+"""ResolvedDesignSpec -- the versioned, validated, machine-readable contract.
+
+Everything downstream reads this object and nothing else for intent. In
+particular the biological hazard weights live here (fix #7) rather than being
+an implicit constant inside the burden formula, so they are auditable and
+diffable alongside the rest of the design.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from ..util.seq import normalize
+from .effectors import EFFECTORS, EffectorParams
+from .enums import (
+    ASSAY_REQUIRED_UNIVERSES,
+    AssayType,
+    Effector,
+    Task,
+    TargetClass,
+    Universe,
+)
+
+Fraction = Annotated[float, Field(ge=0.0, le=1.0)]
+
+
+class _Frozen(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class TargetSpec(_Frozen):
+    """One RNA the design has an opinion about."""
+
+    target_id: str
+    sequence: str
+    target_class: TargetClass
+    gene: str | None = None
+    transcript: str | None = None
+    biotype: Universe = Universe.CODING
+    #: Weight used only for DESIRED targets in the utility metric.
+    weight: float = Field(default=1.0, ge=0.0)
+    #: Relative abundance (TPM-like). ``None`` means genuinely unknown, which
+    #: is an evidence gap, not zero -- "not detected" != absent.
+    expression: float | None = Field(default=None, ge=0.0)
+    #: Multiplicative widening applied to the expression upper bound when the
+    #: measurement is noisy or absent.
+    expression_uncertainty: float = Field(default=0.25, ge=0.0)
+
+    @model_validator(mode="after")
+    def _normalize_sequence(self):
+        object.__setattr__(self, "sequence", normalize(self.sequence))
+        return self
+
+
+class HazardWeights(_Frozen):
+    """Versioned biological hazard priors (fix #7).
+
+    These multiply into the off-target burden. They encode judgment, so they
+    are versioned and travel in the provenance ledger.
+    """
+
+    version: str = "hazard-weights/v1"
+    by_class: dict[TargetClass, float] = Field(
+        default_factory=lambda: {
+            TargetClass.REQUIRED: 0.0,
+            TargetClass.DESIRED: 0.0,
+            TargetClass.TOLERATED: 0.1,
+            TargetClass.AVOID: 1.0,
+            TargetClass.FORBIDDEN: 5.0,
+        }
+    )
+    #: Unannotated hits (not named in the contract) still carry hazard.
+    unannotated: float = Field(default=0.6, ge=0.0)
+    by_biotype: dict[Universe, float] = Field(
+        default_factory=lambda: {
+            Universe.RRNA: 2.0,
+            Universe.MITO: 1.5,
+            Universe.CODING: 1.0,
+            Universe.NCRNA: 1.0,
+            Universe.PRE_MRNA: 0.7,
+            Universe.CIRCRNA: 0.7,
+            Universe.REPEAT: 0.5,
+            Universe.VIRAL: 0.2,
+            Universe.SYNTHETIC: 0.1,
+        }
+    )
+
+    def weight_for(self, target_class: TargetClass | None, biotype: Universe) -> float:
+        base = self.unannotated if target_class is None else self.by_class[target_class]
+        return base * self.by_biotype.get(biotype, 1.0)
+
+
+class Thresholds(_Frozen):
+    """Gate thresholds. Borderline bands drive the R1 REVIEW tier."""
+
+    #: A REQUIRED target must clear this activity lower bound.
+    required_coverage_min: Fraction = 0.50
+    #: Width of the band below which a passing metric is only "borderline".
+    borderline_band: Fraction = 0.10
+    #: A FORBIDDEN target above this activity upper bound is a credible hit.
+    forbidden_activity_max: Fraction = 0.20
+    #: Worst single off-target hazard tolerated.
+    worst_off_target_max: float = 1.0
+    #: Total off-target hazard tolerated.
+    cumulative_burden_max: float = 5.0
+    #: Discrimination margin tau for allele/SNV tasks (fix #2).
+    discrimination_margin_min: float = 2.0
+    #: Search must be provably exhaustive to at least this mismatch depth.
+    required_search_mismatches: int = 4
+    #: Nominal miscoverage for the conformal calibration service.
+    alpha: Fraction = 0.10
+
+
+class SearchBudget(_Frozen):
+    """Bounds for the backtracking control flow (fix #5)."""
+
+    max_search_escalations: int = 2
+    max_panel_retiles: int = 2
+    max_candidates: int = 5000
+
+
+class TargetContract(_Frozen):
+    task: Task
+    targets: tuple[TargetSpec, ...]
+
+    @model_validator(mode="after")
+    def _check(self):
+        if not self.targets:
+            raise ValueError("target contract needs at least one target")
+        ids = [t.target_id for t in self.targets]
+        if len(set(ids)) != len(ids):
+            raise ValueError("duplicate target_id in contract")
+        if not any(t.target_class is TargetClass.REQUIRED for t in self.targets):
+            raise ValueError("target contract needs at least one REQUIRED target")
+        return self
+
+    def by_class(self, cls: TargetClass) -> tuple[TargetSpec, ...]:
+        return tuple(t for t in self.targets if t.target_class is cls)
+
+    def get(self, target_id: str) -> TargetSpec | None:
+        return next((t for t in self.targets if t.target_id == target_id), None)
+
+
+class EffectorAssayProfile(_Frozen):
+    effector: Effector
+    assay: AssayType
+    spacer_length: int | None = None
+    #: Whether collateral activity is a hazard (cell assay) or the readout
+    #: (in vitro detection). Set automatically from the assay if left None.
+    collateral_is_hazard: bool | None = None
+
+    @property
+    def params(self) -> EffectorParams:
+        return EFFECTORS[self.effector]
+
+    @model_validator(mode="after")
+    def _resolve(self):
+        p = EFFECTORS[self.effector]
+        if self.spacer_length is None:
+            object.__setattr__(self, "spacer_length", p.preferred_spacer_length)
+        elif self.spacer_length not in p.spacer_lengths:
+            raise ValueError(
+                f"{self.effector.value} does not support spacer length "
+                f"{self.spacer_length}; supported: {p.spacer_lengths}"
+            )
+        if self.collateral_is_hazard is None:
+            hazard = self.assay is not AssayType.IN_VITRO_DETECTION
+            object.__setattr__(self, "collateral_is_hazard", hazard)
+        return self
+
+
+class ContextScope(_Frozen):
+    organism: str
+    genome_build: str
+    annotation_version: str
+    cell_or_tissue: str | None = None
+    #: Universes the search will actually cover. Adequacy is gated (fix #3).
+    declared_universes: frozenset[Universe] = frozenset({Universe.CODING})
+
+    def missing_universes(self, assay: AssayType) -> frozenset[Universe]:
+        return frozenset(ASSAY_REQUIRED_UNIVERSES[assay] - self.declared_universes)
+
+
+class ResolvedDesignSpec(_Frozen):
+    """The design contract. Immutable, hashable, and carried in provenance."""
+
+    spec_version: str = "cas13guide/spec/v2"
+    contract: TargetContract
+    profile: EffectorAssayProfile
+    context: ContextScope
+    hazard: HazardWeights = Field(default_factory=HazardWeights)
+    thresholds: Thresholds = Field(default_factory=Thresholds)
+    budget: SearchBudget = Field(default_factory=SearchBudget)
+
+    @property
+    def spacer_length(self) -> int:
+        assert self.profile.spacer_length is not None
+        return self.profile.spacer_length
+
+    @property
+    def requires_discrimination(self) -> bool:
+        """Allele/SNV tasks need the ratio constraint, not two thresholds."""
+        return self.contract.task is Task.ALLELE
+
+    def fingerprint(self) -> str:
+        """Stable content hash. Two identical designs share a fingerprint."""
+        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]

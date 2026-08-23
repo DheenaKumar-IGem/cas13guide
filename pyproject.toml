@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cas13guide"
+version = "0.1.0"
+description = "Cas13 target-RNA guide locator and scoring pipeline built on calibrated evidence"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.5", "numpy>=1.26"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "hypothesis>=6.90"]
+
+[project.scripts]
+cas13guide = "cas13guide.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
