@@ -109,12 +109,16 @@ def limitations_for_run(
                     "preset-sequence-unverified",
                     Severity.WARNING,
                     "The target sequence came from a built-in preset "
-                    f"({', '.join(used)}) that has never been checked against "
-                    "miRBase. Two of the five carry 3' nucleotides beyond the "
-                    "commonly cited mature form. Run "
-                    "`presets.verify_against_mirbase(path_to_mature_fa)` before "
-                    "ordering anything: a guide designed against the wrong "
-                    "target is wrong in a way no score on this page can show.",
+                    f"({', '.join(used)}). Each was checked against its miRBase "
+                    "per-accession page on 2026-08-23 and matched, but this "
+                    "package pins no release and no checksum, so it cannot say "
+                    "WHICH release it agrees with -- and mature 3' ends do get "
+                    "revised between releases. Databases also disagree with each "
+                    "other on where a mature miRNA ends. Run "
+                    "`presets.verify_against_mirbase(path_to_mature_fa)` against "
+                    "the release you intend to cite before ordering anything: a "
+                    "guide designed against the wrong target is wrong in a way "
+                    "no score on this page can show.",
                     source="miRBase",
                 )
             )

@@ -72,7 +72,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 537 tests
+python -m unittest discover -s tests -t tests    # 544 tests
 pytest                              # same suite under pytest
 ```
 
@@ -102,8 +102,12 @@ being wrong, and only end-to-end parity sees all four:
 | Normalizers `6.48 / 11.93 / 15.67` are training-time values | ditto |
 
 **It needs LinearFold, and there is deliberately no ViennaRNA fallback.** Two of
-the three scalars are folding free energies in LinearFold's **CONTRAfold**
-parameterisation. ViennaRNA — which this package *does* ship — uses the Turner
+the three scalars are folding scores in LinearFold's **CONTRAfold**
+parameterisation — *not* free energies in kcal/mol, despite the `mfe` name. They
+are dimensionless log-odds where **higher means more stable**, quantised to two
+decimals by LinearFold's `printf("%.2f")`. All 133 `guideMfe` values in the
+fixture are positive (+6.48 to +11.96), which no kcal/mol MFE ever is, so a real
+free energy substituted here is not merely inaccurate — it is sign-inverted. ViennaRNA — which this package *does* ship — uses the Turner
 model, and its energies are simply different numbers. Substituting them yields a
 confident, in-range, wrong score, which is the one failure this codebase exists
 to prevent. `MFESource` is the seam; without one, `features_for_target()`
@@ -582,7 +586,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-537 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+544 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -655,6 +659,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_panel_site_consistency.py` | the panel and the report must agree on what one site is; examples still run |
 | `test_preset_provenance.py` | preset invariants, the cross-reactivity claim, and miRBase verification |
 | `test_effector_constants.py` | ortholog data that nothing else exercises: DR length, stem, fold, distinctness |
 | `test_module_entry_point.py` | `python -m cas13guide` runs, out of process |

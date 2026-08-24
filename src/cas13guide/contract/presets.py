@@ -135,7 +135,12 @@ MIRNA_PRESETS: dict[str, TargetPreset] = {
                      "guides against either will cross-react, and the pair is "
                      "a discrimination task, not two independent targets"),
         _preset("hsa-miR-29c-3p", "hsa-miR-29c-3p", "MIMAT0000681",
-                "UAGCACCAUUUGAAAUCGGUUA"),
+                "UAGCACCAUUUGAAAUCGGUUA",
+                note="one nucleotide from hsa-miR-29a-3p across the whole "
+                     "22-mer, so a guide against it is a single-mismatch "
+                     "discrimination problem against an abundant relative that "
+                     "is not in this preset set; load miR-29a as background if "
+                     "you need the off-target call to mean anything"),
     )
 }
 

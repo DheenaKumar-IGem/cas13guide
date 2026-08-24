@@ -21,8 +21,18 @@ Constraints applied during selection:
   ``min_spacing`` nt of each other, so a panel cannot be three shifted copies
   of one site;
 * **diversity** -- a new guide must not share more than ``max_shared_off``
-  off-target loci with any already-selected guide, so panel members fail
-  independently.
+  off-target loci with any already-selected guide, so two members cannot be
+  brought down by the same off-target locus.
+
+What this does **not** buy is independence. The diversity constraint is about
+shared *off-targets*; it says nothing about whether two guides succeed or fail
+together on the *intended* target, which is what ``coverage`` below multiplies
+as though it did. Members still share a transcript, a single activity model
+whose errors are correlated, and -- above ``min_spacing`` -- often overlapping
+sites. ``Panel.coverage`` is a noisy-OR of per-guide lower bounds and therefore
+reads as more confident than the evidence supports; it is a ranking aid, not a
+probability that the panel works. See ``Panel.coverage`` for the same caveat at
+the point of use.
 """
 
 from __future__ import annotations
@@ -101,10 +111,20 @@ def select_panel(
     assessments: list[GuideAssessment],
     spec: ResolvedDesignSpec,
     size: int = 3,
-    min_spacing: int = 15,
+    min_spacing: int | None = None,
     max_shared_off: int = 0,
 ) -> Panel:
-    """Greedy submodular selection under spacing and diversity constraints."""
+    """Greedy submodular selection under spacing and diversity constraints.
+
+    ``min_spacing`` defaults to ``spec.spacer_length`` -- one full spacer, so
+    two members cannot share a target base. It used to default to a bare ``15``,
+    shorter than every ortholog's spacer (22, 28 and 30 nt), so a panel could
+    contain two guides that ``g_output`` then marked as the *same site*. Two
+    answers from one run, disagreeing, with the panel being the half a user
+    actually orders. Pass an explicit value only to widen it.
+    """
+    if min_spacing is None:
+        min_spacing = spec.spacer_length
     required = spec.contract.by_class(TargetClass.REQUIRED)
     weights = {t.target_id: max(t.weight, 1.0) for t in required}
 

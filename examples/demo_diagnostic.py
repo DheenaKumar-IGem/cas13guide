@@ -77,7 +77,9 @@ def main() -> None:
 
     preset = get_preset("hsa-miR-21-5p")
     print(f"target   : {preset.preset_id}  {preset.accession}  ({preset.length} nt)")
-    print(f"source   : {PRESET_SOURCE['database']} {PRESET_SOURCE['release']}")
+    verified = PRESET_SOURCE.get("verified", "unknown")
+    print(f"source   : {PRESET_SOURCE['database']} ({PRESET_SOURCE['url']})")
+    print(f"verified : {verified}")
 
     # ---- 1. why the mature strand is not the thing to design against ----
     print("\n--- geometry ---")

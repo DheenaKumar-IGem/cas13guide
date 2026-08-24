@@ -98,19 +98,53 @@ class MFESourceRequired(RuntimeError):
 
 @runtime_checkable
 class MFESource(Protocol):
-    """Minimum free energy, in LinearFold's **CONTRAfold** parameterization.
+    """Folding score in LinearFold's **CONTRAfold** parameterization.
 
-    Implement this over a LinearFold binding. Do not implement it over
-    ViennaRNA: the energies differ, and the model was trained on the former.
+    **These are not kcal/mol, and the sign is the opposite of what the name
+    "MFE" suggests.** LinearFold prints ``result.score / -100.0`` only in its
+    Vienna build; in CONTRAfold mode it prints the raw CRF score, and that is
+    what Arc's training pipeline parsed. The value is a dimensionless log-odds
+    score where **higher means more stable**. The evidence is in the fixture:
+    all 133 ``guideMfe`` values are positive (+6.48 to +11.96), which no
+    minimum free energy in kcal/mol ever is.
+
+    Two consequences for anyone implementing this protocol:
+
+    * A real free energy has the wrong sign. Returning ViennaRNA's MFE will
+      not merely be inaccurate, it will be inverted -- the model will read
+      stable guides as unstable.
+    * Values are quantized to **two decimals**, reproducing LinearFold's
+      ``printf("%.2f")``. That is not a cosmetic detail: leaving the extra
+      precision in shifts Arc logits by ~2.9e-03, which fails the parity gate
+      in ``tests/test_arc_model.py``.
+
+    Implement this over a LinearFold CONTRAfold build. Do not implement it over
+    ViennaRNA: that is the Turner model, in different units, with the opposite
+    sign convention.
+
+    .. warning::
+       PyPI's ``pylinearfold`` is named right, ships Windows wheels, installs
+       without a compiler, and is **wrong for this**. It is compiled ``-Dlv``
+       (Vienna), so it returns kcal/mol -- for fixture guide 0 it gives -23.20
+       where this protocol must return +7.17 -- and it exposes no constraint
+       parameter at all, so :meth:`mfe_constrained` cannot be built on it.
     """
 
     version: str
 
     def mfe(self, sequence: str) -> float:
-        """Unconstrained MFE of ``sequence``, kcal/mol."""
+        """Unconstrained CONTRAfold score of ``sequence``. Higher = more stable.
+
+        Dimensionless log-odds, rounded to two decimals. Not kcal/mol.
+        """
 
     def mfe_constrained(self, sequence: str, constraint: str) -> float:
-        """MFE under a dot-bracket constraint string of equal length."""
+        """Score under a dot-bracket constraint string of equal length.
+
+        Constraining bases to stay unpaired removes structure, so this is
+        normally **lower** than :meth:`mfe` -- in the fixture it is lower for
+        124 of 133 guides.
+        """
 
 
 @dataclass(frozen=True, slots=True)
