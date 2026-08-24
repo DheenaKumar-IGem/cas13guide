@@ -24,7 +24,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Sequence
 
-from ..contract.presets import MIRNA_PRESETS, PRESETS_VERIFIED
+from ..contract.presets import (
+    CHANGED_IN_RELEASE_23,
+    MIRNA_PRESETS,
+    PRESET_SOURCE,
+    PRESETS_VERIFIED,
+)
 from ..contract.spec import ResolvedDesignSpec
 from .indexes import ExhaustivenessBound
 
@@ -114,12 +119,32 @@ def limitations_for_run(
         )
 
     # ---- preset provenance --------------------------------------------
-    if not PRESETS_VERIFIED:
-        used = sorted(
-            target.target_id
-            for target in spec.contract.targets
-            if target.target_id in MIRNA_PRESETS
+    used = sorted(
+        target.target_id
+        for target in spec.contract.targets
+        if target.target_id in MIRNA_PRESETS
+    )
+    if used and PRESETS_VERIFIED:
+        moved = sorted(
+            preset_id for preset_id in used
+            if MIRNA_PRESETS[preset_id].accession in CHANGED_IN_RELEASE_23
         )
+        if moved:
+            found.append(
+                Limitation(
+                    "preset-sequence-changed-upstream",
+                    Severity.INFO,
+                    f"{', '.join(moved)} matched miRBase release "
+                    f"{PRESET_SOURCE.get('release', '?')} exactly, but miRBase "
+                    "changed the mature sequence of this accession in that "
+                    "release. A paper written earlier quotes a different 3' end, "
+                    "so a guide designed here will not line up with one "
+                    "published against the older form. Neither is a typo; check "
+                    "which release your comparison used.",
+                    source="miRBase miRNA.diff",
+                )
+            )
+    if used and not PRESETS_VERIFIED:
         if used:
             found.append(
                 Limitation(

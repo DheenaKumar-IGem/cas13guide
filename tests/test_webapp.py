@@ -155,23 +155,23 @@ class TestDesignRoundTrip(ServerTestCase):
         self.assertEqual(status, 200)
         self.assertIn("hsa-miR-21-5p", body)
 
-    def test_a_preset_run_warns_that_the_sequence_is_unverified(self):
-        """The browser user is the one who most needs this warning.
+    def test_a_preset_run_carries_its_provenance_note(self):
+        """The browser user is the one who most needs this.
 
-        A preset is one click, carries no visible provenance, and two of the
-        five sequences are unchecked against miRBase. Someone who pastes their
-        own sequence owns it; someone who picks from a dropdown is trusting us.
+        A preset is one click and shows no provenance on the page. Someone who
+        pastes a sequence owns it; someone who picks from a dropdown is trusting
+        us, so whatever qualification applies has to reach the served report and
+        not just the terminal.
         """
         _status, _headers, body = self.form_post(
             {"sequence": "", "preset": "hsa-miR-21-5p"}
         )
         self.assertIn("miRBase", body)
-        self.assertIn("verify_against_mirbase", body)
 
-    def test_a_pasted_sequence_gets_no_preset_warning(self):
+    def test_a_pasted_sequence_gets_no_preset_note(self):
         """Both directions -- it is about the preset, not about every run."""
         _status, _headers, body = self.form_post({"sequence": TARGET})
-        self.assertNotIn("verify_against_mirbase", body)
+        self.assertNotIn("miRBase", body)
 
 
 class TestErrorsAreLegibleNotTracebacks(ServerTestCase):

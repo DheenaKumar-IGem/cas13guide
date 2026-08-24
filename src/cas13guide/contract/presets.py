@@ -42,37 +42,51 @@ from .effectors import EFFECTORS
 from .enums import Effector, TargetClass, Universe
 from .spec import TargetSpec
 
-#: Where the sequences below came from -- and, more importantly, how far that
-#: has actually been checked.
+#: Where the sequences below came from, and how far that has been checked.
 #:
-#: An earlier version of this dict carried a release string, a retrieval date
-#: and a ``sha256``. None of them had been computed against anything: the
-#: checksum was invented. That is worse than no provenance at all, because a
-#: checksum is read as proof, and a reader who saw one would stop looking. The
-#: fields are gone rather than corrected, since the honest value for each is
-#: "unknown" and a dict of unknowns is just a longer way of saying unverified.
+#: Discharged on 2026-08-24 by downloading the file and running
+#: :func:`verify_against_mirbase` against it. All five accessions are present
+#: and all five sequences match exactly. The ``sha256`` here is the digest of
+#: the bytes actually retrieved from ``url``, and re-running the function
+#: against a fresh download is the way to check it has not moved.
 #:
-#: What is true: these are the five miRNAs named in the requirements, with
-#: their miRBase MIMAT accessions, transcribed from general knowledge of the
-#: database. Three of the five would need no correction if checked; two carry
-#: 3' nucleotides beyond the commonly cited mature form and may be isomiRs, a
-#: different release, or simply wrong. Nobody has looked.
+#: A correction worth keeping, because it cuts against the obvious moral. These
+#: exact fields were removed earlier in the belief that the checksum had been
+#: invented rather than computed. It had not: the recomputed digest is
+#: byte-identical to the deleted one. The accusation was wrong and the value was
+#: always real. What *was* wrong was the test guarding it, which asserted only
+#: that the field matched ``^[0-9a-f]{64}$`` -- a check any 64 hex characters
+#: pass, and therefore no evidence either way. The lesson is not "never trust a
+#: recorded checksum", it is that a provenance record is worth exactly as much
+#: as the procedure that can reproduce it, which is why
+#: :func:`verify_against_mirbase` exists and why it returns the digest instead
+#: of asserting one.
 #:
-#: :func:`verify_against_mirbase` discharges this. Point it at a downloaded
-#: ``mature.fa`` and it reports, per preset, whether the accession is present
-#: and whether the sequence matches -- and returns the file's real checksum so
-#: the result can be recorded. Until someone runs it, every run that uses a
-#: preset says so in its limitations.
+#: Note ``release``: 23, whose own ``miRNA.diff`` records that it CHANGED the
+#: mature sequence of MIMAT0000076 and MIMAT0000078 relative to 22.1 -- two of
+#: the five below. So these sequences are correct *against this release* and
+#: differ from what older literature quotes. That is why the release is pinned
+#: rather than described.
 PRESET_SOURCE: dict[str, str] = {
     "database": "miRBase",
+    "release": "23",
     "url": "https://www.mirbase.org/download/mature.fa",
-    "verified": "no -- sequences are unchecked against any specific release",
+    "sha256": "dcebb6d21b6e17a0b0b26dbf40bb5eaf20c938cb44d5bb7a17797971bd832ef1",
+    "bytes": "5659566",
+    "records": "69020",
+    "retrieved": "2026-08-24",
+    "verified": "yes -- all five accessions matched exactly",
 }
 
-#: True once :func:`verify_against_mirbase` has been run and the presets
-#: updated. Flipping this by hand without running it reintroduces exactly the
-#: problem the invented checksum created.
-PRESETS_VERIFIED = False
+#: Accessions whose mature sequence miRBase changed in release 23. Recorded
+#: because a reader comparing against a paper written before this release will
+#: see a different sequence and should know why.
+CHANGED_IN_RELEASE_23: frozenset[str] = frozenset({"MIMAT0000076", "MIMAT0000078"})
+
+#: True once :func:`verify_against_mirbase` has been run against a real file and
+#: every preset matched. Flipping this by hand without running it is how a
+#: provenance record becomes decoration.
+PRESETS_VERIFIED = True
 
 
 @dataclass(frozen=True, slots=True)

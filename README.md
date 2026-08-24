@@ -72,7 +72,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 568 tests
+python -m unittest discover -s tests -t tests    # 570 tests
 pytest                              # same suite under pytest
 ```
 
@@ -204,7 +204,7 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 
 | | Requirement | Where |
 |---|---|---|
-| ⚠️ | FR1.1–1.5 input, presets, validation, ortholog | `services/fasta.py`, `contract/presets.py`, `contract/effectors.py` — **preset sequences are unverified against miRBase**; `verify_against_mirbase()` discharges it |
+| ✅ | FR1.1–1.5 input, presets, validation, ortholog | `services/fasta.py`, `contract/presets.py`, `contract/effectors.py` — all five presets verified against miRBase release 23 (sha256 pinned, re-checkable via `verify_against_mirbase()`) |
 | ✅ | FR2.1–2.3 tiling, PFS tagging, PFS deprioritisation | `pipeline/a_candidates.py`, `pipeline/b_qc.py` |
 | ✅ | FR3.1–3.4 accessibility | `services/accessibility.py` |
 | ⚠️ | FR4.1–4.3 BLAST off-target | `services/blast.py` — **needs DR1 + DR3** |
@@ -219,8 +219,8 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 | ✅ | DR2 ViennaRNA | `pip install -e ".[structure]"` |
 | ⚠️ | DR4 model constants | JSON storage and loader exist; kinetic values are placeholders, Bayesian parameters absent |
 
-**The four things this cannot do without you.** Real kinetic constants from
-Feng et al. 2024 (`KineticConstants.from_json`, then set `provisional=False`);
+**The three things this cannot do without you.** Real kinetic constants from
+Feng et al. 2024 (`--kinetics-constants FILE.json`, with `provisional=false`);
 the Bayesian diagnostic model for FR6.3, which has no stub because guessing at
 someone else's statistical model is worse than leaving a hole; a BLAST database
 plus toolkit; and a LinearFold CONTRAfold binding, without which the Arc model
@@ -586,7 +586,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-568 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+570 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
