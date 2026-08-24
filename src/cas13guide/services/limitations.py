@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Sequence
 
+from ..contract.presets import MIRNA_PRESETS, PRESETS_VERIFIED
 from ..contract.spec import ResolvedDesignSpec
 from .indexes import ExhaustivenessBound
 
@@ -94,6 +95,29 @@ def limitations_for_run(
                 "treating a bound as a guarantee.",
             )
         )
+
+    # ---- preset provenance --------------------------------------------
+    if not PRESETS_VERIFIED:
+        used = sorted(
+            target.target_id
+            for target in spec.contract.targets
+            if target.target_id in MIRNA_PRESETS
+        )
+        if used:
+            found.append(
+                Limitation(
+                    "preset-sequence-unverified",
+                    Severity.WARNING,
+                    "The target sequence came from a built-in preset "
+                    f"({', '.join(used)}) that has never been checked against "
+                    "miRBase. Two of the five carry 3' nucleotides beyond the "
+                    "commonly cited mature form. Run "
+                    "`presets.verify_against_mirbase(path_to_mature_fa)` before "
+                    "ordering anything: a guide designed against the wrong "
+                    "target is wrong in a way no score on this page can show.",
+                    source="miRBase",
+                )
+            )
 
     # ---- activity model ----------------------------------------------
     activity = getattr(registry, "activity", None)

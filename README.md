@@ -72,7 +72,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 514 tests
+python -m unittest discover -s tests -t tests    # 535 tests
 pytest                              # same suite under pytest
 ```
 
@@ -200,7 +200,7 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 
 | | Requirement | Where |
 |---|---|---|
-| ✅ | FR1.1–1.5 input, presets, validation, ortholog | `services/fasta.py`, `contract/presets.py`, `contract/effectors.py` |
+| ⚠️ | FR1.1–1.5 input, presets, validation, ortholog | `services/fasta.py`, `contract/presets.py`, `contract/effectors.py` — **preset sequences are unverified against miRBase**; `verify_against_mirbase()` discharges it |
 | ✅ | FR2.1–2.3 tiling, PFS tagging, PFS deprioritisation | `pipeline/a_candidates.py`, `pipeline/b_qc.py` |
 | ✅ | FR3.1–3.4 accessibility | `services/accessibility.py` |
 | ⚠️ | FR4.1–4.3 BLAST off-target | `services/blast.py` — **needs DR1 + DR3** |
@@ -582,7 +582,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-514 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+535 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -655,6 +655,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_preset_provenance.py` | preset invariants, the cross-reactivity claim, and miRBase verification |
 | `test_effector_constants.py` | ortholog data that nothing else exercises: DR length, stem, fold, distinctness |
 | `test_module_entry_point.py` | `python -m cas13guide` runs, out of process |
 | `test_arc_model.py` | 133-guide parity with the reference, channel order, ensemble space, the ViennaRNA refusal |

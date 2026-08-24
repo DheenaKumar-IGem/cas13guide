@@ -42,16 +42,37 @@ from .effectors import EFFECTORS
 from .enums import Effector, TargetClass, Universe
 from .spec import TargetSpec
 
-#: Exactly where the sequences below came from. Recorded rather than described:
-#: a preset whose provenance is "miRBase" is not reproducible, one whose
-#: provenance is a release, a URL and a checksum is.
+#: Where the sequences below came from -- and, more importantly, how far that
+#: has actually been checked.
+#:
+#: An earlier version of this dict carried a release string, a retrieval date
+#: and a ``sha256``. None of them had been computed against anything: the
+#: checksum was invented. That is worse than no provenance at all, because a
+#: checksum is read as proof, and a reader who saw one would stop looking. The
+#: fields are gone rather than corrected, since the honest value for each is
+#: "unknown" and a dict of unknowns is just a longer way of saying unverified.
+#:
+#: What is true: these are the five miRNAs named in the requirements, with
+#: their miRBase MIMAT accessions, transcribed from general knowledge of the
+#: database. Three of the five would need no correction if checked; two carry
+#: 3' nucleotides beyond the commonly cited mature form and may be isomiRs, a
+#: different release, or simply wrong. Nobody has looked.
+#:
+#: :func:`verify_against_mirbase` discharges this. Point it at a downloaded
+#: ``mature.fa`` and it reports, per preset, whether the accession is present
+#: and whether the sequence matches -- and returns the file's real checksum so
+#: the result can be recorded. Until someone runs it, every run that uses a
+#: preset says so in its limitations.
 PRESET_SOURCE: dict[str, str] = {
     "database": "miRBase",
-    "release": "23 (Aug 2026)",
     "url": "https://www.mirbase.org/download/mature.fa",
-    "sha256": "dcebb6d21b6e17a0b0b26dbf40bb5eaf20c938cb44d5bb7a17797971bd832ef1",
-    "retrieved": "2026-08-23",
+    "verified": "no -- sequences are unchecked against any specific release",
 }
+
+#: True once :func:`verify_against_mirbase` has been run and the presets
+#: updated. Flipping this by hand without running it reintroduces exactly the
+#: problem the invented checksum created.
+PRESETS_VERIFIED = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +118,8 @@ def _preset(preset_id: str, name: str, accession: str, sequence: str, **kw) -> T
     )
 
 
-#: The five PanCRISP miRNA targets, verbatim from :data:`PRESET_SOURCE`.
+#: The five PanCRISP miRNA targets. See :data:`PRESET_SOURCE` for how far
+#: their provenance has actually been established -- which is not far.
 MIRNA_PRESETS: dict[str, TargetPreset] = {
     p.preset_id: p
     for p in (
@@ -231,3 +253,89 @@ def amplicon_target(
         gene=preset.display_name,
         biotype=preset.biotype,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class PresetCheck:
+    """What a single preset looked like against a real miRBase file."""
+
+    preset_id: str
+    accession: str
+    found: bool
+    matches: bool
+    expected: str
+    actual: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.found and self.matches
+
+    def line(self) -> str:
+        if not self.found:
+            return f"{self.preset_id}: {self.accession} NOT FOUND in the file"
+        if self.matches:
+            return f"{self.preset_id}: ok"
+        return (
+            f"{self.preset_id}: MISMATCH\n"
+            f"    recorded {len(self.expected):>2} nt  {self.expected}\n"
+            f"    miRBase  {len(self.actual):>2} nt  {self.actual}"
+        )
+
+
+def _parse_mature_fa(text: str) -> dict[str, str]:
+    """Accession -> sequence, from miRBase's ``mature.fa``.
+
+    Headers look like ``>hsa-miR-21-5p MIMAT0000076 Homo sapiens miR-21-5p``.
+    Keyed on the accession rather than the name because names are reused across
+    releases while a MIMAT accession is stable -- which is the whole reason the
+    presets record one.
+    """
+    out: dict[str, str] = {}
+    accession = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(">"):
+            fields = line[1:].split()
+            accession = next((f for f in fields if f.startswith("MIMAT")), "")
+        elif accession:
+            out[accession] = out.get(accession, "") + normalize(line)
+    return out
+
+
+def verify_against_mirbase(path) -> tuple[str, tuple[PresetCheck, ...]]:
+    """Check every preset against a downloaded miRBase ``mature.fa``.
+
+    Returns the file's SHA-256 and one :class:`PresetCheck` per preset. Nothing
+    is downloaded and nothing is mutated: this reports, and a human decides. The
+    checksum is returned rather than stored precisely because the last time this
+    module held a checksum, it held one nobody had computed.
+
+    Usage::
+
+        digest, checks = verify_against_mirbase("mature.fa")
+        for check in checks:
+            print(check.line())
+    """
+    import hashlib
+    from pathlib import Path
+
+    data = Path(path).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    catalogue = _parse_mature_fa(data.decode("utf-8", errors="replace"))
+
+    checks = []
+    for preset in MIRNA_PRESETS.values():
+        actual = catalogue.get(preset.accession, "")
+        checks.append(
+            PresetCheck(
+                preset_id=preset.preset_id,
+                accession=preset.accession,
+                found=bool(actual),
+                matches=actual == preset.sequence,
+                expected=preset.sequence,
+                actual=actual,
+            )
+        )
+    return digest, tuple(checks)

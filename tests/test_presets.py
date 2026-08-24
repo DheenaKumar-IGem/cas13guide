@@ -45,11 +45,27 @@ class TestPresetContents(unittest.TestCase):
             self.assertLessEqual(preset.length, 25, preset.preset_id)
 
     def test_provenance_is_recorded_not_described(self):
-        """NFR4/DR4: a reproducible run needs the database version on record."""
-        for key in ("database", "release", "url", "sha256", "retrieved"):
-            self.assertIn(key, PRESET_SOURCE)
-            self.assertTrue(PRESET_SOURCE[key])
-        self.assertRegex(PRESET_SOURCE["sha256"], r"^[0-9a-f]{64}$")
+        """NFR4/DR4: a reproducible run needs the database version on record.
+
+        This test used to assert that a ``release``, ``sha256`` and ``retrieved``
+        were *present*, and it passed against values that had been invented --
+        the checksum had never been computed against any file. Asserting the
+        shape of a provenance record proves only that someone typed 64 hex
+        characters. So it now asserts the honest invariant instead: a checksum
+        may exist only once the presets have actually been verified, and while
+        they have not, the record must say so in as many words. See
+        test_preset_provenance.py for the machinery that discharges it.
+        """
+        from cas13guide.contract.presets import PRESETS_VERIFIED
+
+        self.assertIn("database", PRESET_SOURCE)
+        self.assertIn("url", PRESET_SOURCE)
+        if PRESETS_VERIFIED:
+            self.assertRegex(PRESET_SOURCE["sha256"], r"^[0-9a-f]{64}$")
+            self.assertTrue(PRESET_SOURCE.get("release"))
+        else:
+            self.assertNotIn("sha256", PRESET_SOURCE)
+            self.assertIn("no", PRESET_SOURCE["verified"].lower())
 
     def test_the_two_mir_23_paralogs_are_near_identical(self):
         """They differ only near the 3' end -- a discrimination task, not two targets."""
