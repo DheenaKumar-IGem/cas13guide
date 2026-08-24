@@ -72,7 +72,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 506 tests
+python -m unittest discover -s tests -t tests    # 514 tests
 pytest                              # same suite under pytest
 ```
 
@@ -115,12 +115,17 @@ is `0`. Ask it about an off-target and the pipeline marks the answer
 out-of-domain and widens the interval rather than passing an on-target efficacy
 prediction off as an off-target risk estimate.
 
-> **Two direct repeats are in play.** The Arc training prefix ends in
-> `AACCCCUACCAACUGGUCGGGGUUUGAAAC`; `contract/effectors.py` records
-> `CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU` for RfxCas13d. Neither is a
-> typo of the other, and this package does not pick — a test pins that they
-> differ so nobody "reconciles" them by editing one. Which construct is right
-> for a given experiment is a question for whoever orders the guide.
+> **It found a bug on arrival.** The Arc prefix *is* the RfxCas13d direct
+> repeat, and it did not match the one `contract/effectors.py` had always
+> carried — a 45 nt sequence that folds to −1.1 kcal/mol on a 3 bp stem. A
+> Cas13 repeat has to present a stable hairpin for the protein to grip; the
+> other two orthologs here fold to −6.7 and −11.3, and the corrected RfxCas13d
+> repeat folds to −15.4. The bad value even began as a near-copy of the real
+> one (`CAAC*U*AAACCC*U*` against `CAAG*U*AAACCC*C*`) before diverging. It was
+> load-bearing: `b_qc.py` flags spacers that can base-pair with their own
+> repeat, and across 20,000 random 22 nt spacers the old value flipped that
+> verdict for **4.9%** of them. Fixed, with the structural invariant pinned in
+> `test_effector_constants.py` so the next bad value fails loudly.
 
 ## A ranked list is not a panel
 
@@ -577,7 +582,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-506 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+514 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -650,6 +655,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_effector_constants.py` | ortholog data that nothing else exercises: DR length, stem, fold, distinctness |
 | `test_module_entry_point.py` | `python -m cas13guide` runs, out of process |
 | `test_arc_model.py` | 133-guide parity with the reference, channel order, ensemble space, the ViennaRNA refusal |
 | `test_limitations.py` | each warning appears exactly when its condition holds, and not otherwise |

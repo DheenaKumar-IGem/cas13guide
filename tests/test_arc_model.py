@@ -104,21 +104,22 @@ class TestFeatureFormulas(unittest.TestCase):
         for got, want in zip(features.as_array().tolist(), [0.1, 0.2, 0.3]):
             self.assertAlmostEqual(got, want, places=6)
 
-    def test_the_arc_prefix_is_not_this_packages_direct_repeat(self):
-        """Two different sequences are in play, and neither is a typo.
+    def test_the_arc_prefix_is_this_packages_direct_repeat(self):
+        """Two independent sources for the same sequence, cross-checked.
 
-        The Arc STANDARD_PREFIX is a training-time construct used only to fold
-        the guide. contract/effectors.py records a different RfxCas13d direct
-        repeat. Pinned so that nobody "reconciles" them by editing one to match
-        the other -- which would silently change every Arc feature, or every
-        direct-repeat interaction check, depending on which way it went.
+        The Arc prefix arrived from a published RfxCas13d tool; effectors.py was
+        written by hand. Comparing them is what exposed the corrupted 45 nt DR
+        this package used to carry -- see test_effector_constants.py. Pinned in
+        both directions so that neither can now drift from the other unnoticed:
+        editing one alone would silently change either every Arc feature or
+        every DR-interaction verdict, depending on which way it went.
         """
         from cas13guide.contract.effectors import EFFECTORS
 
         recorded = EFFECTORS[Effector.RFX_CAS13D].direct_repeat
-        arc_tail = STANDARD_PREFIX[-30:].replace("T", "U")
-        self.assertNotIn(arc_tail, recorded)
-        self.assertEqual(len(arc_tail), 30)
+        self.assertEqual(STANDARD_PREFIX.replace("T", "U"), recorded)
+        # its last 30 nt are the published CasRx mature repeat
+        self.assertEqual(recorded[-30:], "AACCCCUACCAACUGGUCGGGGUUUGAAAC")
 
 
 class TestItRefusesViennaEnergies(unittest.TestCase):

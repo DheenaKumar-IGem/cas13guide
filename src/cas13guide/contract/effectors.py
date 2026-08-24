@@ -103,7 +103,21 @@ EFFECTORS: dict[Effector, EffectorParams] = {
     # Cas13d has no reported PFS requirement, hard or soft.
     Effector.RFX_CAS13D: EffectorParams(
         effector=Effector.RFX_CAS13D,
-        direct_repeat="CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU",
+        # Corrected from a 45 nt sequence that was not a functional DR. Three
+        # things say so, and they agree: it was 45 nt where both other Cas13
+        # DRs here are 36; it folded to -1.1 kcal/mol on a 3 bp stem, where a
+        # DR has to present a stable stem-loop for the protein to grip (the
+        # other two fold to -6.7 and -11.3); and it began as a near-copy of
+        # this sequence -- CAACUAAACCCU against CAAGUAAACCCC -- before
+        # diverging, which is what a mistranscription looks like. This value is
+        # the pre-crRNA repeat the Arc RfxCas13d pipeline prepends to every
+        # spacer (services/arc_model.py), whose last 30 nt are the published
+        # CasRx mature repeat. It folds to -15.4 kcal/mol.
+        #
+        # This is load-bearing: b_qc.py checks the spacer for complementarity
+        # against it, and the old value changed that verdict for 4.9% of
+        # random 22 nt spacers. See test_effectors.py, which pins the fold.
+        direct_repeat="CAAGUAAACCCCUACCAACUGGUCGGGGUUUGAAAC",
         spacer_lengths=(22, 23, 30),
         preferred_spacer_length=22,
         pfs=PFSPolicy(),

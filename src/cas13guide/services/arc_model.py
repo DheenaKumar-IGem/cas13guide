@@ -66,14 +66,11 @@ GUIDE_LENGTH = 30
 
 #: Prepended to each guide before folding, from ``make_guide_library_features``.
 #:
-#: This is the Arc pipeline's *training-time* prefix and it is used for one
-#: thing: folding the guide to derive ``linearfold_val``. Note that its last
-#: 30 nt (``AACCCCUACCAACUGGUCGGGGUUUGAAAC`` in RNA) are **not** the RfxCas13d
-#: direct repeat recorded in ``contract/effectors.py``
-#: (``CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU``). Two different sequences
-#: are in play and neither is a typo of the other; do not "reconcile" them by
-#: editing one to match. Which construct is correct for a given experiment is a
-#: question for whoever is ordering the guide -- see the note in the README.
+#: In RNA this is the RfxCas13d pre-crRNA direct repeat, and its last 30 nt are
+#: the published CasRx mature repeat. Comparing it against
+#: ``contract/effectors.py`` is what caught the corrupted 45 nt value that used
+#: to be recorded there; ``tests/test_arc_model.py`` now pins that the two
+#: agree, so that neither can drift from the other unnoticed.
 STANDARD_PREFIX = "CAAGTAAACCCCTACCAACTGGTCGGGGTTTGAAAC"
 
 #: Training-time normalizers. Not tunables: changing any of them shifts every
