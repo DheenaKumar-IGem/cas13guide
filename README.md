@@ -72,7 +72,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 535 tests
+python -m unittest discover -s tests -t tests    # 537 tests
 pytest                              # same suite under pytest
 ```
 
@@ -582,7 +582,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-535 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+537 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 

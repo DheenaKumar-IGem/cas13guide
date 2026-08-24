@@ -155,6 +155,24 @@ class TestDesignRoundTrip(ServerTestCase):
         self.assertEqual(status, 200)
         self.assertIn("hsa-miR-21-5p", body)
 
+    def test_a_preset_run_warns_that_the_sequence_is_unverified(self):
+        """The browser user is the one who most needs this warning.
+
+        A preset is one click, carries no visible provenance, and two of the
+        five sequences are unchecked against miRBase. Someone who pastes their
+        own sequence owns it; someone who picks from a dropdown is trusting us.
+        """
+        _status, _headers, body = self.form_post(
+            {"sequence": "", "preset": "hsa-miR-21-5p"}
+        )
+        self.assertIn("miRBase", body)
+        self.assertIn("verify_against_mirbase", body)
+
+    def test_a_pasted_sequence_gets_no_preset_warning(self):
+        """Both directions -- it is about the preset, not about every run."""
+        _status, _headers, body = self.form_post({"sequence": TARGET})
+        self.assertNotIn("verify_against_mirbase", body)
+
 
 class TestErrorsAreLegibleNotTracebacks(ServerTestCase):
     """NFR3 -- malformed input must not return a stack trace to a browser."""
