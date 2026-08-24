@@ -11,9 +11,25 @@ The model
 ---------
 A minimal two-step scheme, integrated as an ODE over the assay window:
 
-    activation      d[C*]/dt = k_on * ([C]tot - [C*]) * [T]eff - k_off * [C*]
-    trans-cleavage  d[F]/dt  = k_cat * [C*] * [R] / (K_M + [R])
+    binding         d[T]/dt  = -k_on * ([C]tot - [C*]) * [T] + k_off * [C*]
+    activation      d[C*]/dt =  k_on * ([C]tot - [C*]) * [T] - k_off * [C*]
+    trans-cleavage  d[F]/dt  =  k_cat * [C*] * [R] / (K_M + [R])
                     d[R]/dt  = -d[F]/dt
+
+The first line is load-bearing and used to be missing. Holding ``[T]`` constant
+is the standard pseudo-first-order simplification, and it is valid when target
+is in large excess over effector -- which is the opposite of a diagnostic, where
+the target *is* the analyte and the RNP is deliberately in excess. With this
+module's own defaults (50 nM complex, 1 nM target) the old form produced 39.2 nM
+of activated complex from 1 nM of target, and 0.82 nM from 0.01 nM: up to 82x
+more activated complex than there was target to activate it. ``[T] + [C*]`` is
+now conserved, so ``[C*]`` can never exceed the target actually present.
+
+This did not invert any ranking -- activation stayed monotone in ``[T]eff``, so
+:meth:`relative_signal` was ordering guides correctly the whole time -- but it
+compressed the top of the range by saturating early, and it would have become a
+fabricated measurement the moment real constants unlocked
+:meth:`absolute_signal`.
 
 ``[T]eff`` is the *productive* target concentration: nominal target
 concentration scaled by what the rest of the pipeline already established about
@@ -183,13 +199,15 @@ class CollateralKineticsModel:
         dt = c.assay_seconds / self.steps
 
         def derivatives(state: np.ndarray) -> np.ndarray:
-            activated, reporter = state
+            activated, reporter, target = state
             free = max(0.0, c.complex_nm - activated)
-            d_activated = c.k_on * free * effective_target_nm - c.k_off * activated
+            binding = c.k_on * free * max(0.0, target) - c.k_off * activated
             turnover = c.k_cat * activated * reporter / (c.k_m + reporter)
-            return np.array([d_activated, -turnover])
+            # target and activated complex move in opposite directions by the
+            # same amount, which is what conserves [T] + [C*]
+            return np.array([binding, -turnover, -binding])
 
-        state = np.array([0.0, c.reporter_nm], dtype=float)
+        state = np.array([0.0, c.reporter_nm, effective_target_nm], dtype=float)
         peak_rate = 0.0
         for _step in range(self.steps):
             k1 = derivatives(state)
@@ -198,8 +216,11 @@ class CollateralKineticsModel:
             k3 = derivatives(state + 0.5 * dt * k2)
             k4 = derivatives(state + dt * k3)
             state = state + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
-            state[0] = min(max(state[0], 0.0), c.complex_nm)
+            # clamp to the physically reachable box: activated complex is capped
+            # by the effector supplied AND by the target available
+            state[0] = min(max(state[0], 0.0), min(c.complex_nm, effective_target_nm))
             state[1] = min(max(state[1], 0.0), c.reporter_nm)
+            state[2] = min(max(state[2], 0.0), effective_target_nm)
 
         activated_fraction = float(state[0] / c.complex_nm) if c.complex_nm else 0.0
         cleaved = float(c.reporter_nm - state[1])

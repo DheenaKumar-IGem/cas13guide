@@ -80,6 +80,10 @@ class DesignRequest:
     seed: int = 0
     calibration_n: int = 200
     calibration_noise: float = 0.10
+    #: Path to a JSON file of measured kinetic constants. Without one the model
+    #: runs on placeholders and ``absolute_signal()`` refuses -- which was
+    #: unreachable-by-design until now, because nothing plumbed a path through.
+    kinetics_json: str | None = None
 
 
 @dataclass(slots=True)
@@ -209,9 +213,19 @@ def build_registry(request: DesignRequest, notes: list[str]):
                 'energy will be blank. Install with: pip install "cas13guide[structure]"'
             )
     if request.use_signal:
-        from .kinetics import CollateralKineticsModel
+        from .kinetics import CollateralKineticsModel, KineticConstants
 
-        extra["kinetics"] = CollateralKineticsModel()
+        if request.kinetics_json:
+            constants = KineticConstants.from_json(request.kinetics_json)
+            extra["kinetics"] = CollateralKineticsModel(constants)
+            if constants.provisional:
+                notes.append(
+                    f"Kinetic constants loaded from {request.kinetics_json} are "
+                    "still flagged provisional=true, so absolute signal stays "
+                    "refused. Set provisional=false once the values are measured."
+                )
+        else:
+            extra["kinetics"] = CollateralKineticsModel()
 
     return ModelRegistry(HeuristicCas13Model(), accessibility, **extra)
 

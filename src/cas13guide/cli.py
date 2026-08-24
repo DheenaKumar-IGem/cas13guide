@@ -149,6 +149,7 @@ def _design(args: argparse.Namespace) -> int:
         seed=args.seed,
         calibration_n=args.calibration_n,
         calibration_noise=args.calibration_noise,
+        kinetics_json=args.kinetics_constants,
     )
     try:
         outcome = run_request(request)
@@ -304,6 +305,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="flag sites below this mean unpaired probability (FR3.4)")
     design.add_argument("--no-structure", action="store_true",
                         help="skip ViennaRNA accessibility and duplex energy")
+    design.add_argument(
+        "--kinetics-constants", metavar="PATH",
+        help="JSON of measured kinetic constants (FR6.1). Without one the "
+             "signal model runs on placeholders and absolute predictions "
+             "stay refused; see KineticConstants.to_json for the schema")
     design.add_argument("--no-signal", action="store_true",
                         help="skip the collateral-cleavage signal model")
     design.add_argument("--panel-size", type=int, default=3)

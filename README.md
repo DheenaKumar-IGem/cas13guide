@@ -72,7 +72,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 544 tests
+python -m unittest discover -s tests -t tests    # 558 tests
 pytest                              # same suite under pytest
 ```
 
@@ -209,7 +209,7 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 | ✅ | FR3.1–3.4 accessibility | `services/accessibility.py` |
 | ⚠️ | FR4.1–4.3 BLAST off-target | `services/blast.py` — **needs DR1 + DR3** |
 | ✅ | FR5.1–5.2 duplex free energy | `services/thermodynamics.py` |
-| ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works, `absolute_signal()` refuses |
+| ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works, `absolute_signal()` refuses. Supply measured values with `--kinetics-constants FILE.json` and it unlocks |
 | ❌ | FR6.3 Bayesian panel confidence | **not implemented** — the model and its parameters are PanCRISP's and are not in this repository |
 | ✅ | FR7.1–7.2 conserved regions, variant robustness | `services/conservation.py` |
 | ⚠️ | Trained activity model | `services/arc_model.py` — Arc CNN, parity-tested; **needs a LinearFold CONTRAfold binding**, and refuses ViennaRNA rather than substituting |
@@ -586,7 +586,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-544 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+558 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -659,6 +659,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_kinetics_mass_balance.py` | the ODE cannot create target it never had; constants can actually be supplied |
 | `test_panel_site_consistency.py` | the panel and the report must agree on what one site is; examples still run |
 | `test_preset_provenance.py` | preset invariants, the cross-reactivity claim, and miRBase verification |
 | `test_effector_constants.py` | ortholog data that nothing else exercises: DR length, stem, fold, distinctness |
