@@ -128,3 +128,52 @@ class TestExamplesStillRun(unittest.TestCase):
                         f"{path.name} reads a key not in PRESET_SOURCE "
                         f"({sorted(PRESET_SOURCE)})",
                     )
+
+
+class TestPanelCoverageStatesItsAssumption(unittest.TestCase):
+    """The noisy-OR reads as a probability, and it is not one.
+
+    Panel.coverage is 1 - prod(1 - lcb) over members, which assumes they fail
+    independently. They share a transcript and a single activity model whose
+    errors are correlated; the spacing constraint only stops them sharing a
+    site. That was documented in a docstring, where the people making ordering
+    decisions from the number never see it.
+    """
+
+    def _ids(self, panel_size):
+        from cas13guide.services.limitations import limitations_for_run
+
+        return {l.id for l in limitations_for_run(make_spec(), panel_size=panel_size)}
+
+    WARNING = "panel-coverage-assumes-independence"
+
+    def test_a_multi_guide_panel_states_the_assumption(self):
+        self.assertIn(self.WARNING, self._ids(3))
+
+    def test_a_single_guide_panel_does_not(self):
+        """Nothing is being combined, so there is no independence claim."""
+        self.assertNotIn(self.WARNING, self._ids(1))
+
+    def test_an_empty_panel_does_not(self):
+        self.assertNotIn(self.WARNING, self._ids(0))
+
+    def test_it_names_the_number_of_members(self):
+        """Generic warnings get skimmed; a specific one is about this run."""
+        from cas13guide.services.limitations import limitations_for_run
+
+        text = next(
+            l.text for l in limitations_for_run(make_spec(), panel_size=4)
+            if l.id == self.WARNING
+        )
+        self.assertIn("4", text)
+
+    def test_it_does_not_claim_the_number_is_meaningless(self):
+        """Ranking aid, not garbage -- the distinction the text has to carry."""
+        from cas13guide.services.limitations import limitations_for_run
+
+        text = next(
+            l.text for l in limitations_for_run(make_spec(), panel_size=2)
+            if l.id == self.WARNING
+        ).lower()
+        self.assertIn("ranking aid", text)
+        self.assertIn("overstates", text)

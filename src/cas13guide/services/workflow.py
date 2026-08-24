@@ -331,6 +331,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         calibration=calibration_service,
         bound=weakest_bound,
         universe_gaps=gaps,
+        panel_size=len(data.get("panel", {}).get("guides", ())),
     )
     notes = as_lines(found) + notes
 

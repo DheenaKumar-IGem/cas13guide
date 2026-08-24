@@ -75,6 +75,7 @@ def limitations_for_run(
     calibration: Any = None,
     bound: ExhaustivenessBound | None = None,
     universe_gaps: frozenset | None = None,
+    panel_size: int = 0,
 ) -> tuple[Limitation, ...]:
     """Everything this particular run could not establish.
 
@@ -93,6 +94,22 @@ def limitations_for_run(
                 "interval, and therefore every PASS, is exercisable rather than "
                 "earned. Fit a real screen with `cas13guide train` before "
                 "treating a bound as a guarantee.",
+            )
+        )
+
+    # ---- panel independence --------------------------------------------
+    if panel_size >= 2:
+        found.append(
+            Limitation(
+                "panel-coverage-assumes-independence",
+                Severity.WARNING,
+                f"Panel coverage combines the {panel_size} members with a "
+                "noisy-OR, which assumes they fail independently. They do not: "
+                "they share a transcript, and they share one activity model "
+                "whose errors are correlated. The spacing constraint only stops "
+                "them sharing a site. Treat the number as a ranking aid -- this "
+                "panel against another -- and not as the probability that the "
+                "panel detects the target, which it overstates.",
             )
         )
 

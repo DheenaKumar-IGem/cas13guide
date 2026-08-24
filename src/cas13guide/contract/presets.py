@@ -292,8 +292,15 @@ def _parse_mature_fa(text: str) -> dict[str, str]:
 
     Headers look like ``>hsa-miR-21-5p MIMAT0000076 Homo sapiens miR-21-5p``.
     Keyed on the accession rather than the name because names are reused across
-    releases while a MIMAT accession is stable -- which is the whole reason the
-    presets record one.
+    releases while a MIMAT accession is not.
+
+    That is only half the story, and the other half is why this function exists.
+    An accession is stable as an *identifier*; the sequence behind it is not.
+    miRBase release 23 revised the mature sequence of both MIMAT0000076 and
+    MIMAT0000078 -- two of this package's five presets. So an accession pins
+    which molecule is meant, and nothing at all about how it is spelled. Only a
+    release plus a checksum does that, which is what the caller is asked to
+    record.
     """
     out: dict[str, str] = {}
     accession = ""

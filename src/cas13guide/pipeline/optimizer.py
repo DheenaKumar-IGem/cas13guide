@@ -47,6 +47,18 @@ from ..models.evidence import GuideAssessment
 
 @dataclass(frozen=True, slots=True)
 class Panel:
+    """A selected panel, plus what its numbers do and do not mean.
+
+    ``coverage`` is a noisy-OR over per-guide conformal lower bounds: for each
+    required target, ``1 - prod(1 - lcb)``. That formula assumes the members
+    fail independently, and they do not. They share a transcript, they share one
+    activity model whose errors are correlated, and the spacing constraint only
+    stops them sharing a *site*. So read it as a ranking aid -- higher is a
+    better panel than lower -- and not as the probability that the panel
+    detects the target, which would be an overstatement in the confident
+    direction.
+    """
+
     guides: tuple[GuideAssessment, ...]
     coverage: dict[str, float]
     objective: float
