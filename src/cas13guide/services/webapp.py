@@ -25,7 +25,7 @@ import threading
 import webbrowser
 from email.parser import BytesParser
 from email.policy import default as email_policy
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -277,7 +277,17 @@ class DesignHandler(BaseHTTPRequestHandler):
 
 
 def make_server(host: str = "127.0.0.1", port: int = 8000) -> HTTPServer:
-    return HTTPServer((host, port), DesignHandler)
+    """A threading server, because a design is slow enough to block one.
+
+    ``HTTPServer`` handles one request at a time. A 500 nt target takes seconds,
+    and for that whole window every other connection -- a second tab, a reload,
+    the favicon -- is refused outright rather than queued. That turns the normal
+    impatient reload into a dead page, on the interface whose entire purpose is
+    serving people who will not use a command line.
+
+    ``daemon_threads`` so Ctrl-C is not held open by an in-flight design.
+    """
+    return ThreadingHTTPServer((host, port), DesignHandler)
 
 
 def serve(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True) -> int:
@@ -287,9 +297,9 @@ def serve(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True) 
     print(f"cas13guide is at {url}")
     if host not in ("127.0.0.1", "localhost"):
         print(
-            "  WARNING: this is a single-threaded development server with no "
-            "authentication.\n  Binding beyond localhost exposes it to the "
-            "network; put a real server in front of it.",
+            "  WARNING: this is a development server with no authentication "
+            "and no request limits.\n  Binding beyond localhost exposes it "
+            "to the network; put a real server in front of it.",
         )
     print("  Ctrl-C to stop.")
     if open_browser:

@@ -72,7 +72,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 558 tests
+python -m unittest discover -s tests -t tests    # 561 tests
 pytest                              # same suite under pytest
 ```
 
@@ -586,7 +586,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-558 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+561 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -659,6 +659,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_webapp_concurrency.py` | a slow design must not block every other connection |
 | `test_kinetics_mass_balance.py` | the ODE cannot create target it never had; constants can actually be supplied |
 | `test_panel_site_consistency.py` | the panel and the report must agree on what one site is; examples still run |
 | `test_preset_provenance.py` | preset invariants, the cross-reactivity claim, and miRBase verification |
