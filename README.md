@@ -37,6 +37,10 @@ cas13guide design --list-presets
 cas13guide serve                    # then open the page it prints
 ```
 
+If the console script is not on your PATH — the usual outcome of
+`pip install --user` on Windows — `python -m cas13guide <args>` is the same CLI
+and needs nothing but the interpreter that installed it.
+
 `serve` is the browser front end (FR1.2 upload, NFR2 no command-line
 knowledge): paste or upload a sequence, pick a preset, get the same interactive
 report. **Standard library only** — `http.server` plus `email` for multipart.
@@ -68,7 +72,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 502 tests
+python -m unittest discover -s tests -t tests    # 506 tests
 pytest                              # same suite under pytest
 ```
 
@@ -199,21 +203,25 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 | ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works, `absolute_signal()` refuses |
 | ❌ | FR6.3 Bayesian panel confidence | **not implemented** — the model and its parameters are PanCRISP's and are not in this repository |
 | ✅ | FR7.1–7.2 conserved regions, variant robustness | `services/conservation.py` |
+| ⚠️ | Trained activity model | `services/arc_model.py` — Arc CNN, parity-tested; **needs a LinearFold CONTRAfold binding**, and refuses ViennaRNA rather than substituting |
 | ✅ | FR8.1–8.4 ranking, table, export, visual | `pipeline/f_decide.py`, `services/fasta.py`, `services/report_html.py` |
 | ✅ | NFR1–NFR6 | measured at 0.2–3.4 s; `serve`; located errors; provenance ledger; 375 px verified; score glossary |
 | ❌ | DR1 RefSeq database, DR3 BLAST+, DR5 compute | infrastructure to provision |
 | ✅ | DR2 ViennaRNA | `pip install -e ".[structure]"` |
 | ⚠️ | DR4 model constants | JSON storage and loader exist; kinetic values are placeholders, Bayesian parameters absent |
 
-**The three things this cannot do without you.** Real kinetic constants from
+**The four things this cannot do without you.** Real kinetic constants from
 Feng et al. 2024 (`KineticConstants.from_json`, then set `provisional=False`);
 the Bayesian diagnostic model for FR6.3, which has no stub because guessing at
-someone else's statistical model is worse than leaving a hole; and a BLAST
-database plus toolkit. Everything else runs today.
+someone else's statistical model is worse than leaving a hole; a BLAST database
+plus toolkit; and a LinearFold CONTRAfold binding, without which the Arc model
+stays out of the default registry rather than being fed Turner energies.
+Everything else runs today.
 
-Two things it deliberately refuses rather than approximates: an absolute
-fluorescence figure from placeholder constants, and a certified bound from
-synthetic calibration. Both are announced on every run.
+Three things it deliberately refuses rather than approximates: an absolute
+fluorescence figure from placeholder constants, a certified bound from synthetic
+calibration, and an Arc score computed from Turner energies. The first two are
+announced on every run; the third raises.
 
 ## The load-bearing ideas
 
@@ -569,7 +577,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-502 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+506 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -642,6 +650,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_structure_and_signal.py` | fold-vs-probing independence, energy is not an objective, signal monotonicity, provisional-constant guard |
 | `test_io.py` | FASTA/raw parsing, error messages that locate the fault, CSV/FASTA export, REVIEW guides reach the ranking |
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
+| `test_module_entry_point.py` | `python -m cas13guide` runs, out of process |
 | `test_arc_model.py` | 133-guide parity with the reference, channel order, ensemble space, the ViennaRNA refusal |
 | `test_limitations.py` | each warning appears exactly when its condition holds, and not otherwise |
 | `test_webapp.py` | upload and paste round trips, defaults shared with the CLI, errors as messages not tracebacks |
