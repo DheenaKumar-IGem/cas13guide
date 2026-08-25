@@ -224,6 +224,26 @@ def limitations_for_run(
                     "refused until measured constants are supplied.",
                 )
             )
+    if (
+        kinetics is not None
+        and not spec.profile.collateral_is_hazard
+        and not getattr(kinetics, "adds_information", lambda: True)()
+    ):
+        found.append(
+            Limitation(
+                "signal-adds-no-information",
+                Severity.WARNING,
+                "Predicted signal is reported but is NOT ranked on, because with "
+                "these constants it is a rescaled copy of two numbers already in "
+                "the ranking: it comes out as a constant multiple of "
+                "activity_lower x accessibility, so it cannot separate two guides "
+                "that those do not already separate. Left in the objective set it "
+                "would silently re-weight them rather than add an axis. The ODE "
+                "stops being proportional once effective target approaches the "
+                "effector concentration, and the axis returns on its own when "
+                "constants that reach that regime are supplied.",
+            )
+        )
     if spec.profile.collateral_is_hazard:
         found.append(
             Limitation(

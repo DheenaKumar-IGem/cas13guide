@@ -140,6 +140,21 @@ class MetricVector:
     #: assay collateral is a hazard, and ranking guides by how much of it they
     #: produce would be exactly backwards.
     predicted_signal: float | None = None
+    #: Whether :attr:`predicted_signal` earns a place among the objectives.
+    #:
+    #: The signal model is driven by ``activity_lower * accessibility``, and
+    #: both are already objectives here. In the ODE's linear regime -- which is
+    #: where the shipped placeholder constants sit -- its output is exactly
+    #: ``k * activity_lower * accessibility``, so it cannot break a Pareto tie
+    #: its own inputs did not already break, and in the weighted score it
+    #: silently re-weights them at 2.5. Measured with those constants the ratio
+    #: varies by 0.159% across the unit square.
+    #:
+    #: So it stays a *reported* column and leaves the objective set. The
+    #: pipeline probes the model rather than assuming
+    #: (``CollateralKineticsModel.adds_information``), and the axis returns on
+    #: its own once constants that saturate the ODE are supplied.
+    predicted_signal_ranks: bool = True
 
     def objectives(self) -> dict[str, float]:
         """Metrics oriented so that larger is always better, for Pareto."""
@@ -156,7 +171,7 @@ class MetricVector:
             out["discrimination_margin"] = self.discrimination_margin
         if self.accessibility is not None:
             out["accessibility"] = self.accessibility
-        if self.predicted_signal is not None:
+        if self.predicted_signal is not None and self.predicted_signal_ranks:
             out["predicted_signal"] = self.predicted_signal
         return out
 

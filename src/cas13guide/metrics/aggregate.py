@@ -254,4 +254,10 @@ def build_metric_vector(
         accessibility=intended_accessibility(reference),
         duplex_dg_per_nt=intended_duplex_energy(reference),
         predicted_signal=predicted_signal(reference, spec, kinetics),
+        # An axis that is a rescaled copy of two other axes is reported, not
+        # ranked on. Probed, not assumed -- see the field's own docstring.
+        predicted_signal_ranks=bool(
+            kinetics is not None
+            and getattr(kinetics, "adds_information", lambda: True)()
+        ),
     )

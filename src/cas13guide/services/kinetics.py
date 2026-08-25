@@ -190,6 +190,50 @@ class CollateralKineticsModel:
             productive *= max(0.0, min(1.0, accessibility))
         return self.constants.target_nm * productive
 
+    #: Probe points for :meth:`adds_information`. Spread across the unit square
+    #: and chosen so that several share a product -- if the model is a function
+    #: of the product alone, those must agree exactly.
+    _PROBES = (
+        (0.8, 0.5), (0.4, 1.0), (0.5, 0.8), (1.0, 0.4),
+        (0.2, 0.3), (0.9, 0.9), (0.1, 0.1), (1.0, 1.0),
+    )
+
+    def adds_information(self, tolerance: float = 0.02) -> bool:
+        """Whether the signal says anything the pipeline did not already know.
+
+        ``relative_signal`` is driven by ``activity_lower * accessibility``, and
+        both of those are already objectives in
+        :meth:`MetricVector.objectives`. If the ODE is operating in its linear
+        regime the output is just ``k * activity_lower * accessibility`` for a
+        constant ``k`` -- a rescaled copy of two existing axes, which cannot
+        break a Pareto tie its inputs did not already break, and which in a
+        weighted sum quietly re-weights them.
+
+        Measured with the shipped placeholder constants, the ratio
+        ``relative_signal / (activity_lower * accessibility)`` varies by 0.159%
+        across the whole unit square. That is degenerate, and the axis is worth
+        reporting but not ranking on.
+
+        It is not *always* degenerate: the ODE saturates once effective target
+        approaches ``complex_nm``, and there the response genuinely stops being
+        proportional. So this is probed rather than assumed, and it will start
+        returning ``True`` on its own when constants that leave the linear
+        regime are supplied.
+        """
+        ratios = []
+        for activity, accessibility in self._PROBES:
+            product = activity * accessibility
+            signal = self.predict(activity, accessibility).relative_signal
+            if product <= 0.0:
+                continue
+            ratios.append(signal / product)
+        if not ratios:
+            return False
+        largest = max(ratios)
+        if largest <= 0.0:
+            return False
+        return (largest - min(ratios)) / largest > tolerance
+
     def integrate(self, effective_target_nm: float) -> tuple[float, float, float]:
         """RK4 over the two-state system.
 
