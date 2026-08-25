@@ -17,6 +17,23 @@ def synthetic(n, noise, rng):
     return out
 
 
+def synthetic_groups(n, group_count=12):
+    """Group labels for `synthetic` rows, standing in for distinct transcripts.
+
+    Calibration data with no stated provenance can no longer certify a bound,
+    so a fixture that means "many independent units" has to say which.
+    """
+    return [f"T{i % group_count:02d}" for i in range(n)]
+
+
+def add_synthetic(service, key, n, noise, rng, group_count=12):
+    """`add_many` with per-row group labels."""
+    for (pred, truth), group in zip(
+        synthetic(n, noise, rng), synthetic_groups(n, group_count)
+    ):
+        service.add_observation(key, pred, truth, group=group)
+
+
 class TestConformalCoverage(unittest.TestCase):
     def test_empirical_coverage_meets_nominal(self):
         rng = random.Random(42)
@@ -86,7 +103,8 @@ class TestUncertifiableLevels(unittest.TestCase):
         rng = random.Random(11)
         cs = CalibrationService(min_stratum_n=20)
         key = CalibrationService.stratum_key("RfxCas13d", "cell_culture_knockdown", "mm0")
-        cs.add_many(key, synthetic(20, 0.12, rng))  # alpha must be >= 1/21 = 0.0476
+        # grouped: this test is about achievable alpha, not about provenance
+        add_synthetic(cs, key, 20, 0.12, rng)  # alpha must be >= 1/21 = 0.0476
         iv = cs.interval(0.5, key, alpha=0.02)
         self.assertTrue(iv.ood)
         self.assertIn("uncertified", iv.stratum)
@@ -95,7 +113,7 @@ class TestUncertifiableLevels(unittest.TestCase):
         rng = random.Random(11)
         cs = CalibrationService(min_stratum_n=20)
         key = CalibrationService.stratum_key("RfxCas13d", "cell_culture_knockdown", "mm0")
-        cs.add_many(key, synthetic(20, 0.12, rng))
+        add_synthetic(cs, key, 20, 0.12, rng)
         iv = cs.interval(0.5, key, alpha=0.10)
         self.assertFalse(iv.ood)
         self.assertNotIn("uncertified", iv.stratum)
@@ -132,7 +150,7 @@ class TestOutOfDomain(unittest.TestCase):
     def test_fallback_stratum_is_used_but_flagged(self):
         rng = random.Random(9)
         cs = CalibrationService()
-        cs.add_many("RfxCas13d|*|*", synthetic(200, 0.1, rng))
+        add_synthetic(cs, "RfxCas13d|*|*", 200, 0.1, rng)
         iv = cs.interval(0.5, "RfxCas13d|novel_assay|mm0", alpha=0.10)
         self.assertTrue(iv.ood)  # not the exact stratum
         self.assertLess(iv.width, 1.0)  # but still informative

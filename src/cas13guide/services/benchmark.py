@@ -129,12 +129,19 @@ def assert_no_regression(
         raise RegressionError("; ".join(problems))
 
 
+#: Say this when the independent unit genuinely is not known. It counts as one
+#: group, so the bound reports itself out-of-domain -- which is the honest
+#: answer for data of unstated provenance, and the reason this is a value you
+#: have to type rather than a default you fall into.
+UNKNOWN_GROUP = "unknown"
+
+
 def record_wetlab_result(
     calibration: CalibrationService,
     stratum: str,
     predicted: float,
     observed: float,
-    group: str | None = None,
+    group: str,
 ) -> None:
     """Route a measured assay outcome to the calibration service (fix #9).
 
@@ -144,11 +151,20 @@ def record_wetlab_result(
     the metrics and the ranking all read.
 
     ``group`` is the independent unit the measurement came from -- the
-    transcript, not the well. Without it the stratum accumulates rows with no
-    group labels, and ``CalibrationService._groups_adequate`` treats a stratum
-    with zero labels as unjudgeable-so-acceptable: the MIN_STRATUM_GROUPS check
-    switches itself off for exactly the feedback path, and a bound built from
-    a single transcript's worth of wet-lab data comes back looking certified.
-    Pass it whenever the transcript is known.
+    transcript, not the well. It is **required**, and it used to default to
+    ``None``.
+
+    That default inverted the incentive. Measured on 60 identical rows: omit the
+    label and the stratum reports ``n_groups=0``, ``ood=False`` -- certified.
+    Pass the truthful ``group="TRANSCRIPT_A"`` and it reports ``n_groups=1``,
+    ``ood=True`` -- out of domain. Same data, same interval width; the only
+    difference was whether the caller admitted where it came from. Honesty was
+    penalised and silence was rewarded, on the one path that carries real
+    wet-lab measurements into the bounds the gate reads.
+
+    The old docstring described this hazard accurately and then left the
+    parameter optional, which documents a footgun rather than removing it. If
+    the transcript really is unknown, pass :data:`UNKNOWN_GROUP` and take the
+    out-of-domain answer that unstated provenance earns.
     """
     calibration.add_observation(stratum, predicted, observed, group=group)

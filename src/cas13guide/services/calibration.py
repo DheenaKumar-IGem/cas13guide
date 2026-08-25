@@ -280,11 +280,13 @@ class CalibrationService:
     def _groups_adequate(self, stratum: CalibrationStratum) -> bool:
         """False when too few independent units back this stratum.
 
-        A stratum with no group labels at all cannot be judged, so it passes;
-        the caller simply gets no protection from this check.
+        A stratum with no group labels at all is **not** adequate. This used to
+        return ``True`` on the reasoning that an unjudgeable stratum should not
+        be penalised, and the effect was that the check switched itself off for
+        precisely the data whose provenance nobody had stated -- so unlabelled
+        rows certified while truthfully-labelled single-transcript rows did not.
+        Absence of evidence about independence is not evidence of independence.
         """
-        if stratum.n_groups == 0:
-            return True
         return stratum.n_groups >= self.min_stratum_groups
 
     # -- use -----------------------------------------------------------
@@ -314,7 +316,11 @@ class CalibrationService:
         if not certified:
             label = f"{stratum.key}->uncertified@alpha={alpha}"
         elif not groups_ok:
-            label = f"{stratum.key}->only-{stratum.n_groups}-groups"
+            label = (
+                f"{stratum.key}->no-group-labels"
+                if stratum.n_groups == 0
+                else f"{stratum.key}->only-{stratum.n_groups}-groups"
+            )
 
         return Interval(
             point=prediction,

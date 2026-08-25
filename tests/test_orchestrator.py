@@ -25,9 +25,14 @@ def seeded_calibration(spec, n=120):
         key = CalibrationService.stratum_key(
             spec.profile.effector.value, spec.profile.assay.value, regime
         )
-        for _ in range(n):
+        for i in range(n):
             truth = RNG.random()
-            cs.add_observation(key, min(1.0, max(0.0, truth + RNG.gauss(0, 0.1))), truth)
+            # a group per simulated transcript: without one the stratum has no
+            # stated provenance and can no longer certify a bound
+            cs.add_observation(
+                key, min(1.0, max(0.0, truth + RNG.gauss(0, 0.1))), truth,
+                group=f"T{i % 12:02d}",
+            )
     return cs
 
 

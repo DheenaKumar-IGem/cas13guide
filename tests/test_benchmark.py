@@ -87,11 +87,13 @@ class TestBenchmark(unittest.TestCase):
         self.registry = ModelRegistry(HeuristicCas13Model(), NullAccessibilityModel())
         self.calibration = CalibrationService()
         rng = random.Random(8)
-        for case in cases(n=200, seed=99):
+        for i, case in enumerate(cases(n=200, seed=99)):
             pred = MODEL.predict(
                 case.spacer, profile_duplex(case.spacer, case.target_site), None
             )
-            self.calibration.add_observation(STRATUM, pred, case.observed_activity)
+            self.calibration.add_observation(
+                STRATUM, pred, case.observed_activity, group=f"T{i % 12:02d}"
+            )
 
     def test_report_is_populated(self):
         report = run_benchmark(self.registry, self.calibration, cases())
@@ -148,10 +150,11 @@ class TestWetLabFeedback(unittest.TestCase):
         self.assertEqual((before.lower, before.upper), (0.0, 1.0))
 
         rng = random.Random(21)
-        for _ in range(40):
+        for i in range(40):
             truth = rng.random()
             record_wetlab_result(
-                calibration, STRATUM, min(1.0, max(0.0, truth + rng.gauss(0, 0.08))), truth
+                calibration, STRATUM, min(1.0, max(0.0, truth + rng.gauss(0, 0.08))), truth,
+                group=f"ENST{i % 12:05d}",
             )
 
         after = calibration.interval(0.5, STRATUM, alpha=0.10)
@@ -190,11 +193,45 @@ class TestWetlabFeedbackCarriesItsIndependentUnit(unittest.TestCase):
             "one transcript of wet-lab data must not present itself as certified",
         )
 
-    def test_the_parameter_stays_optional_for_existing_callers(self):
+    def test_the_group_label_is_required(self):
+        """It used to be optional, and the default was the dangerous branch.
+
+        This test previously asserted that omitting it was fine and stopped at
+        describe_groups() == 0 -- it never asked what that did to the interval.
+        What it did was mark the bound in-domain: unlabelled rows certified
+        while truthfully-labelled single-transcript rows did not.
+        """
         calibration = CalibrationService()
-        record_wetlab_result(calibration, self.KEY, 0.4, 0.42)
-        self.assertEqual(calibration.describe()[self.KEY], 1)
-        self.assertEqual(calibration.describe_groups()[self.KEY], 0)
+        with self.assertRaises(TypeError):
+            record_wetlab_result(calibration, self.KEY, 0.4, 0.42)
+
+    def test_unknown_provenance_must_be_stated_and_is_not_certified(self):
+        """Saying "I do not know" is allowed; defaulting into it is not."""
+        from cas13guide.services.benchmark import UNKNOWN_GROUP
+
+        calibration = CalibrationService()
+        for i in range(60):
+            record_wetlab_result(
+                calibration, self.KEY, 0.4 + i * 0.001, 0.42, group=UNKNOWN_GROUP
+            )
+        self.assertEqual(calibration.describe_groups()[self.KEY], 1)
+        self.assertTrue(calibration.interval(0.5, self.KEY, 0.10).ood)
+
+    def test_unlabelled_data_can_no_longer_certify_a_bound(self):
+        """The measured inversion, pinned in the direction that matters.
+
+        60 rows from one transcript: stating that fact used to be punished with
+        ood=True while silence was rewarded with ood=False, at identical
+        interval width. Both must now be out of domain.
+        """
+        from cas13guide.services.benchmark import UNKNOWN_GROUP
+
+        honest, silent = CalibrationService(), CalibrationService()
+        for i in range(60):
+            record_wetlab_result(honest, self.KEY, 0.4 + i * 0.001, 0.42, group="TRANSCRIPT_A")
+            record_wetlab_result(silent, self.KEY, 0.4 + i * 0.001, 0.42, group=UNKNOWN_GROUP)
+        self.assertTrue(honest.interval(0.5, self.KEY, 0.10).ood)
+        self.assertTrue(silent.interval(0.5, self.KEY, 0.10).ood)
 
 
 if __name__ == "__main__":
