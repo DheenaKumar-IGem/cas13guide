@@ -150,6 +150,7 @@ def _design(args: argparse.Namespace) -> int:
         calibration_n=args.calibration_n,
         calibration_noise=args.calibration_noise,
         kinetics_json=args.kinetics_constants,
+        use_arc=args.arc,
     )
     try:
         outcome = run_request(request)
@@ -310,6 +311,11 @@ def main(argv: list[str] | None = None) -> int:
         help="JSON of measured kinetic constants (FR6.1). Without one the "
              "signal model runs on placeholders and absolute predictions "
              "stay refused; see KineticConstants.to_json for the schema")
+    design.add_argument(
+        "--arc", action="store_true",
+        help="score activity with the Arc RNAtargeting CNN instead of the "
+             "built-in heuristic. Needs RfxCas13d and --spacer-length 30, and "
+             'pip install "cas13guide[arc,contrafold]"')
     design.add_argument("--no-signal", action="store_true",
                         help="skip the collateral-cleavage signal model")
     design.add_argument("--panel-size", type=int, default=3)

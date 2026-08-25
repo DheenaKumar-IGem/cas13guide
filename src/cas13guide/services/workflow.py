@@ -84,6 +84,11 @@ class DesignRequest:
     #: runs on placeholders and ``absolute_signal()`` refuses -- which was
     #: unreachable-by-design until now, because nothing plumbed a path through.
     kinetics_json: str | None = None
+    #: Use the Arc RNAtargeting CNN instead of the built-in heuristic. Needs
+    #: onnxruntime and gpu-contrafold, RfxCas13d, and a 30 nt spacer -- the only
+    #: configuration the network was trained on. Refuses loudly otherwise
+    #: rather than scoring out-of-domain and calling it activity.
+    use_arc: bool = False
 
 
 @dataclass(slots=True)
@@ -193,7 +198,7 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
         raise DesignRequestError(f"cannot build the design spec: {exc}") from exc
 
 
-def build_registry(request: DesignRequest, notes: list[str]):
+def build_registry(request: DesignRequest, notes: list[str], spec=None, records=()):
     """Assemble the model registry, degrading loudly rather than silently."""
     from .registry import HeuristicCas13Model, ModelRegistry, NullAccessibilityModel
 
@@ -227,7 +232,54 @@ def build_registry(request: DesignRequest, notes: list[str]):
         else:
             extra["kinetics"] = CollateralKineticsModel()
 
-    return ModelRegistry(HeuristicCas13Model(), accessibility, **extra)
+    activity = HeuristicCas13Model()
+    if request.use_arc:
+        activity = _build_arc_model(request, spec, records)
+    return ModelRegistry(activity, accessibility, **extra)
+
+
+def _build_arc_model(request: DesignRequest, spec, records):
+    """The Arc CNN, or a refusal that says which precondition failed.
+
+    Every check here is a configuration the network was never trained on, and
+    the failure mode for all of them is the same: a confident number about a
+    thing the model has not seen. So they raise instead of degrading.
+    """
+    from ..contract.enums import Effector
+    from .arc_model import GUIDE_LENGTH, arc_model_for
+
+    if spec is not None:
+        if spec.profile.effector is not Effector.RFX_CAS13D:
+            raise DesignRequestError(
+                f"--arc needs RfxCas13d; this run is {spec.profile.effector.value}. "
+                "The network was trained on RfxCas13d alone and has nothing to "
+                "say about another ortholog."
+            )
+        if spec.spacer_length != GUIDE_LENGTH:
+            raise DesignRequestError(
+                f"--arc needs a {GUIDE_LENGTH} nt spacer; this run uses "
+                f"{spec.spacer_length}. The input tensor is a fixed "
+                f"({GUIDE_LENGTH}, 4), so another length cannot be scored at all."
+            )
+    try:
+        from .contrafold import ContrafoldMFESource
+    except ImportError as exc:  # pragma: no cover
+        raise DesignRequestError(str(exc)) from exc
+
+    try:
+        source = ContrafoldMFESource()
+    except Exception as exc:
+        raise DesignRequestError(
+            f"--arc needs LinearFold-CONTRAfold folding scores: {exc}"
+        ) from exc
+
+    sequences = {r.name: r.sequence for r in records}
+    if not sequences:
+        raise DesignRequestError("--arc needs at least one target sequence")
+    try:
+        return arc_model_for(sequences, source)
+    except Exception as exc:
+        raise DesignRequestError(f"could not build the Arc model: {exc}") from exc
 
 
 def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
@@ -269,7 +321,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         raise DesignRequestError(str(exc)) from exc
 
     spec = build_spec(request, records, notes)
-    registry = build_registry(request, notes)
+    registry = build_registry(request, notes, spec=spec, records=records)
 
     world = Transcriptome(request.genome_build, request.annotation)
     for record in records:

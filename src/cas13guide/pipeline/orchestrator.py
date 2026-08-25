@@ -118,6 +118,25 @@ def _panel_feasible(panel: Panel, spec: ResolvedDesignSpec) -> bool:
     return all(panel.coverage.get(t.target_id, 0.0) >= floor for t in required)
 
 
+def _self_fold_energy():
+    """ViennaRNA MFE of a single sequence, or ``None`` if it is not installed.
+
+    QC's built-in stem count is a proxy for exactly this number and a poor one
+    (28.9% recall, measured). When the real thing is available it is used, and
+    the run records which -- an unbuyable-back FAIL should not rest on a guess
+    when thermodynamics is one import away.
+    """
+    try:
+        import RNA
+    except ImportError:
+        return None
+
+    def fold(sequence: str) -> float:
+        return float(RNA.fold(sequence.upper().replace("T", "U"))[1])
+
+    return fold
+
+
 def run_design(
     spec: ResolvedDesignSpec,
     contexts: list[DesignContext],
@@ -131,6 +150,7 @@ def run_design(
     """Run the full pipeline, backtracking within budget."""
     if not contexts:
         raise ValueError("at least one context is required")
+    self_fold = _self_fold_energy()
     reference = next((c for c in contexts if c.name == "reference"), contexts[0])
 
     ledger = ProvenanceLedger(spec.fingerprint())
@@ -183,7 +203,7 @@ def run_design(
             cands = design_candidates(
                 spec, step=step, junctions_by_target=junctions_by_target
             )
-            cached = (cands, run_qc(cands, spec))
+            cached = (cands, run_qc(cands, spec, self_fold))
             tiling_cache[step] = cached
         return cached
 

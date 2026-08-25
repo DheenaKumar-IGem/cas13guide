@@ -27,7 +27,11 @@ structure = ["ViennaRNA>=2.6"]
 # energy source, which this package deliberately does not supply -- see
 # THIRD_PARTY_LICENSES.md and the module docstring.
 arc = ["onnxruntime>=1.17"]
-dev = ["pytest>=7.4", "hypothesis>=6.90", "ViennaRNA>=2.6", "onnxruntime>=1.17"]
+# LinearFold-CONTRAfold folding scores for the Arc model (services/contrafold.py).
+# A pure-Python CONTRAfold CRF, so it needs no compiler -- which is the only
+# reason the Arc model is usable on a machine without a C++ toolchain.
+contrafold = ["gpu-contrafold>=0.1"]
+dev = ["pytest>=7.4", "hypothesis>=6.90", "ViennaRNA>=2.6", "onnxruntime>=1.17", "gpu-contrafold>=0.1"]
 
 [project.scripts]
 cas13guide = "cas13guide.cli:main"

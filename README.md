@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 589 tests
+python -m unittest discover -s tests -t tests    # 625 tests
 pytest                              # same suite under pytest
 ```
 
@@ -102,7 +102,24 @@ being wrong, and only end-to-end parity sees all four:
 | Scalars ordered `linearfold_val, isoform_percent, target_unfold_energy` | silently shifts every prediction |
 | Normalizers `6.48 / 11.93 / 15.67` are training-time values | ditto |
 
-**It needs LinearFold, and there is deliberately no ViennaRNA fallback.** Two of
+**It now has real folding scores, and still no ViennaRNA fallback.**
+`services/contrafold.py` supplies them — the CONTRAfold CRF in pure Python, so
+no compiler is needed, which matters because LinearFold has no Windows wheel on
+PyPI, no `win-64` build on bioconda and no binary releases at all. It reproduces
+all 399 reference folds **exactly** and drives the CNN to within `5.96e-08` of
+the reference scores. Two details are load-bearing: LinearFold defaults to
+`sharpturn=false` (imposed here through the parameter table, not by editing a
+dynamic program), and its `%.2f` output quantisation is part of the number.
+**Zero** of the fixture's 266 sequences contain a sharp turn, so parity alone
+would pass green with that convention set either way — `test_contrafold.py`
+carries separate known-answer vectors for it.
+
+```bash
+pip install -e ".[arc,contrafold]"
+cas13guide design --fasta target.fa --effector RfxCas13d --spacer-length 30 --arc
+```
+
+**Why there is still no ViennaRNA fallback.** Two of
 the three scalars are folding scores in LinearFold's **CONTRAfold**
 parameterisation — *not* free energies in kcal/mol, despite the `mfe` name. They
 are dimensionless log-odds where **higher means more stable**, quantised to two
@@ -208,25 +225,30 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 | ✅ | FR1.1–1.5 input, presets, validation, ortholog | `services/fasta.py`, `contract/presets.py`, `contract/effectors.py` — all five presets verified against miRBase release 23 (sha256 pinned, re-checkable via `verify_against_mirbase()`) |
 | ✅ | FR2.1–2.3 tiling, PFS tagging, PFS deprioritisation | `pipeline/a_candidates.py`, `pipeline/b_qc.py` |
 | ✅ | FR3.1–3.4 accessibility | `services/accessibility.py` |
-| ⚠️ | FR4.1–4.3 BLAST off-target | `services/blast.py` — **needs DR1 + DR3** |
+| ⚠️ | FR4.1–4.3 BLAST off-target | `services/blast.py` — needs DR1 + DR3, and is not yet wired to a CLI flag. `--background` is the exhaustive alternative |
 | ✅ | FR5.1–5.2 duplex free energy | `services/thermodynamics.py` |
 | ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works, `absolute_signal()` refuses. Supply measured values with `--kinetics-constants FILE.json` and it unlocks |
 | ❌ | FR6.3 Bayesian panel confidence | **not implemented** — the model and its parameters are PanCRISP's and are not in this repository |
 | ✅ | FR7.1–7.2 conserved regions, variant robustness | `services/conservation.py` |
-| ⚠️ | Trained activity model | `services/arc_model.py` — Arc CNN, parity-tested; **needs a LinearFold CONTRAfold binding**, and refuses ViennaRNA rather than substituting |
+| ✅ | Trained activity model | `services/arc_model.py` + `services/contrafold.py` — Arc CNN on real CONTRAfold energies, 399/399 reference folds exact. `--arc` |
 | ✅ | FR8.1–8.4 ranking, table, export, visual | `pipeline/f_decide.py`, `services/fasta.py`, `services/report_html.py` |
 | ✅ | NFR1–NFR6 | measured at 0.2–3.4 s; `serve`; located errors; provenance ledger; 375 px verified; score glossary |
-| ❌ | DR1 RefSeq database, DR3 BLAST+, DR5 compute | infrastructure to provision |
+| ⚠️ | DR1 RefSeq database, DR3 BLAST+, DR5 compute | provisionable with no compiler and no admin; `--background` needs none of it |
 | ✅ | DR2 ViennaRNA | `pip install -e ".[structure]"` |
 | ⚠️ | DR4 model constants | JSON storage and loader exist; kinetic values are placeholders, Bayesian parameters absent |
 
-**The three things this cannot do without you.** Real kinetic constants from
-Feng et al. 2024 (`--kinetics-constants FILE.json`, with `provisional=false`);
-the Bayesian diagnostic model for FR6.3, which has no stub because guessing at
-someone else's statistical model is worse than leaving a hole; a BLAST database
-plus toolkit; and a LinearFold CONTRAfold binding, without which the Arc model
-stays out of the default registry rather than being fed Turner energies.
-Everything else runs today.
+**The two things this cannot do without you.** Real kinetic constants —
+`k_cat` and `K_M` for your reporter, which Feng et al. 2024 does not report, so
+they have to come from a plate reader (`--kinetics-constants FILE.json`, with
+`provisional=false`); and the Bayesian diagnostic model for FR6.3, which has no
+stub because guessing at someone else's statistical model is worse than leaving
+a hole — and because an attempt at one derived its scale as `q / z`, dividing a
+distribution-free conformal quantile by a Gaussian one, which is the exact
+assumption conformal exists to avoid.
+
+BLAST is optional rather than blocking: `--background <FASTA>` already runs an
+exhaustive, wobble-aware scan over a transcriptome you supply, and reports
+`exhaustive=True`, which a seeded heuristic cannot.
 
 Three things it deliberately refuses rather than approximates: an absolute
 fluorescence figure from placeholder constants, a certified bound from synthetic
@@ -587,7 +609,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-589 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+625 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -662,6 +684,8 @@ Test modules map to the claims rather than to the file layout:
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
 | `test_webapp_concurrency.py` | a slow design must not block every other connection |
 | `test_kinetics_mass_balance.py` | the ODE cannot create target it never had; constants can actually be supplied |
+| `test_contrafold.py` | 399 reference folds exact, and the sharp-turn convention the fixture is blind to |
+| `test_self_folding.py` | the hard-FAIL self-folding check, wobble-aware and preferring a real fold |
 | `test_signal_is_not_double_counted.py` | an axis that is a rescaled copy of two others is reported, not ranked |
 | `test_panel_guarantee.py` | any approximation bound the report prints is brute-force checked against the true optimum |
 | `test_panel_site_consistency.py` | the panel and the report must agree on what one site is; examples still run |

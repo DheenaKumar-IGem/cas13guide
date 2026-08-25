@@ -338,3 +338,61 @@ class ArcActivityModel:
         value = float(self.ensemble.scores([key], [features])[0])
         self._cache[key] = value
         return value
+
+
+def build_feature_table(
+    sequences: dict[str, str],
+    source: MFESource,
+    isoform_percent: float = 1.0,
+) -> dict[str, ArcFeatures]:
+    """Fold every 30 nt window of every target and key the features by spacer.
+
+    :class:`ArcActivityModel` needs the transcript context its ``predict``
+    signature cannot carry, so the table is built once per run rather than
+    per query. That is also the only affordable arrangement: folding is
+    milliseconds per window and a design asks about a window many times.
+
+    ``sequences`` maps a target id to its sequence; the id is unused except to
+    make callers pass something meaningful. Spacers are the reverse complement
+    of the window, matching how the pipeline derives them, and the ``nearby``
+    context carries up to :data:`FLANK_LENGTH` nt each side -- truncated at the
+    transcript ends exactly as the reference pipeline truncates it.
+    """
+    from ..util.seq import revcomp
+
+    table: dict[str, ArcFeatures] = {}
+    for sequence in sequences.values():
+        rna = sequence.upper().replace("T", "U")
+        for start in range(0, len(rna) - TARGET_LENGTH + 1):
+            window = rna[start : start + TARGET_LENGTH]
+            spacer = revcomp(window)
+            if spacer in table:
+                continue
+            left = max(0, start - FLANK_LENGTH)
+            right = min(len(rna), start + TARGET_LENGTH + FLANK_LENGTH)
+            nearby = rna[left:right]
+            table[spacer] = features_for_target(
+                spacer, nearby, start - left, source, isoform_percent
+            )
+    return table
+
+
+def arc_model_for(
+    sequences: dict[str, str],
+    source: MFESource | None = None,
+    isoform_percent: float = 1.0,
+) -> "ArcActivityModel":
+    """A ready-to-use :class:`ArcActivityModel` for these targets.
+
+    Supplies :class:`~cas13guide.services.contrafold.ContrafoldMFESource` when
+    no source is given -- the only implementation that produces the energies the
+    network was trained on. Raises rather than substituting anything else.
+    """
+    if source is None:
+        from .contrafold import ContrafoldMFESource
+
+        source = ContrafoldMFESource()
+    return ArcActivityModel(
+        ensemble=ArcEnsemble(),
+        features_by_spacer=build_feature_table(sequences, source, isoform_percent),
+    )

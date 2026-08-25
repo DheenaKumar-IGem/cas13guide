@@ -60,10 +60,39 @@ logic. Used here as the known-answer vectors for
 
 ---
 
+## CONTRAfold Viterbi kernel — `src/cas13guide/services/_contrafold_kernel.py`
+
+**What is redistributed.** One function, copied from `gpu_contrafold.cpu.viterbi`
+with a single changed return statement: upstream returns only the structure and
+discards the optimum it computed, and that discarded scalar is the CONTRAfold
+score this package needs. It is generated from the installed source by a script
+rather than transcribed, so the copy cannot drift by a typo, and it is held to
+399 known answers by `tests/test_contrafold.py`.
+
+**Source.** `gpu-contrafold` on PyPI. **Licence.** MIT.
+
+**Why copied rather than patched at import.** Every Arc prediction rests on that
+number. A textual patch applied at runtime to a 0.1.0 single-author package
+would break silently on upgrade; a vendored copy breaks loudly, against a parity
+test.
+
+The CONTRAfold model parameters themselves are **not** vendored — they are read
+from the installed `gpu-contrafold` package, which is an optional dependency
+(`pip install "cas13guide[contrafold]"`).
+
+---
+
 ## LinearFold — **not redistributed here**
 
 `services/arc_model.py` needs LinearFold's **CONTRAfold** energies and this
-repository ships no build of it. That is partly practical and partly a licence
-matter: LinearFold's own terms restrict redistribution for a fee, which is
-stricter than this project's licence and would travel with the artifact. Supply
-your own binding through the `MFESource` protocol.
+repository ships no build of it. That is partly practical — it has no Windows
+wheel on PyPI, no `win-64` build on bioconda, and no binary releases on GitHub —
+and partly a licence matter: LinearFold's own terms restrict redistribution for
+a fee, which is stricter than this project's licence and would travel with the
+artifact.
+
+`services/contrafold.py` reaches the same numbers by a different route: the
+CONTRAfold CRF reimplemented in pure Python, plus LinearFold's `sharpturn=false`
+default imposed through the parameter table. Verified equal to LinearFold's
+output on all 399 reference folds. You can still supply your own LinearFold
+binding through the `MFESource` protocol if you prefer.
