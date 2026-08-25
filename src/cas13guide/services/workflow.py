@@ -89,6 +89,13 @@ class DesignRequest:
     #: configuration the network was trained on. Refuses loudly otherwise
     #: rather than scoring out-of-domain and calling it activity.
     use_arc: bool = False
+    #: Path to a BLAST nucleotide database for off-target search (FR4, DR1/DR3).
+    #: Without one the exhaustive wobble-aware scanner runs over whatever
+    #: `--background` supplied, which is slower but reports exhaustive=True.
+    blast_db: str | None = None
+    #: What the caller asserts that database covers. The universe-adequacy gate
+    #: reads this assertion and cannot check it, so an honest value matters.
+    blast_universes: str = "coding"
 
 
 @dataclass(slots=True)
@@ -238,6 +245,46 @@ def build_registry(request: DesignRequest, notes: list[str], spec=None, records=
     return ModelRegistry(activity, accessibility, **extra)
 
 
+def _reference_index(request: DesignRequest, world):
+    """The off-target index for this run.
+
+    Defaults to the exhaustive wobble-aware scan over whatever was loaded, which
+    can honestly report ``exhaustive=True``. ``--blast-db`` swaps in ``blastn``,
+    which is faster over a large database and is a seeded heuristic, so it
+    reports ``exhaustive=False`` and the run says so.
+    """
+    from .indexes import ExhaustiveScanIndex
+
+    if not request.blast_db:
+        return ExhaustiveScanIndex(world, ALL_UNIVERSES)
+
+    from .blast import BlastOffTargetIndex, BlastUnavailable
+
+    try:
+        universes = frozenset(
+            Universe(name.strip())
+            for name in request.blast_universes.split(",")
+            if name.strip()
+        )
+    except ValueError as exc:
+        raise DesignRequestError(
+            f"--blast-universes: {exc}. Valid values: "
+            + ", ".join(sorted(u.value for u in Universe))
+        ) from exc
+    if not universes:
+        raise DesignRequestError(
+            "--blast-universes cannot be empty: the universe-adequacy gate reads "
+            "it as your assertion about what the database covers"
+        )
+
+    index = BlastOffTargetIndex(database=request.blast_db, universes=universes)
+    try:
+        index.ensure_available()
+    except BlastUnavailable as exc:
+        raise DesignRequestError(str(exc)) from exc
+    return index
+
+
 def _build_arc_model(request: DesignRequest, spec, records):
     """The Arc CNN, or a refusal that says which precondition failed.
 
@@ -334,7 +381,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
 
     contexts = [
         DesignContext(
-            "reference", world, ExhaustiveScanIndex(world, ALL_UNIVERSES),
+            "reference", world, _reference_index(request, world),
             {record.name: record.name for record in records},
         )
     ]

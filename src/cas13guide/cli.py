@@ -151,6 +151,8 @@ def _design(args: argparse.Namespace) -> int:
         calibration_noise=args.calibration_noise,
         kinetics_json=args.kinetics_constants,
         use_arc=args.arc,
+        blast_db=args.blast_db,
+        blast_universes=args.blast_universes,
     )
     try:
         outcome = run_request(request)
@@ -311,6 +313,15 @@ def main(argv: list[str] | None = None) -> int:
         help="JSON of measured kinetic constants (FR6.1). Without one the "
              "signal model runs on placeholders and absolute predictions "
              "stay refused; see KineticConstants.to_json for the schema")
+    design.add_argument(
+        "--blast-db", metavar="PATH",
+        help="BLAST nucleotide database for off-target search (FR4, DR1/DR3). "
+             "Without one, --background is scanned exhaustively instead, which "
+             "is slower but can report exhaustive=True")
+    design.add_argument(
+        "--blast-universes", default="coding", metavar="A,B",
+        help="what you assert --blast-db covers; the universe-adequacy gate "
+             "reads this and cannot verify it (default: coding)")
     design.add_argument(
         "--arc", action="store_true",
         help="score activity with the Arc RNAtargeting CNN instead of the "

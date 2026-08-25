@@ -232,3 +232,86 @@ class TestItNeverClaimsExhaustiveness(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestItIsReachableFromTheCli(unittest.TestCase):
+    """A documented feature wired to nothing is a hole with documentation.
+
+    BlastOffTargetIndex was referenced nowhere outside this module and its own
+    tests: no CLI flag, no call site, no way for a user to select it however
+    much BLAST+ they had installed. DR1/DR3 were never what stood in the way.
+    """
+
+    def test_the_request_carries_a_database_path(self):
+        from cas13guide.services.workflow import DesignRequest
+
+        self.assertTrue(hasattr(DesignRequest(), "blast_db"))
+
+    def test_the_cli_exposes_it(self):
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-m", "cas13guide", "design", "--help"],
+            capture_output=True, text=True, timeout=120,
+        )
+        self.assertIn("--blast-db", result.stdout)
+        self.assertIn("--blast-universes", result.stdout)
+
+    def test_without_a_database_the_exhaustive_scanner_is_used(self):
+        """The default has to stay the one that can claim exhaustiveness."""
+        from cas13guide.services.indexes import ExhaustiveScanIndex
+        from cas13guide.services.transcriptome import Transcriptome
+        from cas13guide.services.workflow import DesignRequest, _reference_index
+
+        world = Transcriptome("GRCh38", "v44")
+        self.assertIsInstance(
+            _reference_index(DesignRequest(), world), ExhaustiveScanIndex
+        )
+
+    def test_a_missing_toolkit_is_refused_legibly_not_deep_in_a_run(self):
+        from cas13guide.services.transcriptome import Transcriptome
+        from cas13guide.services.workflow import (
+            DesignRequest,
+            DesignRequestError,
+            _reference_index,
+        )
+
+        world = Transcriptome("GRCh38", "v44")
+        request = DesignRequest(blast_db="/nonexistent/db")
+        import shutil
+
+        if shutil.which("blastn") is not None:
+            self.skipTest("blastn is installed, so absence cannot be tested")
+        with self.assertRaises(DesignRequestError) as caught:
+            _reference_index(request, world)
+        self.assertIn("blastn", str(caught.exception))
+
+    def test_an_unknown_universe_names_the_valid_ones(self):
+        from cas13guide.services.transcriptome import Transcriptome
+        from cas13guide.services.workflow import (
+            DesignRequest,
+            DesignRequestError,
+            _reference_index,
+        )
+
+        world = Transcriptome("GRCh38", "v44")
+        request = DesignRequest(blast_db="/db", blast_universes="not_a_universe")
+        with self.assertRaises(DesignRequestError) as caught:
+            _reference_index(request, world)
+        self.assertIn("coding", str(caught.exception))
+
+    def test_an_empty_universe_assertion_is_refused(self):
+        """Declaring nothing would make the adequacy gate check nothing."""
+        from cas13guide.services.transcriptome import Transcriptome
+        from cas13guide.services.workflow import (
+            DesignRequest,
+            DesignRequestError,
+            _reference_index,
+        )
+
+        world = Transcriptome("GRCh38", "v44")
+        with self.assertRaises(DesignRequestError):
+            _reference_index(
+                DesignRequest(blast_db="/db", blast_universes="  "), world
+            )

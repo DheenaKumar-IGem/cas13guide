@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 625 tests
+python -m unittest discover -s tests -t tests    # 631 tests
 pytest                              # same suite under pytest
 ```
 
@@ -225,7 +225,7 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 | ✅ | FR1.1–1.5 input, presets, validation, ortholog | `services/fasta.py`, `contract/presets.py`, `contract/effectors.py` — all five presets verified against miRBase release 23 (sha256 pinned, re-checkable via `verify_against_mirbase()`) |
 | ✅ | FR2.1–2.3 tiling, PFS tagging, PFS deprioritisation | `pipeline/a_candidates.py`, `pipeline/b_qc.py` |
 | ✅ | FR3.1–3.4 accessibility | `services/accessibility.py` |
-| ⚠️ | FR4.1–4.3 BLAST off-target | `services/blast.py` — needs DR1 + DR3, and is not yet wired to a CLI flag. `--background` is the exhaustive alternative |
+| ✅ | FR4.1–4.3 BLAST off-target | `services/blast.py` — `--blast-db`, refusing legibly without BLAST+. `--background` is the exhaustive, wobble-aware alternative that needs no database |
 | ✅ | FR5.1–5.2 duplex free energy | `services/thermodynamics.py` |
 | ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works, `absolute_signal()` refuses. Supply measured values with `--kinetics-constants FILE.json` and it unlocks |
 | ❌ | FR6.3 Bayesian panel confidence | **not implemented** — the model and its parameters are PanCRISP's and are not in this repository |
@@ -233,7 +233,7 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 | ✅ | Trained activity model | `services/arc_model.py` + `services/contrafold.py` — Arc CNN on real CONTRAfold energies, 399/399 reference folds exact. `--arc` |
 | ✅ | FR8.1–8.4 ranking, table, export, visual | `pipeline/f_decide.py`, `services/fasta.py`, `services/report_html.py` |
 | ✅ | NFR1–NFR6 | measured at 0.2–3.4 s; `serve`; located errors; provenance ledger; 375 px verified; score glossary |
-| ⚠️ | DR1 RefSeq database, DR3 BLAST+, DR5 compute | provisionable with no compiler and no admin; `--background` needs none of it |
+| ⚠️ | DR1 RefSeq database, DR3 BLAST+, DR5 compute | your infrastructure to provision — no compiler or admin needed; `--background` needs none of it |
 | ✅ | DR2 ViennaRNA | `pip install -e ".[structure]"` |
 | ⚠️ | DR4 model constants | JSON storage and loader exist; kinetic values are placeholders, Bayesian parameters absent |
 
@@ -609,7 +609,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-625 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+631 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
