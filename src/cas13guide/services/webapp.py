@@ -9,12 +9,17 @@ this module away and keep the pipeline.
 
 What this is honest about
 -------------------------
-``http.server`` is a development server. It handles one request at a time, has
-no authentication and no upload size limit beyond the one imposed below, and a
+``http.server`` is a development server. It has no authentication, no upload
+size limit beyond the one imposed below, no cap on concurrent threads, and a
 design run happens *inside* the request rather than in a job queue. For a
 single user on ``localhost`` -- which is what NFR2 describes -- that is the right
 amount of machinery. It binds to ``127.0.0.1`` by default for the same reason,
 and says so when asked to bind anywhere else.
+
+It is *threaded*, though. This paragraph said "handles one request at a time"
+for as long as that was true and for one commit after it stopped being --
+prose describing code is exactly the thing that rots when the code moves. See
+``make_server``.
 """
 
 from __future__ import annotations

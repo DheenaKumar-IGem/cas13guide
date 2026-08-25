@@ -46,9 +46,10 @@ knowledge): paste or upload a sequence, pick a preset, get the same interactive
 report. **Standard library only** — `http.server` plus `email` for multipart.
 That is deliberate: choosing Flask or FastAPI would push a dependency *and* a
 deployment shape onto whoever runs this, and neither is this package's call. It
-is a development server — single-threaded, unauthenticated, running the design
+is a development server — unauthenticated, unthrottled, running the design
 inside the request — so it binds to localhost and says so loudly if asked to
-bind anywhere else.
+bind anywhere else. It *is* threaded, so one slow design does not refuse
+everyone else.
 
 Both entry points are thin wrappers over `services/workflow.py:run_request`, so
 a form POST and a command line reach the pipeline through one code path and
@@ -72,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 570 tests
+python -m unittest discover -s tests -t tests    # 577 tests
 pytest                              # same suite under pytest
 ```
 
@@ -586,7 +587,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-570 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+577 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
@@ -661,6 +662,7 @@ Test modules map to the claims rather than to the file layout:
 | `test_conservation.py` | conserved windows in duplex space, wobble tolerance, losing a variant lowers robustness |
 | `test_webapp_concurrency.py` | a slow design must not block every other connection |
 | `test_kinetics_mass_balance.py` | the ODE cannot create target it never had; constants can actually be supplied |
+| `test_panel_guarantee.py` | any approximation bound the report prints is brute-force checked against the true optimum |
 | `test_panel_site_consistency.py` | the panel and the report must agree on what one site is; examples still run |
 | `test_preset_provenance.py` | preset invariants, the cross-reactivity claim, and miRBase verification |
 | `test_effector_constants.py` | ortholog data that nothing else exercises: DR length, stem, fold, distinctness |

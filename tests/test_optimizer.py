@@ -155,9 +155,18 @@ class TestPanelSelection(unittest.TestCase):
         self.assertAlmostEqual(panel.coverage["t1"], 0.10)
 
     def test_guarantee_is_reported_honestly(self):
+        """The constrained branch claims no bound, because it has none.
+
+        This used to assert the string contained "1/2". It checked the text and
+        never the property, and the property is false -- see
+        test_panel_guarantee.py, which brute-forces the optimum and exhibits an
+        instance reaching 0.404 of it.
+        """
         spec = make_spec(targets=TWO_TARGETS)
         pool = [guide("gA", {"t1": 0.9, "t2": 0.9}, start=0)]
-        self.assertIn("1/2", select_panel(pool, spec, size=1, min_spacing=15).guarantee)
+        constrained = select_panel(pool, spec, size=1, min_spacing=15).guarantee
+        self.assertNotIn("1/2", constrained)
+        self.assertIn("NO approximation guarantee", constrained)
         unconstrained = select_panel(pool, spec, size=1, min_spacing=0, max_shared_off=10**9)
         self.assertIn("1 - 1/e", unconstrained.guarantee)
 

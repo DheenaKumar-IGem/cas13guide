@@ -9,11 +9,24 @@ the expected number of required targets covered by at least one guide, where
 function is monotone and submodular, so greedy selection carries a real
 approximation guarantee:
 
-* under a pure cardinality constraint (panel size ``k``): ``1 - 1/e``;
-* with the spacing/diversity independence constraints switched on the problem
-  becomes maximization over a matroid-like family, where greedy guarantees
-  ``1/2``. The looser bound is reported honestly rather than quietly claimed
-  as ``1 - 1/e``.
+* under a pure cardinality constraint (panel size ``k``): ``1 - 1/e``. This one
+  is real -- Nemhauser, Wolsey and Fisher, for monotone submodular maximization
+  under a cardinality constraint;
+* with spacing or diversity switched on: **nothing**. This used to claim
+  ``1/2`` on the grounds that the feasible family was "matroid-like". It is
+  not. "No two members within ``min_spacing``, and no two sharing an off-target
+  locus" is the independent-set family of a conflict graph, which has no
+  exchange property: one pan-variant guide in a conserved window is feasible,
+  the three variant-specific guides packed around it are feasible together, and
+  the first cannot be extended into the second. Greedy takes the pan guide for
+  the larger first-round gain and forfeits all three.
+
+  Measured on exactly that instance with the orchestrator's own defaults,
+  greedy reached **0.404** of the brute-forced optimum against a claimed floor
+  of 0.5, and 0.06 with a weaker hub and a larger panel. A conflict graph is a
+  ``p``-independence system, where greedy gives ``1/(p + 1)`` -- and ``p`` here
+  is however many guides one guide can block, which is unbounded. So there is
+  no constant to report, and the code now says so instead of inventing one.
 
 Constraints applied during selection:
 
@@ -177,7 +190,9 @@ def select_panel(
 
     constrained = min_spacing > 0 or max_shared_off < len(assessments)
     guarantee = (
-        "greedy >= 1/2 of optimum (matroid-constrained submodular maximization)"
+        "greedy heuristic -- NO approximation guarantee: spacing/diversity "
+        "feasibility is an independence system, not a matroid, so the panel can "
+        "be arbitrarily worse than the best feasible one"
         if constrained
         else "greedy >= (1 - 1/e) of optimum (cardinality-constrained submodular maximization)"
     )
