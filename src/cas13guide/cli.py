@@ -150,6 +150,7 @@ def _design(args: argparse.Namespace) -> int:
         calibration_n=args.calibration_n,
         calibration_noise=args.calibration_noise,
         kinetics_json=args.kinetics_constants,
+        panel_dependence_json=args.panel_dependence,
         use_arc=args.arc,
         blast_db=args.blast_db,
         blast_universes=args.blast_universes,
@@ -196,6 +197,27 @@ def _design(args: argparse.Namespace) -> int:
         print("no guide cleared the gate.")
         for shortfall in data["shortfalls"]:
             print(f"  ! {shortfall}")
+
+    # FR6.3. Printed after the table because it is a statement about the
+    # panel the run recommends, not about the rows a human is triaging -- and
+    # printed as an interval because that is what it is.
+    confidence = (data.get("panel") or {}).get("confidence")
+    if confidence and confidence["targets"]:
+        print()
+        print("panel detection probability (FR6.3):")
+        for target in confidence["targets"]:
+            point = (
+                "" if target["point"] is None
+                else f"  point={target['point']:.3f}"
+            )
+            thin = "  [thin calibration]" if target["thin"] else ""
+            print(
+                f"  {target['target_id']:<16} "
+                f"[{target['lower']:.3f}, {target['upper']:.3f}]"
+                f"{point}{thin}"
+            )
+        print("  lower = members fail together, upper = members fail "
+              "independently")
 
     if args.out:
         from .services.report_html import AccessibilityTrack, write_report
@@ -330,6 +352,12 @@ def main(argv: list[str] | None = None) -> int:
     design.add_argument("--no-signal", action="store_true",
                         help="skip the collateral-cleavage signal model")
     design.add_argument("--panel-size", type=int, default=3)
+    design.add_argument(
+        "--panel-dependence", metavar="FILE.json",
+        help="measured common-cause fraction for panel members (FR6.3). "
+             "Without one the panel's detection probability is reported as an "
+             "interval and no point estimate is offered",
+    )
     design.add_argument("--top", type=int, default=10)
     design.add_argument("--all-sites", action="store_true",
                         help="include guides that are shifted copies of a "

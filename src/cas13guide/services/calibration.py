@@ -277,6 +277,18 @@ class CalibrationService:
                 return stratum
         return None
 
+    def resolve(self, key: str) -> CalibrationStratum | None:
+        """The stratum a bound for ``key`` would actually be built from.
+
+        Public because a bound is not the only thing a caller can want from a
+        calibration set. ``services/panel_confidence.py`` needs the underlying
+        ``(predicted, observed)`` pairs, not a quantile over their residuals:
+        it is asking how often a prediction at a given level came true, which
+        is a count, and deriving a count from a conformal quantile would be
+        exactly the category error that module exists to avoid.
+        """
+        return self._resolve(key)
+
     def _groups_adequate(self, stratum: CalibrationStratum) -> bool:
         """False when too few independent units back this stratum.
 

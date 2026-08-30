@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 631 tests
+python -m unittest discover -s tests -t tests    # 663 tests
 pytest                              # same suite under pytest
 ```
 
@@ -182,6 +182,84 @@ showing one guide per distinct site; 125 shifted copies of a listed site are
 hidden (--all-sites to show them)
 ```
 
+## What a panel is worth (FR6.3)
+
+`Panel.coverage` is a noisy-OR of the members' calibrated lower bounds,
+`1 - prod(1 - lcb)`. It reads like the probability the panel detects the target
+and it is not one, for two reasons that are separate mistakes and are fixed
+separately in `services/panel_confidence.py`.
+
+**A calibrated activity bound is not a success probability.** `lcb` bounds a
+*continuous* predicted activity; whether a guide works is a *binary* event —
+observed activity clears the assay threshold, or it does not. Converting one
+into the other takes data about how often predictions at that level came true,
+and that data is already here: the calibration strata hold `(predicted,
+observed)` pairs. So per guide the model takes the calibration rows whose
+prediction sits near this guide's, counts how many cleared the threshold, and
+updates a Jeffreys `Beta(0.5, 0.5)` prior with that binomial likelihood. The
+credible interval that comes back is wide exactly when the calibration set is
+thin, which is the honest failure mode.
+
+That posterior is built from **counts**, deliberately, not from the conformal
+interval. The earlier attempt at FR6.3 derived its scale as `q / z` — a
+distribution-free conformal quantile over a Gaussian one — which imports the
+assumption conformal exists to avoid. Nothing in this module reads a conformal
+quantile.
+
+**Panel members do not fail independently.** They share a transcript, a prep
+and one activity model whose errors are correlated; the spacing constraint only
+stops them sharing a *site*. So the noisy-OR is not a probability, it is a
+**ceiling** — the value reached only if the members really were independent.
+The matching floor is the comonotone case, where they fail together as far as
+their marginals allow and the panel is worth its best member:
+
+```
+max_g p_g   <=   P(panel detects t)   <=   1 - prod_g (1 - p_g)
+```
+
+Both ends are Fréchet–Hoeffding bounds. They need no parameter nobody measured,
+and the gap between them is the width of the claim rather than a defect in it.
+This package reads benefit at its lower bound everywhere else, so the number to
+quote is the floor: **extra guides have to be shown independent before they
+count.**
+
+`examples/demo_trained.py`, whose calibration is a fitted screen rather than a
+stand-in, prints the correction plainly. Its top guide carries a coverage of
+`0.677`; guides predicted at that level cleared threshold in **52%** of the
+calibration rows, so that is what the panel is worth:
+
+```
+--- panel detection probability (FR6.3) ---
+  t_tgt: [0.523, 0.523]  from 1 member(s): g_2a2018f21c=0.523
+```
+
+Floor equals ceiling there because the spacing constraint left one member, and
+one guide raises no independence question. Add a second member of the same
+quality and the two ends separate — `[0.523, 0.772]` — which is the whole
+disagreement made visible: the old number would have printed `0.772` alone.
+
+Collapsing that to a single number takes the common-cause fraction `beta` of
+the standard beta-factor reliability model (IEC 61508-6): each member's failure
+splits into a shared part `beta * q_g` and an independent part `(1 - beta) q_g`,
+and `Q = beta * mean(q_g) + prod((1 - beta) q_g)`. At `beta = 0` that is the
+noisy-OR back again; at `beta = 1` the panel is one guide wearing three hats.
+`beta` is a property of replicate *panel* experiments and cannot be estimated
+from the calibration set this package holds, so **no default ships** — not even
+a plausible one, because a plausible number in the slot where a measured one
+goes does not look like a hole. Supply yours and the point estimate unlocks:
+
+```bash
+cas13guide design --preset hsa-miR-21-5p --panel-dependence beta.json
+```
+
+```json
+{"common_cause_beta": 0.18, "source": "12 replicate 3-guide panels, 2026-08",
+ "provisional": false}
+```
+
+`provisional: true` is refused exactly as an absent value is, or the flag would
+be decoration. Same bargain as `--kinetics-constants`, for the same reason.
+
 ## What a run did not check
 
 `services/limitations.py` returns the limitations of **this** run as data —
@@ -228,32 +306,36 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 | ✅ | FR4.1–4.3 BLAST off-target | `services/blast.py` — `--blast-db`, refusing legibly without BLAST+. `--background` is the exhaustive, wobble-aware alternative that needs no database |
 | ✅ | FR5.1–5.2 duplex free energy | `services/thermodynamics.py` |
 | ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works, `absolute_signal()` refuses. Supply measured values with `--kinetics-constants FILE.json` and it unlocks |
-| ❌ | FR6.3 Bayesian panel confidence | **not implemented** — the model and its parameters are PanCRISP's and are not in this repository |
+| ✅ | FR6.3 Bayesian panel confidence | `services/panel_confidence.py` — Beta-Binomial success posterior per member from the calibration counts, combined under Fréchet bounds. Reported as an interval; a point estimate needs a measured common-cause fraction (`--panel-dependence`) and is refused without one |
 | ✅ | FR7.1–7.2 conserved regions, variant robustness | `services/conservation.py` |
 | ✅ | Trained activity model | `services/arc_model.py` + `services/contrafold.py` — Arc CNN on real CONTRAfold energies, 399/399 reference folds exact. `--arc` |
 | ✅ | FR8.1–8.4 ranking, table, export, visual | `pipeline/f_decide.py`, `services/fasta.py`, `services/report_html.py` |
 | ✅ | NFR1–NFR6 | measured at 0.2–3.4 s; `serve`; located errors; provenance ledger; 375 px verified; score glossary |
 | ⚠️ | DR1 RefSeq database, DR3 BLAST+, DR5 compute | your infrastructure to provision — no compiler or admin needed; `--background` needs none of it |
 | ✅ | DR2 ViennaRNA | `pip install -e ".[structure]"` |
-| ⚠️ | DR4 model constants | JSON storage and loader exist; kinetic values are placeholders, Bayesian parameters absent |
+| ⚠️ | DR4 model constants | JSON storage and loaders exist for both (`--kinetics-constants`, `--panel-dependence`); kinetic values are placeholders and no common-cause fraction ships |
 
-**The two things this cannot do without you.** Real kinetic constants —
+**The two measurements this cannot make for you.** Real kinetic constants —
 `k_cat` and `K_M` for your reporter, which Feng et al. 2024 does not report, so
 they have to come from a plate reader (`--kinetics-constants FILE.json`, with
-`provisional=false`); and the Bayesian diagnostic model for FR6.3, which has no
-stub because guessing at someone else's statistical model is worse than leaving
-a hole — and because an attempt at one derived its scale as `q / z`, dividing a
-distribution-free conformal quantile by a Gaussian one, which is the exact
-assumption conformal exists to avoid.
+`provisional=false`); and the common-cause fraction of panel failure, which
+comes from replicate panel runs (`--panel-dependence FILE.json`). Both have
+working machinery and no shipped value, and in both cases the missing number
+buys a *narrower* claim rather than no claim: signal still ranks, and panel
+confidence still reports the interval it can prove. What neither will do is
+manufacture the input — an earlier FR6.3 attempt derived its scale as `q / z`,
+dividing a distribution-free conformal quantile by a Gaussian one, which is the
+exact assumption conformal exists to avoid.
 
 BLAST is optional rather than blocking: `--background <FASTA>` already runs an
 exhaustive, wobble-aware scan over a transcriptome you supply, and reports
 `exhaustive=True`, which a seeded heuristic cannot.
 
-Three things it deliberately refuses rather than approximates: an absolute
-fluorescence figure from placeholder constants, a certified bound from synthetic
-calibration, and an Arc score computed from Turner energies. The first two are
-announced on every run; the third raises.
+Four things it deliberately refuses rather than approximates: an absolute
+fluorescence figure from placeholder constants, a single panel detection
+probability without a measured dependence parameter, a certified bound from
+synthetic calibration, and an Arc score computed from Turner energies. The
+first three are announced on every run; the last raises.
 
 ## The load-bearing ideas
 
@@ -609,7 +691,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-631 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+663 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 

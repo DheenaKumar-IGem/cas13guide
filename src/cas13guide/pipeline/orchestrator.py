@@ -27,6 +27,7 @@ from ..models.evidence import Candidate, GuideAssessment, PairEvidence, QCResult
 from ..services.calibration import CalibrationService
 from ..services.context import ExpressionSource, StaticExpressionSource
 from ..services.indexes import ExhaustivenessBound, SearchIndex, is_weaker
+from ..services.panel_confidence import BayesianPanelConfidence, PanelDependence
 from ..services.provenance import ProvenanceLedger
 from ..services.registry import ModelRegistry
 from ..services.transcriptome import Transcriptome
@@ -146,6 +147,7 @@ def run_design(
     initial_step: int = 1,
     preference_weights: dict[str, float] | None = None,
     on_event: Callable[[str], None] | None = None,
+    panel_dependence: "PanelDependence | None" = None,
 ) -> DesignReport:
     """Run the full pipeline, backtracking within budget."""
     if not contexts:
@@ -341,10 +343,25 @@ def run_design(
         [a for a in assessments if a.gate.verdict is not Verdict.FAIL],
         preference_weights,
     )
+    # ---------------- FR6.3: what the panel is worth -----------------
+    # Computed here rather than inside select_panel because it is an inference
+    # about the chosen panel made from the calibration set, and the optimizer
+    # deliberately knows nothing about calibration beyond the bounds it is
+    # handed. The ledger records the model so an exported table says which
+    # confidence it carried.
+    confidence = BayesianPanelConfidence(
+        calibration, spec, dependence=panel_dependence
+    ).for_panel(panel)
+    ledger.record(
+        "model", "panel_confidence", confidence.version,
+        dependence=confidence.dependence_version or "unmeasured",
+    )
+
     return build_report(
         assessments, ranked, panel, controls, spec, ledger,
         shortfalls=tuple(telemetry.shortfalls),
         pareto_frontier=frontier_ids,
         search_bound=bound,
         universe_gaps=universe_gaps,
+        panel_confidence=confidence,
     )

@@ -81,6 +81,7 @@ def limitations_for_run(
     bound: ExhaustivenessBound | None = None,
     universe_gaps: frozenset | None = None,
     panel_size: int = 0,
+    panel_confidence: Any = None,
 ) -> tuple[Limitation, ...]:
     """Everything this particular run could not establish.
 
@@ -114,9 +115,43 @@ def limitations_for_run(
                 "whose errors are correlated. The spacing constraint only stops "
                 "them sharing a site. Treat the number as a ranking aid -- this "
                 "panel against another -- and not as the probability that the "
-                "panel detects the target, which it overstates.",
+                "panel detects the target, which it overstates. The panel "
+                "confidence interval (FR6.3) is the number that does not make "
+                "that assumption; the noisy-OR is its upper end.",
             )
         )
+
+    # ---- panel confidence (FR6.3) ---------------------------------------
+    if panel_confidence is not None and getattr(panel_confidence, "targets", ()):
+        if not getattr(panel_confidence, "has_point_estimates", False):
+            found.append(
+                Limitation(
+                    "panel-dependence-unmeasured",
+                    Severity.WARNING,
+                    "Panel detection probability is reported as an interval "
+                    "because how much of a panel's failure is shared between "
+                    "its members was never measured for this assay. The lower "
+                    "end is what the panel is worth if the members fail "
+                    "together, the upper end if they fail independently; the "
+                    "truth is somewhere between and nothing here can locate "
+                    "it. Measure the common-cause fraction from replicate "
+                    "panel runs and supply it with --panel-dependence to get a "
+                    "single number.",
+                )
+            )
+        if any(getattr(t, "thin", False) for t in panel_confidence.targets):
+            found.append(
+                Limitation(
+                    "panel-confidence-thin-calibration",
+                    Severity.WARNING,
+                    "At least one panel member's success probability was "
+                    "estimated from a thin or unconditional slice of the "
+                    "calibration set, so its credible interval is wide because "
+                    "of how little data backs it rather than because the guide "
+                    "is doubtful. A larger screen narrows it; nothing else "
+                    "does.",
+                )
+            )
 
     # ---- preset provenance --------------------------------------------
     used = sorted(

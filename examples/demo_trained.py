@@ -144,6 +144,20 @@ def main() -> None:
         print(f"  #{r.rank} {r.assessment.guide_id} score={r.score:.3f} "
               f"cov={m.required_coverage:.3f} worst_off={m.worst_off_target:.3f}")
 
+    # FR6.3. Worth showing here rather than in the built-in-model demos: the
+    # success posterior is counted out of the calibration set, so it only says
+    # anything once the calibration is a real screen rather than a stand-in.
+    confidence = trained_report.panel_confidence
+    if confidence and confidence.targets:
+        print("\n--- panel detection probability (FR6.3) ---")
+        for target in confidence.targets:
+            members = ", ".join(f"{m.guide_id}={m.mean:.3f}" for m in target.members)
+            print(f"  {target.target_id}: [{target.lower:.3f}, {target.upper:.3f}]"
+                  f"  from {len(target.members)} member(s): {members}")
+        print("  The floor is the best member; the ceiling assumes they fail")
+        print("  independently, which guides on one transcript do not. No point")
+        print("  estimate is offered without a measured common-cause fraction.")
+
 
 if __name__ == "__main__":
     main()

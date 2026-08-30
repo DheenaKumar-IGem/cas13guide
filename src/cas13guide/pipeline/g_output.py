@@ -25,6 +25,7 @@ from ..services.provenance import ProvenanceLedger
 from ..util.seq import gc_fraction
 from .b_qc import qc_candidate
 from .f_decide import RankedGuide, distinct_site_ids, review_rate
+from ..services.panel_confidence import PanelConfidence
 from .optimizer import Panel
 
 
@@ -212,6 +213,11 @@ class DesignReport:
     #: not have to parse a sentence back into facts.
     search_bound: "ExhaustivenessBound | None" = None
     universe_gaps: frozenset = frozenset()
+    #: FR6.3 -- bounded detection probability for the panel, or ``None`` when
+    #: no confidence model was supplied. Kept beside the panel rather than
+    #: inside it because ``Panel`` is what the optimizer returns and this is
+    #: an inference *about* that panel, made from the calibration set.
+    panel_confidence: "PanelConfidence | None" = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -263,6 +269,10 @@ class DesignReport:
                 "objective": round(self.panel.objective, 4),
                 "guarantee": self.panel.guarantee,
                 "dropped": list(self.panel.dropped),
+                "confidence": (
+                    None if self.panel_confidence is None
+                    else self.panel_confidence.to_dict()
+                ),
             },
             "controls": [asdict(c) for c in self.controls],
             "coverage_map": self.coverage_map,
@@ -342,6 +352,7 @@ def build_report(
     pareto_frontier: tuple[str, ...] = (),
     search_bound: ExhaustivenessBound | None = None,
     universe_gaps: frozenset = frozenset(),
+    panel_confidence: "PanelConfidence | None" = None,
 ) -> DesignReport:
     counts = {v.value: 0 for v in Verdict}
     for a in assessments:
@@ -373,4 +384,5 @@ def build_report(
         shortfalls=shortfalls,
         search_bound=search_bound,
         universe_gaps=universe_gaps,
+        panel_confidence=panel_confidence,
     )

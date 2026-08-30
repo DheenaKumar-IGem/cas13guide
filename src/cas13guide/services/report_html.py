@@ -109,6 +109,12 @@ dl.gloss dt{font-weight:600} dl.gloss dd{margin:0;color:var(--muted)}
 pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;
 overflow-x:auto;font-size:.8rem;color:var(--muted)}
 ul.plan{padding-left:18px;color:var(--muted);font-size:.9rem}
+td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.band{position:relative;display:block;width:100%;min-width:120px;height:10px;border-radius:999px;
+background:color-mix(in srgb,var(--line) 60%,transparent)}
+.band .fill{position:absolute;top:0;height:10px;border-radius:999px;
+background:color-mix(in srgb,var(--accent) 55%,transparent)}
+.band .pt{position:absolute;top:-2px;width:2px;height:14px;background:var(--fg)}
 .empty{padding:26px;text-align:center;color:var(--muted)}
 @media(max-width:640px){.wrap{padding:18px 12px 56px}dl.gloss{grid-template-columns:1fr;gap:2px 0}
 dl.gloss dd{margin-bottom:10px}}
@@ -312,6 +318,43 @@ def render_report(
         else ""
     )
 
+    # FR6.3. Rendered as a bar spanning floor to ceiling rather than as a
+    # number, because the width is the finding: a wide band means the panel's
+    # worth depends on an assumption about shared failure that nobody here
+    # measured, and a single figure would hide exactly that.
+    confidence = (report.get("panel") or {}).get("confidence") or {}
+    confidence_html = ""
+    if confidence.get("targets"):
+        rows = []
+        for target in confidence["targets"]:
+            low, high = float(target["lower"]), float(target["upper"])
+            point = target.get("point")
+            marker = (
+                ""
+                if point is None
+                else f"<span class='pt' style='left:{float(point) * 100:.1f}%'></span>"
+            )
+            rows.append(
+                f"<tr><td>{html.escape(str(target['target_id']))}</td>"
+                f"<td class='num'>{low:.3f}</td>"
+                f"<td><span class='band'><span class='fill' "
+                f"style='left:{low * 100:.1f}%;width:{max(high - low, 0.004) * 100:.1f}%'>"
+                f"</span>{marker}</span></td>"
+                f"<td class='num'>{high:.3f}</td>"
+                f"<td>{'thin calibration' if target.get('thin') else ''}</td></tr>"
+            )
+        notes_html = "".join(
+            f"<li>{html.escape(str(n))}</li>" for n in confidence.get("notes", [])
+        )
+        confidence_html = (
+            "<h2>Panel detection probability</h2>"
+            "<div class='tablewrap'><table><thead><tr><th>Target</th>"
+            "<th>Members fail together</th><th></th>"
+            "<th>Members fail independently</th><th></th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table></div>"
+            f"<ul class='plan'>{notes_html}</ul>"
+        )
+
     controls = report.get("controls") or []
     controls_html = ""
     if controls:
@@ -367,6 +410,7 @@ def render_report(
 {table}
 
 {"<h2>Target accessibility</h2>" + track_html if track_html else ""}
+{confidence_html}
 {controls_html}
 {shortfall_html}
 {plan_html}

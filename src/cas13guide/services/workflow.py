@@ -84,6 +84,11 @@ class DesignRequest:
     #: runs on placeholders and ``absolute_signal()`` refuses -- which was
     #: unreachable-by-design until now, because nothing plumbed a path through.
     kinetics_json: str | None = None
+    #: Path to a JSON file holding a measured common-cause fraction for panel
+    #: members (FR6.3). Without one the panel's detection probability is
+    #: reported as the interval it honestly is, and no point estimate is
+    #: offered -- see ``services/panel_confidence.py``.
+    panel_dependence_json: str | None = None
     #: Use the Arc RNAtargeting CNN instead of the built-in heuristic. Needs
     #: onnxruntime and gpu-contrafold, RfxCas13d, and a 30 nt spacer -- the only
     #: configuration the network was trained on. Refuses loudly otherwise
@@ -329,6 +334,25 @@ def _build_arc_model(request: DesignRequest, spec, records):
         raise DesignRequestError(f"could not build the Arc model: {exc}") from exc
 
 
+def _panel_dependence(request: DesignRequest):
+    """The measured common-cause fraction for FR6.3, if one was supplied.
+
+    ``None`` is a first-class answer here rather than a default value: the
+    panel confidence model reports an interval without it, and a number with
+    it. Nothing in this package knows what beta is for your assay.
+    """
+    if not request.panel_dependence_json:
+        return None
+    from .panel_confidence import PanelDependence
+
+    try:
+        return PanelDependence.from_json(request.panel_dependence_json)
+    except (OSError, ValueError) as exc:
+        raise DesignRequestError(
+            f"--panel-dependence {request.panel_dependence_json}: {exc}"
+        ) from exc
+
+
 def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
     """A stand-in calibration so bounds exist at all.
 
@@ -409,6 +433,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
     report = run_design(
         spec, contexts, registry, calibration_service,
         panel_size=request.panel_size,
+        panel_dependence=_panel_dependence(request),
     )
     data = report.to_dict()
     weakest_bound = report.search_bound
@@ -431,6 +456,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         bound=weakest_bound,
         universe_gaps=gaps,
         panel_size=len(data.get("panel", {}).get("guides", ())),
+        panel_confidence=report.panel_confidence,
     )
     notes = as_lines(found) + notes
 
