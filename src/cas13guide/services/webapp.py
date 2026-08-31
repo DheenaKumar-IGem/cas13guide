@@ -41,6 +41,11 @@ from .workflow import DesignRequest, DesignRequestError, run_request
 
 #: Upload ceiling. A transcript is kilobytes; anything past this is a mistake or
 #: an attack, and reading it into memory first is how a dev server falls over.
+#: Cap on how much of an over-sized body we will read purely to let the
+#: response survive. Beyond this the reset is the lesser evil: a client
+#: streaming without limit must not be able to make the server read forever.
+_DRAIN_LIMIT_BYTES = 32 * 1024 * 1024
+
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 
@@ -246,6 +251,20 @@ class DesignHandler(BaseHTTPRequestHandler):
         except ValueError:
             length = 0
         if length > MAX_UPLOAD_BYTES:
+            # Drain what the client is still sending before answering. Closing
+            # with megabytes of request body unread makes the OS send a TCP
+            # RST, and that destroys this very response before a sequential
+            # client reads it -- which is every browser and every stdlib
+            # client, since they all finish writing the body before they start
+            # reading. The server logged "413" and the user saw a connection
+            # reset, then Chrome's retry as GET /design, then "Not found.":
+            # a message that is wrong and says nothing about a size limit.
+            remaining = min(length, _DRAIN_LIMIT_BYTES)
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
             self._send(
                 _form_page(
                     f"Upload is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB. "

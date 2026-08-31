@@ -57,6 +57,26 @@ TABLE_COLUMNS: tuple[str, ...] = (
 #: filter, and a column of "yes" would be noise once the filter is applied.
 DISTINCT_SITE_KEY = "distinct_site"
 
+#: Off-target explorer columns, and what each one means. Declared rather than
+#: derived from whatever keys a row happens to carry, for the same reason
+#: ``RANKED_COLUMNS`` is: adding a field upstream must not silently reshape a
+#: table someone reads.
+_OFF_TARGET_HEADINGS: tuple[tuple[str, str, str], ...] = (
+    ("guide_id", "Guide", "The candidate this off-target belongs to."),
+    ("locus", "Locus", "Where it binds."),
+    ("gene", "Gene", "Gene symbol, when the transcriptome supplied one."),
+    ("biotype", "Biotype", "Which universe the locus is in."),
+    ("mismatches", "MM", "Duplex mismatches, wobble-aware."),
+    ("wobbles", "GU", "G-U wobble pairs, which are real base pairs in RNA:RNA."),
+    ("ucb_activity", "UCB(act)", "Activity at its UPPER bound: hazard is never read at a point estimate."),
+    ("ucb_expression", "UCB(expr)", "Expression at its upper bound, in the same spirit."),
+    ("hazard", "Hazard", "UCB(activity) x UCB(expression) x biotype weight -- the quantity the metrics sum."),
+    ("expression_unknown", "Expr?", "True when nothing measured this locus's abundance; the plan says to prioritise these."),
+    ("ood", "OOD", "True when the bound behind this row is not certified for this regime."),
+)
+
+_OFF_TARGET_COLUMNS: tuple[str, ...] = tuple(key for key, _l, _d in _OFF_TARGET_HEADINGS)
+
 
 @dataclass(frozen=True, slots=True)
 class AccessibilityTrack:
@@ -376,6 +396,42 @@ def render_report(
             f"<ul class='plan'>{notes_html}</ul>"
         )
 
+    # The off-target explorer the validation plan sends the reader to. The data
+    # was in the report dict all along -- `_off_target_rows` fills up to 50 rows,
+    # sorted by the same `pair_hazard` the metrics use -- and no surface
+    # rendered it, while the plan printed underneath said "Sequence the top
+    # off-target loci from the explorer table; prioritize rows with high
+    # UCB(activity) whose expression is currently unknown." A page that
+    # instructs a reader to consult a table it does not contain is worse than
+    # one that says nothing, because the reader goes looking.
+    off_targets = report.get("off_targets") or []
+    off_target_html = ""
+    if off_targets:
+        def _cell(row: dict, key: str) -> str:
+            attrs = ' class="seq"' if key in ("guide_id", "locus") else ""
+            return f"<td{attrs}>{html.escape(_fmt(row.get(key)))}</td>"
+
+        rows = "".join(
+            "<tr>" + "".join(_cell(row, key) for key in _OFF_TARGET_COLUMNS) + "</tr>"
+            for row in off_targets
+        )
+        head = "".join(
+            f'<th title="{html.escape(description)}">{html.escape(label)}</th>'
+            for _key, label, description in _OFF_TARGET_HEADINGS
+        )
+        off_target_html = (
+            "<h2>Off-target explorer</h2>"
+            f"<div class='sub'>The {len(off_targets)} highest-hazard off-target "
+            "loci found, worst first. Hazard is the same product the "
+            "<code>worst_off_target</code> and <code>cumulative_burden</code> "
+            "metrics are built from, so this table cannot drift from them.</div>"
+            "<div class='tablewrap'><table><thead><tr>"
+            + head
+            + "</tr></thead><tbody>"
+            + rows
+            + "</tbody></table></div>"
+        )
+
     controls = report.get("controls") or []
     controls_html = ""
     if controls:
@@ -431,6 +487,7 @@ def render_report(
 {table}
 
 {"<h2>Target accessibility</h2>" + track_html if track_html else ""}
+{off_target_html}
 {confidence_html}
 {controls_html}
 {shortfall_html}

@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 758 tests
+python -m unittest discover -s tests -t tests    # 782 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,29 +727,30 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-758 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+782 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
-A hundred and forty-one of those tests were added after four review passes found
-bugs the original suite did not cover, and each one fails against the code as it
-stood. Each pass re-read the previous pass's own diff, and the second found a
-regression in the first — which is the argument for doing that.
+A hundred and sixty-five of those tests were added after five review passes
+found bugs the original suite did not cover, and each one fails against the code
+as it stood. Each pass re-read the previous pass's own diff, and two of them
+caught a regression the previous pass had introduced — which is the argument for
+doing that, and also its limit.
 
-Confirmed defects per pass were **25, 4, 2, then 6**, and the shape of that
-curve is the useful part. Passes one to three *read* the code, module by module
-and then diff by diff, and converged. The fourth ran the **product** instead —
-combinations of CLI flags, the multi-record path end to end, the README audited
-claim by claim — and the count went back up. Reading a module tells you whether
-it is self-consistent; only running the thing tells you whether two modules
-agree. Three of that pass's six were the same shape as a defect an earlier pass
-had fixed, surviving in a branch the fix did not reach.
+Confirmed defects per pass were **25, 4, 2, 6, 9**, and the shape of that curve
+is the useful part. Passes one to three *read* the code — module by module, then
+diff by diff — and converged. Passes four and five *ran* it: flag combinations
+rather than one flag at a time, input fuzzing, determinism across process
+boundaries, the three output surfaces compared field by field, real HTTP POSTs
+to the server, and the README audited claim by claim. The count went back up and
+stayed up. Reading a module tells you whether it is self-consistent; only
+running the thing tells you whether two modules agree — and most of what was
+left was two modules disagreeing.
 
-Two instruments found nothing that survived verification, which is worth as
-much as a finding: differential testing across all four `SearchIndex`
-implementations, and property testing of the gate → Pareto → preference order.
-The ones worth naming, because they were live defects rather than
-hypotheticals:
+Two instruments found nothing that survived verification, which is worth as much
+as a finding: differential testing across all four `SearchIndex` implementations,
+and property testing of the gate → Pareto → preference order. The ones worth
+naming, because they were live defects rather than hypotheticals:
 
 | What was wrong | Why it mattered | Pinned by |
 |---|---|---|
@@ -757,6 +758,11 @@ hypotheticals:
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| An `N` in the target attracted the ranking | `classify_pair` calls `N:N` a Watson-Crick pair and RNAplfold reports unpaired probability exactly 1.0 there, so an assembly gap scored a **perfect duplex with inflated accessibility** — ranks 1, 2, 3, 4 and 6 of 101 were N-bearing spacers, exported as orderable oligos | `test_bugfix_regressions_round5.py` |
+| The paste door rejected FASTA the file door read | `parse_sequence_input` sniffed FASTA from the first non-blank line while `parse_fasta` skips `;` comments, so a comment-first file — including **this tool's own exported FASTA** — was refused at character one as a malformed raw sequence | `test_bugfix_regressions_round5.py` |
+| Calibration seed and noise were in no recorded field | They set every conformal interval and therefore every verdict, so two runs disagreeing on fifty verdicts carried byte-identical provenance — the one thing provenance exists to make impossible | `test_bugfix_regressions_round5.py` |
+| The 413 reply was destroyed by the reset it caused | Answering an oversized upload without reading the body closes the socket on a pending body, so the OS sends a TCP RST and the response dies before any browser reads it. The server logged 413; the user saw "Not found." | `test_bugfix_regressions_round5.py` |
+| The validation plan cited an off-target explorer no surface drew | The report told the reader to "sequence the top off-target loci from the explorer table" while rendering no such table, though the 50 hazard-sorted rows were in the report dict all along | `test_bugfix_regressions_round5.py` |
 | A `--background` record sharing a target's name **replaced** it | `Transcriptome.add` overwrites by id, so the run searched the target against a sequence that was not it — PASS 97 → 0, best coverage 0.7647 → 0.0, with nothing said. `variant_contexts` already guarded this, so the two paths disagreed | `test_bugfix_regressions_round4.py` |
 | `distinct_site_ids` grouped by the record a guide was *tiled from* | Not the same question as where it binds: with two target records, guides one nucleotide apart on the REQUIRED target were both marked distinct, under a line that says shifted copies are hidden | `test_bugfix_regressions_round4.py` |
 | The FR8.4 track marked guides from *other* FASTA records | `start` is an offset on the guide's own source target, and records 1+ are DESIRED targets that get tiled too — so marks were drawn at foreign coordinates on the primary's profile, or past its end and silently clipped out of the picture | `test_bugfix_regressions_round3.py` |

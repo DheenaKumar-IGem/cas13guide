@@ -124,6 +124,29 @@ class DesignOutcome:
 
 
 def _read_records(request: DesignRequest) -> list[SequenceRecord]:
+    # A run designs against one target source. This used to return on the first
+    # of preset > fasta > sequence that was set, so supplying two meant the
+    # other was read by nobody and mentioned by nobody -- not in the notes, the
+    # shortfalls, or the export header. The web form offers all three at once,
+    # and argparse puts them in one group with no exclusion, so it is reachable
+    # from both doors. Refusing is the only honest answer: guessing which one
+    # the user meant is how a report ends up being about a target they did not
+    # think they were designing.
+    supplied = [
+        flag
+        for flag, present in (
+            ("--preset", bool(request.preset)),
+            ("--fasta", bool(request.fasta_path)),
+            ("--sequence", bool(request.sequence_text and request.sequence_text.strip())),
+        )
+        if present
+    ]
+    if len(supplied) > 1:
+        raise DesignRequestError(
+            f"{', '.join(supplied)} were all supplied, and a run designs against "
+            "one target source. Pick one -- otherwise the report would be about "
+            "a target you may not have chosen, with nothing saying so."
+        )
     if request.preset:
         try:
             preset = get_preset(request.preset)
@@ -421,6 +444,19 @@ def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
     # the warning appears because the calibration *is* synthetic, not because a
     # caller remembered to add a banner -- and it disappears when it stops being.
     calibration.synthetic = True
+    # The parameters that generate this set, attached to the object that
+    # carries it. Seed and noise decide every conformal interval, and therefore
+    # every metric read at a bound, every verdict and the panel -- and they
+    # appeared in no recorded field: not the ledger, not the fingerprint (they
+    # are request knobs, not spec), not the export headers. Two runs differing
+    # only in seed disagreed on 50 verdicts while carrying byte-identical
+    # provenance, which is the one thing provenance exists to make impossible.
+    calibration.source = {
+        "kind": "synthetic",
+        "seed": request.seed,
+        "n_per_stratum": request.calibration_n,
+        "noise_sd": request.calibration_noise,
+    }
     for regime in ("mm0", "mm1-2", "mm3+"):
         key = CalibrationService.stratum_key(
             spec.profile.effector.value, spec.profile.assay.value, regime
@@ -456,8 +492,27 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         for record in _read_fasta_or_fail(request.background_path, "--background"):
             background_loci.append(Locus(record.name, record.sequence, Universe.CODING,
                                          gene=record.name, expression=None))
+    # Captured before the loop, because the loop grows `world`: testing
+    # membership against it made the *second* of two background records sharing
+    # a name take the target-collision branch, which silently dropped a locus
+    # the user supplied as off-target evidence and then told them a target was
+    # involved when none was. Duplicate names in a pulled background corpus are
+    # the ordinary concatenated-file case `services/fasta.py` refuses to
+    # deduplicate, so this is a routine input, and the note travels into every
+    # export header -- a false statement outliving the session.
+    target_names = {record.name for record in records}
+    seen_background: set[str] = set()
     for locus in background_loci:
-        if locus.locus_id in world.loci:
+        if locus.locus_id in seen_background:
+            notes.append(
+                f"--background holds more than one record named "
+                f"{locus.locus_id!r}. Only the first is searched -- the others "
+                "are dropped, because a world keys loci by name and cannot tell "
+                "them apart. Rename them so each is its own locus."
+            )
+            continue
+        seen_background.add(locus.locus_id)
+        if locus.locus_id in target_names:
             # Transcriptome.add overwrites by locus_id, so a background record
             # sharing a target's name replaced the target's own sequence,
             # biotype and expression -- and `locus_to_target` still pointed at

@@ -165,13 +165,30 @@ def parse_sequence_input(text: str, default_name: str = "query") -> list[Sequenc
             "no sequence supplied. Paste a sequence, or a FASTA record starting "
             'with ">".'
         )
-    for line in text.splitlines():
-        if line.strip():
-            first = line.strip()
-            break
+    # Comment lines are skipped before the sniff *and* before the raw branch.
+    # `parse_fasta` skips ';' and '#' -- this module writes a ';'-prefixed
+    # provenance header itself -- and this function did not, so a FASTA whose
+    # first line is a comment was handed to `_clean` whole and refused at
+    # character one with "unexpected character ';' at position 1": a valid
+    # FASTA file reported as a malformed raw sequence. It split the two doors,
+    # because `--fasta` goes through `parse_fasta` and the textarea, `--sequence`
+    # and the browser's file upload come here -- and the file it most reliably
+    # rejected was this tool's own exported FASTA.
+    body = [
+        line for line in text.splitlines()
+        if not (line.strip() and line.strip()[0] in _COMMENT_PREFIXES)
+    ]
+    first = next((line.strip() for line in body if line.strip()), "")
+    if not first:
+        raise SequenceInputError(
+            "no sequence supplied: the input is only comment lines. Paste a "
+            'sequence, or a FASTA record starting with ">".'
+        )
     if first.startswith(">"):
         return parse_fasta(text)
-    return [SequenceRecord(name=default_name, sequence=_clean(text, "input"))]
+    return [
+        SequenceRecord(name=default_name, sequence=_clean("\n".join(body), "input"))
+    ]
 
 
 def read_fasta(path: str | Path) -> list[SequenceRecord]:

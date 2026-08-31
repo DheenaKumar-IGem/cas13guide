@@ -25,6 +25,7 @@ from ..contract.enums import (
     Verdict,
 )
 from ..contract.spec import ResolvedDesignSpec
+from ..metrics.bounds import benefit_lower
 from ..models.evidence import GateResult, GuideAssessment, MetricVector, PairEvidence, QCResult
 from ..services.indexes import ExhaustivenessBound
 
@@ -436,16 +437,29 @@ def distinct_site_ids(
     distinct: set[str] = set()
     for entry in ranked:
         candidate = entry.assessment.candidate
-        # Where this guide binds, per target. Falls back to the tiled
-        # coordinate when a guide has no intended evidence at all, which is the
-        # only information there is about it.
+        # Where this guide binds, per target: the site with the highest
+        # calibrated lower bound, which is the same rule ``optimizer._profile``
+        # uses. Taking the *lowest coordinate* instead -- as this did when it
+        # was first rewritten -- files a guide under a site it barely binds. At
+        # the shipped 4-mismatch wobble-aware envelope a 22-mer picks up a
+        # second hit on its own transcript often enough to matter (61 of 1650
+        # guides on one 2 kb target), and the guide was then compared at that
+        # near-zero-activity coordinate instead of at its real one: measured, 3
+        # of 68 marked rows became single-base shifts of a row already listed,
+        # under the line saying shifted copies are hidden.
+        #
+        # Falls back to the tiled coordinate only when a guide has no intended
+        # evidence at all, which is then the only information there is.
         sites: dict[str, int] = {}
+        best_lower: dict[str, float] = {}
         for evidence in entry.assessment.evidence:
             target_id = evidence.hit.target_id
-            if evidence.is_intended and target_id:
-                previous = sites.get(target_id)
-                if previous is None or evidence.hit.start < previous:
-                    sites[target_id] = evidence.hit.start
+            if not evidence.is_intended or not target_id:
+                continue
+            lower = benefit_lower(evidence.activity)
+            if target_id not in best_lower or lower > best_lower[target_id]:
+                best_lower[target_id] = lower
+                sites[target_id] = evidence.hit.start
         if not sites:
             sites = {candidate.source_target_id: candidate.start}
 

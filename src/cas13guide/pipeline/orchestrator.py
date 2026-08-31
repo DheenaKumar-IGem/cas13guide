@@ -158,8 +158,13 @@ def run_design(
     ledger = ProvenanceLedger(spec.fingerprint())
     ledger.record("spec", "ResolvedDesignSpec", spec.spec_version, fingerprint=spec.fingerprint())
     ledger.record("hazard_weights", "HazardWeights", spec.hazard.version)
-    ledger.record("calibration", "CalibrationService", calibration.version,
-                  strata=calibration.describe())
+    ledger.record(
+        "calibration", "CalibrationService", calibration.version,
+        strata=calibration.describe(),
+        # "unstated" rather than silence: a caller who built their own service
+        # is marked as unrecorded rather than certified by omission.
+        source=getattr(calibration, "source", None) or "unstated",
+    )
     for name, version in registry.versions().items():
         ledger.record("model", name, version)
     # Two comments -- this module's `_self_fold_energy` and b_qc's MAX_SELF_STEM

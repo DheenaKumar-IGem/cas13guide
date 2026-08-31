@@ -103,6 +103,24 @@ def qc_candidate(
 
     warnings: list[QCFlag] = []
 
+    # An ambiguity code is not a sequence anyone can order, and every number
+    # downstream treats it as known. `classify_pair` calls N:N a Watson-Crick
+    # pair, so an N-bearing spacer scores a *perfect* on-target duplex and
+    # lands in the mm0 calibration stratum; RNAplfold cannot pair an N, so it
+    # reports unpaired probability exactly 1.0 there and accessibility -- which
+    # carries weight 1.5 in the objective -- is inflated across every window
+    # overlapping the gap. The result was that an assembly gap *attracted* the
+    # ranking: measured on a 150 nt target with four Ns, ranks 1, 2, 3, 4 and 6
+    # of 101 were all N-bearing, exported as orderable oligos with no warning.
+    #
+    # `N` stays a legal *input* character -- the target may genuinely be
+    # unknown there -- and this refuses only to hand back a guide made of it.
+    # It is the rule SYNTHESIS_CONSTRAINT was reserved for. Hard, not soft:
+    # the sequence cannot be synthesised, so deprioritising it would still
+    # leave it orderable from the export.
+    if any(base not in "ACGU" for base in spacer):
+        flags.append(QCFlag.SYNTHESIS_CONSTRAINT)
+
     # Length outside what the ortholog can physically accommodate is a hard
     # incompatibility. Length merely outside its *canonical* set is not: it is
     # unvalidated, which the activity model's domain check already reports as
