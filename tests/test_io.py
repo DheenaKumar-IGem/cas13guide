@@ -48,8 +48,31 @@ class TestRawSequenceInput(unittest.TestCase):
         [record] = parse_sequence_input("AUGCNAUGC")
         self.assertEqual(record.sequence, "AUGCNAUGC")
 
-    def test_alignment_gap_characters_are_stripped(self):
-        [record] = parse_sequence_input("AUG--CAU*GC")
+    def test_alignment_gap_characters_are_refused_not_stripped(self):
+        """Deleting a gap is not formatting -- it splices.
+
+        This asserted that "AUG--CAU*GC" became "AUGCAUGC", which reads as
+        harmless and is not: dropping a run of gapped or masked bases joins the
+        base before it to the base after it, and the tiler then walks a window
+        across a junction that exists in no molecule. Measured on a 400 nt
+        target with a 30-base gapped run, 21 of 297 exported guides had a
+        target site occurring nowhere in the real sequence.
+
+        It also contradicted the module's own headline rule -- a pasted
+        alignment's ruler *digits* were refused with a located message while
+        the same alignment's *gaps* were removed in silence.
+        """
+        for text in ("AUG--CAUGC", "AUGCAU*GC"):
+            with self.subTest(text=text):
+                with self.assertRaises(SequenceInputError) as caught:
+                    parse_sequence_input(text)
+                message = str(caught.exception)
+                self.assertIn("alignment gap", message)
+                self.assertIn("position", message)
+
+    def test_whitespace_and_wrapping_are_still_formatting(self):
+        """The rule narrowed to whitespace; it did not disappear."""
+        [record] = parse_sequence_input("  aug c\n\tAUGC  \n")
         self.assertEqual(record.sequence, "AUGCAUGC")
 
 

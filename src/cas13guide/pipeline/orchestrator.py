@@ -187,7 +187,29 @@ def run_design(
                       loci=len(ctx.transcriptome), index=ctx.index.version,
                       index_choice=ctx.index_rationale)
 
+    # An intended target shorter than the window is dropped by
+    # `design_candidates` -- correctly, since it cannot be tiled -- and used to
+    # be dropped in silence. The run then reported only "no feasible panel
+    # covers required target(s): t1", which reads as "t1 has no usable guides"
+    # rather than "t1 was never looked at", and on a multi-record FASTA it
+    # shipped a full export of the *other* record's guides while saying so.
+    # `designability()` produces exactly this explanation, and only the preset
+    # path with no explicit --spacer-length ever asked it.
+    untileable = [
+        target.target_id
+        for target in spec.contract.targets
+        if target.target_class in (TargetClass.REQUIRED, TargetClass.DESIRED)
+        and len(target.sequence) < spec.spacer_length
+    ]
+
     telemetry = RunTelemetry(final_envelope=spec.thresholds.required_search_mismatches)
+    if untileable:
+        telemetry.shortfalls.append(
+            f"{', '.join(untileable)} shorter than the {spec.spacer_length} nt "
+            "spacer, so no window fits and they were never tiled. Use a shorter "
+            "spacer, or design against an amplicon."
+        )
+        telemetry.reason_codes.append(ReasonCode.TARGET_TOO_SHORT_TO_TILE)
     envelope = spec.thresholds.required_search_mismatches
     step = initial_step
 

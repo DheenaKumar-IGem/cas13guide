@@ -136,6 +136,11 @@ class ReasonCode(str, Enum):
     # --- pipeline shortfalls (control flow, fix #5) ---
     BUDGET_EXHAUSTED_NO_FEASIBLE_PANEL = "budget_exhausted_no_feasible_panel"
     BUDGET_EXHAUSTED_SEARCH = "budget_exhausted_search"
+    #: An intended target shorter than the spacer, so it was never tiled. The
+    #: distinction the panel shortfall alone cannot make: "no feasible panel
+    #: covers t1" reads as "t1 has no usable guides" when the truth is that
+    #: nobody looked.
+    TARGET_TOO_SHORT_TO_TILE = "target_too_short_to_tile"
 
 
 class QCFlag(str, Enum):

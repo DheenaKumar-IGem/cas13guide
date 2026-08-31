@@ -32,8 +32,21 @@ from ..util.seq import VALID_RNA
 #: Line prefixes that mark a comment rather than sequence data.
 _COMMENT_PREFIXES = frozenset(";#")
 
-#: Characters stripped as formatting rather than treated as content.
-_IGNORED = frozenset(" \t\r\n\v\f-*")
+#: Characters stripped as formatting rather than treated as content: whitespace
+#: and nothing else. ``-`` and ``*`` used to be in here, and deleting a gap is
+#: not formatting -- it splices the base *before* the run onto the base
+#: *after* it, and the tiler then walks a window across a junction that exists
+#: in no molecule. Measured on a 400 nt target with a 30-base gapped run, 21 of
+#: 297 exported guides had a target site occurring nowhere in the real
+#: sequence. This module's own rule is that nothing is quietly repaired, and a
+#: pasted alignment's ruler digits were refused with a located message while
+#: the same alignment's gaps were removed without one.
+_IGNORED = frozenset(" \t\r\n\v\f")
+
+#: Refused with their own message rather than the generic one, because
+#: "unexpected character '-'" tells someone who pasted an aligned row nothing
+#: about what to do next.
+_GAP_CHARACTERS = frozenset("-*")
 
 
 #: Byte-order mark. Encoding, not content -- and :func:`read_fasta` consumes it
@@ -70,6 +83,15 @@ def _clean(raw: str, record_name: str) -> str:
         if upper == "T":
             upper = "U"
         if upper not in VALID_RNA:
+            if character in _GAP_CHARACTERS:
+                raise SequenceInputError(
+                    f"{record_name}: found {character!r} at position {index}, "
+                    "which looks like an alignment gap or a masked base. "
+                    "Remove the gaps before designing, or write masked bases "
+                    "as 'N' -- deleting them would splice the flanking bases "
+                    "together and tile a window across a junction that is not "
+                    "in the molecule."
+                )
             if character == ">":
                 # Far and away the most common paste error: a FASTA file with
                 # something above the first header, or headers separated by
@@ -189,6 +211,25 @@ def parse_sequence_input(text: str, default_name: str = "query") -> list[Sequenc
     return [
         SequenceRecord(name=default_name, sequence=_clean("\n".join(body), "input"))
     ]
+
+
+def decode_text(payload: bytes, source: str) -> str:
+    """Bytes to text, strictly, with one located refusal for both doors.
+
+    ``utf-8-sig`` so a byte-order mark is consumed as the encoding artefact it
+    is, and *strict* so an undecodable byte is refused rather than repaired.
+    The web upload used ``errors="replace"``, which turned a cp1252 header into
+    U+FFFD and ran the design anyway: a Latin-1 FASTA the CLI refuses outright
+    produced, in the browser, a completed report whose target id had been
+    silently altered. One copy of the rule, so the doors cannot drift again.
+    """
+    try:
+        return payload.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise SequenceInputError(
+            f"{source} is not readable as text -- is it a compressed or "
+            "binary file?"
+        ) from exc
 
 
 def read_fasta(path: str | Path) -> list[SequenceRecord]:

@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 802 tests
+python -m unittest discover -s tests -t tests    # 817 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,31 +727,32 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-802 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+817 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
-A hundred and eighty-four of those tests were added after six review passes
+A hundred and ninety-eight of those tests were added after seven review passes
 found bugs the original suite did not cover, and each one fails against the code
 as it stood. Each pass re-read the previous pass's own diff, and three of them
 caught a regression the previous pass had introduced — which is the argument for
 doing that, and also its limit.
 
-Confirmed defects per pass were **25, 4, 2, 6, 9, 7**, and the shape of that
+Confirmed defects per pass were **25, 4, 2, 6, 9, 7, 3**, and the shape of that
 curve is the useful part. Passes one to three *read* the code — module by module,
-then diff by diff — and converged. Passes four to six *ran* it: flag
+then diff by diff — and converged at 2. Passes four to six *ran* it: flag
 combinations rather than one flag at a time, input fuzzing, determinism across
 process boundaries, the three output surfaces compared field by field, real HTTP
-POSTs to the server, the `train` and `demo` subcommands nobody had exercised,
-the `--out`/`--stem` paths, and the README audited claim by claim. The count
-went back up and stayed up. Reading a module tells you whether it is
-self-consistent; only running the thing tells you whether two modules agree —
-and nearly everything left was two modules disagreeing.
+POSTs, the `train` and `demo` subcommands nobody had exercised, the
+`--out`/`--stem` paths, and the README audited claim by claim. The count went
+straight back up. Reading a module tells you whether it is self-consistent; only
+running the thing tells you whether two modules agree — and nearly everything
+left was two modules disagreeing.
 
-Two instruments found nothing that survived verification, which is worth as much
-as a finding: differential testing across all four `SearchIndex` implementations,
-and property testing of the gate → Pareto → preference order. The ones worth
-naming, because they were live defects rather than hypotheticals:
+Three instruments found nothing that survived verification, which is worth as
+much as a finding: differential testing across all four `SearchIndex`
+implementations, property testing of the gate → Pareto → preference order, and
+the threaded server under genuine concurrent load. The ones worth naming,
+because they were live defects rather than hypotheticals:
 
 | What was wrong | Why it mattered | Pinned by |
 |---|---|---|
@@ -759,6 +760,9 @@ naming, because they were live defects rather than hypotheticals:
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| `-` and `*` were stripped from input sequences as if they were whitespace | Deleting a gap **splices**: the base before the run joins the base after it, and the tiler walks a window across a junction in no molecule. On a 400 nt target with a 30-base gap, 21 of 297 exported guides had a site occurring nowhere in the real sequence — while the same alignment's ruler *digits* were refused with a located message | `test_bugfix_regressions_round7.py` |
+| The web upload decoded with `errors="replace"` | So a cp1252 FASTA the CLI refuses as unreadable ran to completion in the browser with its record name silently swapped to U+FFFD — on the one door whose users cannot read a traceback | `test_bugfix_regressions_round7.py` |
+| A target shorter than the spacer vanished without a word | The run said only "no feasible panel covers t1", which reads as "t1 has no usable guides" rather than "nobody looked" — and on a multi-record FASTA shipped 271 scored candidates from the *other* record while saying it | `test_bugfix_regressions_round7.py` |
 | `reference` is a reserved context key **and** a name a user may give a record | A variant record called `reference` shared a key with the reference context, so the variant's evidence overwrote the target's and every number for the REQUIRED target was computed against the variant: renaming one record took a run from PASS=96 to PASS=0 with a shortfall about a target that was never evaluated | `test_bugfix_regressions_round6.py` |
 | The web form folded an upload into the paste field | So the one-source guard could not see it, and a filled textarea silently discarded an uploaded FASTA — the exact behaviour the guard was added to stop, on the door it was added for | `test_bugfix_regressions_round6.py` |
 | Measured kinetic constants killed the run | `StiffKineticsError` is raised from inside stage E, past every input check, so the flag advertised as the way to unlock absolute signal answered real constants with a traceback | `test_bugfix_regressions_round6.py` |

@@ -36,6 +36,7 @@ from urllib.parse import parse_qs
 
 from ..contract.enums import AssayType, Effector, Task
 from ..contract.presets import get_preset, preset_ids
+from .fasta import SequenceInputError, decode_text
 from .report_html import REPORT_CSS, AccessibilityTrack, render_report
 from .workflow import DesignRequest, DesignRequestError, run_request
 
@@ -150,7 +151,14 @@ def _parse_multipart(body: bytes, content_type: str) -> dict[str, Any]:
         payload = part.get_payload(decode=True) or b""
         if filename:
             if payload:
-                fields[f"{name}__file"] = payload.decode("utf-8", errors="replace")
+                # Strictly, and through the same helper the file door uses. It
+                # was errors="replace", so a cp1252 FASTA the CLI refuses as
+                # unreadable ran here to completion with its record name
+                # silently swapped to U+FFFD -- a sequence-bearing file altered
+                # without a word, on the one door whose users cannot read a
+                # traceback. Uploaded *sequence* is content; the form's own
+                # short text fields below are not, and stay lenient.
+                fields[f"{name}__file"] = decode_text(payload, filename)
         else:
             fields[name] = payload.decode("utf-8", errors="replace").strip()
     return fields
@@ -291,7 +299,10 @@ class DesignHandler(BaseHTTPRequestHandler):
                     for key, values in parse_qs(body.decode("utf-8", "replace")).items()
                 }
             outcome = run_request(_request_from_fields(fields))
-        except DesignRequestError as exc:
+        except (DesignRequestError, SequenceInputError) as exc:
+            # SequenceInputError too: an undecodable upload is the user's
+            # input being wrong, which is a 400, not the server failing, which
+            # is what the catch-all below would have called it.
             self._send(_form_page(str(exc), is_error=True), status=400)
             return
         except Exception as exc:  # pragma: no cover - defensive
