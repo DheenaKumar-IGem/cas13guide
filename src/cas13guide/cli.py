@@ -195,8 +195,24 @@ def _design(args: argparse.Namespace) -> int:
     else:
         print()
         print("no guide cleared the gate.")
-        for shortfall in data["shortfalls"]:
-            print(f"  ! {shortfall}")
+
+    # Shortfalls print whether or not the table is empty. They used to print
+    # only when nothing ranked, which is the case where a reader already knows
+    # something went wrong. The dangerous case is the other one: 264 ranked
+    # rows, an empty panel, and a terminal that mentions neither -- the run
+    # recommends nothing and looks like a success. The report and the export
+    # headers always carried these; only the terminal did not.
+    panel = data.get("panel") or {}
+    messages = list(panel.get("dropped", ())) + list(data.get("shortfalls", ()))
+    if rows and not panel.get("guides"):
+        messages.insert(
+            0,
+            "no panel: guides ranked but none PASSed the gate, and the panel "
+            "is PASS-only. The rows above are candidates to triage, not a "
+            "recommendation.",
+        )
+    for message in messages:
+        print(f"  ! {message}")
 
     # FR6.3. Printed after the table because it is a statement about the
     # panel the run recommends, not about the rows a human is triaging -- and

@@ -270,7 +270,11 @@ def provenance_lines(
     if counts:
         lines.append(
             "verdicts: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
-            + f"; exported={len(report_dict.get('ranked', []))}"
+            # ``ranked``, not ``exported``: this header is shared by every
+            # file, and the controls FASTA exports none of these rows. A count
+            # that is true of the run is true in all three; a count claiming to
+            # be of the file was false in one of them.
+            + f"; ranked={len(report_dict.get('ranked', []))}"
         )
     for record in (report_dict.get("provenance") or {}).get("records", []):
         if record.get("kind") in ("model", "calibration", "search"):
@@ -354,8 +358,24 @@ def ranked_to_fasta(
             + format_fasta(records))
 
 
-def controls_to_fasta(report_dict: dict) -> str:
-    """Non-targeting controls as FASTA, so they can be ordered alongside."""
+def controls_to_fasta(
+    report_dict: dict,
+    subtitle: str = "",
+    limitations: Sequence[str] = (),
+) -> str:
+    """Non-targeting controls as FASTA, so they can be ordered alongside.
+
+    Carries the same provenance header as every other export, and for a
+    sharper reason than the ranked file does. A control spacer is a *negative*
+    result by construction: it looks like any other 22-mer, it is ordered into
+    the same plate, and six months later nothing distinguishes it from a guide
+    except a record saying which panel it was matched to.
+
+    It also states its own count. An empty control set used to produce a
+    zero-byte file, announced in the same list as the CSV and the report --
+    which reads as "controls: none needed" rather than "the panel these would
+    have been matched to is empty", and those are opposite facts.
+    """
     records = [
         SequenceRecord(
             name=str(control.get("guide_id")),
@@ -368,7 +388,18 @@ def controls_to_fasta(report_dict: dict) -> str:
         for control in report_dict.get("controls", [])
         if control.get("spacer")
     ]
-    return format_fasta(records)
+    notes = [f"non-targeting controls: {len(records)}"]
+    if not records:
+        notes.append(
+            "none were generated, because the panel they are matched to is "
+            "empty -- a control is a shuffle of a panel spacer. The shortfalls "
+            "above say why there is no panel."
+        )
+    return (
+        provenance_header(report_dict, subtitle, limitations, prefix="; ")
+        + "".join(f"; {note}\n" for note in notes)
+        + format_fasta(records)
+    )
 
 
 def write_exports(
@@ -385,7 +416,8 @@ def write_exports(
     for label, suffix, text in (
         ("csv", ".csv", ranked_to_csv(report_dict, subtitle, limitations)),
         ("fasta", ".fasta", ranked_to_fasta(report_dict, None, subtitle, limitations)),
-        ("controls", "_controls.fasta", controls_to_fasta(report_dict)),
+        ("controls", "_controls.fasta",
+         controls_to_fasta(report_dict, subtitle, limitations)),
     ):
         path = directory / f"{stem}{suffix}"
         path.write_text(text, encoding="utf-8", newline="\n")

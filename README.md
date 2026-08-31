@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 663 tests
+python -m unittest discover -s tests -t tests    # 671 tests
 pytest                              # same suite under pytest
 ```
 
@@ -180,6 +180,22 @@ the full list.
 ```
 showing one guide per distinct site; 125 shifted copies of a listed site are
 hidden (--all-sites to show them)
+```
+
+### And a table is not a recommendation
+
+The panel is PASS-only, deliberately — the machine's recommendation stays
+certified even where the table a human triages is wider. Under the built-in
+synthetic calibration every guide lands REVIEW, so there *is* no panel, and the
+terminal used to print the shortfall only when nothing ranked at all. The
+dangerous case is the opposite one: 264 ranked rows, an empty panel, and not a
+word about it. The report and every export header carried the shortfall the
+whole time; the surface a person actually reads did not.
+
+```
+  ! no panel: guides ranked but none PASSed the gate, and the panel is
+    PASS-only. The rows above are candidates to triage, not a recommendation.
+  ! no feasible panel covers required target(s): demo
 ```
 
 ## What a panel is worth (FR6.3)
@@ -295,6 +311,22 @@ pandas' `comment='#'` and R's `comment.char='#'` skip) and the FASTA uses `;`,
 the FASTA comment character — `#` would be read as sequence by some parsers, and
 a provenance line concatenated onto a spacer is the kind of corruption that
 survives review. The parser skips both, so an exported FASTA still reads back.
+
+**Every** means the controls FASTA too, which is where it matters most. A
+non-targeting control is a negative result that looks exactly like a guide —
+same length, same base composition, ordered into the same plate — and six
+months on, nothing tells it apart from a real candidate except a record of the
+run and panel it was matched to. It also states its own count, because an empty
+control set used to be a **zero-byte file announced beside the CSV and the
+report**, which reads as "no controls needed" when the fact is "the panel these
+would have been matched to is empty". Those are opposite claims, and the file
+now makes the second one out loud.
+
+```
+; non-targeting controls: 0
+; none were generated, because the panel they are matched to is empty -- a
+; control is a shuffle of a panel spacer. The shortfalls above say why.
+```
 
 ## Requirement coverage
 
@@ -691,7 +723,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-663 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+671 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 

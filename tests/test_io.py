@@ -200,6 +200,55 @@ class TestExport(unittest.TestCase):
         records = parse_fasta(controls_to_fasta(self.REPORT))
         self.assertEqual([r.name for r in records], ["ctrl_g_abc"])
 
+    def test_controls_export_carries_provenance_like_every_other_export(self):
+        """A control spacer is a negative result that looks like a guide.
+
+        Six months on, nothing distinguishes it from a real candidate except a
+        record of which run and which panel it came from -- so the file that
+        carries it has to carry that too.
+        """
+        text = controls_to_fasta(self.REPORT, "sub", ["WARNING: something"])
+        self.assertIn("; cas13guide", text)
+        self.assertIn("; spec fingerprint: abc123", text)
+        self.assertIn("; limitation: WARNING: something", text)
+        # And it still parses back, header and all.
+        self.assertEqual(
+            [r.name for r in parse_fasta(text)], ["ctrl_g_abc"]
+        )
+
+    def test_controls_export_states_its_own_count(self):
+        self.assertIn("; non-targeting controls: 1", controls_to_fasta(self.REPORT))
+
+    def test_no_controls_produces_a_file_that_says_why_not_an_empty_one(self):
+        """A zero-byte file announced beside the CSV reads as 'none needed'.
+
+        The truth is the opposite: there is no panel for them to be matched
+        to. Those are opposite facts and the file has to distinguish them.
+        """
+        report = dict(self.REPORT, controls=[], shortfalls=["no feasible panel"])
+        text = controls_to_fasta(report)
+        self.assertGreater(len(text), 0)
+        self.assertIn("; non-targeting controls: 0", text)
+        self.assertIn("the panel they are matched to is empty", text)
+        self.assertIn("; shortfall: no feasible panel", text)
+        # Comments only -- no record lines to mistake for a control. Not
+        # asserted via parse_fasta: an input with no records is a genuine user
+        # error there, and weakening that check to read this file back would
+        # trade a real guard for a convenience.
+        self.assertEqual([l for l in text.splitlines() if l.startswith(">")], [])
+
+    def test_the_shared_header_counts_the_run_not_the_file(self):
+        """``exported=`` was false in the controls file, which exports none of
+        the ranked rows. The count that is true everywhere is the run's."""
+        for text in (
+            ranked_to_csv(self.REPORT),
+            ranked_to_fasta(self.REPORT),
+            controls_to_fasta(self.REPORT),
+        ):
+            with self.subTest(text=text[:20]):
+                self.assertIn("ranked=1", text)
+                self.assertNotIn("exported=", text)
+
     def test_write_exports_produces_all_three_files(self):
         with tempfile.TemporaryDirectory() as directory:
             written = write_exports(self.REPORT, directory, stem="cand")
