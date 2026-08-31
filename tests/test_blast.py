@@ -230,9 +230,6 @@ class TestItNeverClaimsExhaustiveness(unittest.TestCase):
         self.assertIn(ReasonCode.SEARCH_NOT_EXHAUSTIVE, result.reasons)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestItIsReachableFromTheCli(unittest.TestCase):
     """A documented feature wired to nothing is a hole with documentation.
@@ -315,3 +312,6 @@ class TestItIsReachableFromTheCli(unittest.TestCase):
             _reference_index(
                 DesignRequest(blast_db="/db", blast_universes="  "), world
             )
+
+if __name__ == "__main__":
+    unittest.main()

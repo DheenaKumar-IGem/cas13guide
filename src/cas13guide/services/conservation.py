@@ -81,6 +81,31 @@ class ConservedWindow:
         return worst is not None and worst <= max_mismatches
 
 
+def _refuse_duplicate_names(records: Sequence[SequenceRecord]) -> None:
+    """Two variants under one name cannot be told apart, so refuse them.
+
+    Every world here keys loci by name (``Transcriptome.add`` overwrites), and
+    ``mismatches_by_variant`` keys results by name too, so a repeated name
+    silently drops one sequence *and* reports the survivor's result under the
+    shared name -- i.e. "reaches every variant" for a variant never searched.
+    That is a false negative in the unsafe direction, and it arrives by an
+    ordinary route: ``services/fasta.py`` deliberately does not deduplicate
+    names, because a repeat usually means someone concatenated two files, and
+    ``run_request`` feeds the parsed records straight here.
+    """
+    seen: dict[str, int] = {}
+    for record in records:
+        seen[record.name] = seen.get(record.name, 0) + 1
+    repeated = sorted(name for name, n in seen.items() if n > 1)
+    if repeated:
+        raise ValueError(
+            "conserved-region analysis keys variants by name, so records "
+            f"sharing one cannot be told apart: {', '.join(repeated)}. This is "
+            "usually a concatenated FASTA -- rename the records so each "
+            "variant has its own id."
+        )
+
+
 def find_conserved_windows(
     records: Sequence[SequenceRecord],
     spacer_length: int,
@@ -100,6 +125,7 @@ def find_conserved_windows(
             "conserved-region analysis needs at least two sequences; "
             f"got {len(records)}"
         )
+    _refuse_duplicate_names(records)
     by_name = {record.name: record for record in records}
     if reference is not None and reference not in by_name:
         raise KeyError(
@@ -238,6 +264,8 @@ def variant_contexts(
     biotype: Universe = Universe.NCRNA,
     expression: float | None = None,
     expected_queries: int = 1000,
+    background: Sequence[Locus] = (),
+    index_for=None,
 ):
     """One :class:`DesignContext` per variant, for FR7.2.
 
@@ -247,9 +275,20 @@ def variant_contexts(
     that already exists. Every context maps its locus to the *same* target id,
     which is what makes them alternative realisations of one target rather than
     several different targets.
+
+    ``background`` and ``index_for`` exist because a variant world used to hold
+    the variant and *nothing else*. The caller's off-target corpus and the
+    caller's chosen index were built, paid for, and then discarded the moment
+    ``--variants`` was supplied, so adding a variant to an otherwise unchanged
+    request turned a report with off-target hits into a clean one. Both are now
+    threaded through: ``background`` is added to every variant world, and
+    ``index_for`` picks the index the caller asked for instead of always
+    letting :meth:`DesignContext.auto` choose a local scanner.
     """
     from ..pipeline.orchestrator import DesignContext
 
+    records = list(records)
+    _refuse_duplicate_names(records)
     contexts = []
     for index, record in enumerate(records):
         world = Transcriptome("variants", record.name)
@@ -257,13 +296,19 @@ def variant_contexts(
             Locus(record.name, record.sequence, biotype, gene=record.name,
                   expression=expression)
         )
-        contexts.append(
-            DesignContext.auto(
-                "reference" if index == 0 else record.name,
-                world,
-                universes,
-                {record.name: target_id},
-                expected_queries=expected_queries,
+        for locus in background:
+            if locus.locus_id != record.name:
+                world.add(locus)
+        name = "reference" if index == 0 else record.name
+        if index_for is None:
+            contexts.append(
+                DesignContext.auto(
+                    name, world, universes, {record.name: target_id},
+                    expected_queries=expected_queries,
+                )
             )
-        )
+        else:
+            contexts.append(
+                DesignContext(name, world, index_for(world), {record.name: target_id})
+            )
     return contexts

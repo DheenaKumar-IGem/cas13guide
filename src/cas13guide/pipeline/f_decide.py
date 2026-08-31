@@ -159,10 +159,15 @@ def gate(
             )
         )
 
-    if any(e.expression_unknown for e in evidence):
-        n = sum(1 for e in evidence if e.expression_unknown)
+    # Distinct loci, not pair rows. PairEvidence is guide x locus x context, so
+    # summing rows counted one locus once per context and once per binding site
+    # within it -- and the string says "locus/loci", unlike the two R3 details
+    # above it, which say "pair(s)" and do mean rows.
+    unknown_loci = {e.locus_id for e in evidence if e.expression_unknown}
+    if unknown_loci:
         review.append(
-            (ReviewTier.R2, ReasonCode.EXPRESSION_UNKNOWN, f"{n} locus/loci with no expression evidence")
+            (ReviewTier.R2, ReasonCode.EXPRESSION_UNKNOWN,
+             f"{len(unknown_loci)} locus/loci with no expression evidence")
         )
 
     if metrics.required_coverage < t.required_coverage_min + t.borderline_band:

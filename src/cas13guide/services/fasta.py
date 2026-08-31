@@ -36,6 +36,13 @@ _COMMENT_PREFIXES = frozenset(";#")
 _IGNORED = frozenset(" \t\r\n\v\f-*")
 
 
+#: Byte-order mark. Encoding, not content -- and :func:`read_fasta` consumes it
+#: via ``utf-8-sig``, so the pasted and uploaded paths, which decode their own
+#: bytes, have to consume it too. Otherwise the same file behaves differently
+#: depending on which door it came through.
+_BOM = "﻿"
+
+
 class SequenceInputError(ValueError):
     """Malformed input, with a message a non-bioinformatician can act on."""
 
@@ -92,6 +99,7 @@ def parse_fasta(text: str) -> list[SequenceRecord]:
     usually a sign the user concatenated files, and silently deduplicating
     would hide that.
     """
+    text = text.lstrip(_BOM)
     records: list[SequenceRecord] = []
     name: str | None = None
     description = ""
@@ -151,6 +159,7 @@ def parse_sequence_input(text: str, default_name: str = "query") -> list[Sequenc
     are the same characters, so any content-based sniff would be a coin flip on
     some input.
     """
+    text = text.lstrip(_BOM) if text else text
     if not text or not text.strip():
         raise SequenceInputError(
             "no sequence supplied. Paste a sequence, or a FASTA record starting "
@@ -171,7 +180,13 @@ def read_fasta(path: str | Path) -> list[SequenceRecord]:
     if not path.exists():
         raise SequenceInputError(f"no such file: {path}")
     try:
-        text = path.read_text(encoding="utf-8")
+        # utf-8-sig, so a byte-order mark is consumed as the encoding artefact
+        # it is. With plain utf-8 the BOM survived into the text, the first
+        # line no longer started with ">", and a file whose first visible
+        # character is ">" was rejected with "FASTA input must start with a
+        # '>' header line" -- a located message naming the one thing that was
+        # not wrong. Notepad writes these by default.
+        text = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:
         raise SequenceInputError(
             f"{path.name} is not readable as text -- is it a compressed or "

@@ -131,7 +131,8 @@ _JS = """
     var onlyDistinct=distinct&&distinct.checked;
     var shown=0;
     rows.forEach(function(r){
-      var okText=!needle||r.textContent.toLowerCase().indexOf(needle)>-1;
+      var hay=(r.getAttribute('data-search')||'')+' '+r.textContent;
+      var okText=!needle||hay.toLowerCase().indexOf(needle)>-1;
       var okVerdict=!want||r.getAttribute('data-verdict')===want;
       var okSite=!onlyDistinct||r.getAttribute('data-distinct')!=='0';
       var on=okText&&okVerdict&&okSite; r.style.display=on?'':'none'; if(on)shown++;
@@ -269,9 +270,24 @@ def render_report(
             cells.append(
                 f'<td{attrs} data-sort="{html.escape(_sort_key(value))}">{rendered}</td>'
             )
+        # The filter promises "sequence, id, reason" and matches the row's
+        # textContent, which contains neither of the last two: guide_id,
+        # reasons and qc_warnings are all in the report and none is rendered
+        # as a cell. Typing a reason code from the CSV emptied the table, which
+        # reads as "no guide has that reason". textContent cannot see
+        # attributes, so the searchable text is attached explicitly.
+        haystack = " ".join(
+            str(value)
+            for value in (
+                entry.get("guide_id", ""),
+                *(entry.get("reasons") or ()),
+                *(entry.get("qc_warnings") or ()),
+            )
+        )
         body_rows.append(
             f'<tr data-verdict="{html.escape(str(entry.get("verdict", "")))}"'
-            f' data-distinct="{"1" if entry.get(DISTINCT_SITE_KEY, True) else "0"}">'
+            f' data-distinct="{"1" if entry.get(DISTINCT_SITE_KEY, True) else "0"}"'
+            f' data-search="{html.escape(haystack.lower())}">'
             + "".join(cells)
             + "</tr>"
         )

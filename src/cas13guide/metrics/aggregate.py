@@ -133,11 +133,17 @@ def discrimination_margin(
         for e in evidence
         if e.target_class is TargetClass.FORBIDDEN and e.hit.target_id is not None
     ]
-    if not off_upper:
-        return math.inf
-    worst_off = max(off_upper)
+    # ``inf`` only when there is on-target benefit to be infinitely better
+    # *than*. The two zero-hazard paths -- no FORBIDDEN rows at all, and
+    # FORBIDDEN rows whose UCB is zero -- mean the same thing and are collapsed
+    # here. Returning ``inf`` before consulting ``on`` re-created, in the
+    # no-evidence branch, exactly the defect the paragraph above records having
+    # fixed in the min: a context that had lost a required allele scored the
+    # best value the metric can take, and ``build_metric_vector``'s cross-context
+    # ``min`` then hid the gap.
+    worst_off = max(off_upper, default=0.0)
     if worst_off <= 0.0:
-        return math.inf
+        return math.inf if on > 0.0 else 0.0
     return on / worst_off
 
 

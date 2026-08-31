@@ -13,6 +13,7 @@ running them through the same search to *prove* they are non-targeting.
 from __future__ import annotations
 
 import random
+import statistics
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -176,7 +177,11 @@ def summarize_metrics(assessments: list[GuideAssessment]) -> MetricSummary:
     if not assessments:
         return MetricSummary(0, 0.0, 0.0, 0.0, 0, 0.0)
     coverages = sorted(a.metrics.required_coverage for a in assessments)
-    middle = coverages[len(coverages) // 2]
+    # The median, not the upper-middle order statistic. For an even count
+    # `coverages[n // 2]` is biased upward by half the central gap, and at
+    # n = 2 it equals coverage_max exactly -- in the one field a reader
+    # consults to judge whether the activity model discriminated at all.
+    middle = statistics.median(coverages)
     return MetricSummary(
         n_assessed=len(assessments),
         coverage_min=coverages[0],

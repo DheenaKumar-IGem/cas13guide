@@ -351,11 +351,18 @@ def _combine_independent(probabilities: list[float]) -> float:
 def _combine_beta_factor(probabilities: list[float], beta: float) -> float:
     """Beta-factor common-cause combination, clamped into the sound interval.
 
-    The clamp is not cosmetic: the textbook form adds a common-cause term to a
-    product of thinned independent terms, and for a panel whose members are
-    all nearly certain that sum can fall a hair below the independent product.
-    A point estimate outside its own bounds is a bug wherever it is read, so
-    it is corrected here rather than downstream.
+    The clamp is not cosmetic, and it binds in the opposite regime to the one
+    an earlier version of this comment named. The textbook form adds a
+    common-cause term to a product of thinned independent terms; as members
+    become nearly certain to *succeed* (``q -> 0``) the common-cause term is
+    ``O(q)`` and the thinned product is ``O(q**n)``, so the raw value stays
+    below the ceiling and the clamp never fires. It fires when members are
+    nearly certain to **fail**: for two equal members the condition reduces to
+    ``q > 1 / (2 - beta)``, i.e. roughly ``p < 0.5`` -- which is routine with a
+    thin calibration window, where the Jeffreys posterior sits near 0.5. And
+    the excursion is not a hair: at ``p = 0.10`` it leaves the interval by tens
+    of percent of the ceiling. A point estimate outside its own bounds is a bug
+    wherever it is read, so it is corrected here rather than downstream.
     """
     failures = [1.0 - p for p in probabilities]
     mean_failure = sum(failures) / len(failures)
@@ -513,16 +520,36 @@ class BayesianPanelConfidence:
         )
 
     def _notes(self, targets: list[TargetConfidence]) -> tuple[str, ...]:
-        notes = [
-            "Detection probability is reported as an interval, not a number. "
-            "The lower end assumes the panel's guides fail together as far as "
-            "their individual rates allow, the upper end assumes they fail "
-            "independently. Nothing here can tell you where between them your "
-            "assay sits.",
-            "Read the lower end. It is what the panel is worth if its members "
-            "share a failure mode, which guides on one transcript scored by one "
-            "model generally do.",
-        ]
+        # Chosen by the same predicate that gates the third note, because the
+        # first two were unconditional and therefore false in the one
+        # configuration this module exists to unlock: supply a measured beta
+        # and the report drew a point marker inside the band while the text
+        # under it said "reported as an interval, not a number" and "nothing
+        # here can tell you where between them your assay sits". The measured
+        # beta is exactly what located it. `not targets` stays on the
+        # interval-only branch: any([]) is False, and a run covering no target
+        # has no point estimate to describe.
+        located = bool(targets) and all(t.point is not None for t in targets)
+        if located:
+            notes = [
+                "Detection probability is a point estimate located inside the "
+                "[fail together, fail independently] interval by the measured "
+                "common-cause fraction you supplied. The interval is still "
+                "reported, and is still what the evidence bounds on its own.",
+                "The point is only as good as that fraction. It came from your "
+                "replicate panel runs, not from anything this package measured.",
+            ]
+        else:
+            notes = [
+                "Detection probability is reported as an interval, not a number. "
+                "The lower end assumes the panel's guides fail together as far as "
+                "their individual rates allow, the upper end assumes they fail "
+                "independently. Nothing here can tell you where between them your "
+                "assay sits.",
+                "Read the lower end. It is what the panel is worth if its members "
+                "share a failure mode, which guides on one transcript scored by one "
+                "model generally do.",
+            ]
         if targets and any(t.point is None for t in targets):
             notes.append(
                 "No measured common-cause fraction was supplied, so no single "

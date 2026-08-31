@@ -48,6 +48,12 @@ DEFAULT_MAX_BP_SPAN = 70
 #: lives in ``Thresholds.min_accessibility``, defaulting to off.
 STRUCTURED_SITE_THRESHOLD = 0.25
 
+#: Shortest sequence that can contain a base pair: ViennaRNA's minimum hairpin
+#: loop is 3 nt, plus the two closing bases. Below this nothing pairs, which is
+#: why the answer is computable without folding -- and it has to be, because
+#: ``RNA.pfl_fold_up`` aborts the process at 3 and 4 nt.
+MIN_PAIRABLE_LENGTH = 5
+
 
 class AccessibilityUnavailable(RuntimeError):
     """ViennaRNA is not importable, so no fold-based accessibility is possible."""
@@ -88,7 +94,11 @@ class ViennaRNAAccessibilityModel:
 
         Sequences shorter than the window are folded whole -- ``RNAplfold``
         handles that, and a short transcript has no long-range pairs to exclude
-        anyway.
+        anyway. *Except* at 3 and 4 nt, where ``RNA.pfl_fold_up`` aborts the
+        process: not an exception, a native abort that kills the interpreter
+        with no traceback and, under ``serve``, would take every in-flight
+        design down with it. Those two lengths are answered without folding --
+        see below.
         """
         cached = self._profiles.get(sequence)
         if cached is not None:
@@ -98,6 +108,13 @@ class ViennaRNAAccessibilityModel:
 
         if not sequence:
             profile: tuple[float, ...] = ()
+        elif len(sequence) < MIN_PAIRABLE_LENGTH:
+            # Below a hairpin's minimum loop plus its two closing bases nothing
+            # can pair, so every position is unpaired with probability 1. This
+            # is the answer the partition function gives for these lengths
+            # (checked against RNA.fold_compound().pf() for 1-5 nt), computed
+            # rather than obtained, because obtaining it crashes.
+            profile = (1.0,) * len(sequence)
         else:
             window = min(self.window, len(sequence))
             span = min(self.max_bp_span, window)

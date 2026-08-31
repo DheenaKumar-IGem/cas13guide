@@ -140,7 +140,7 @@ def load_screen(
     if delimiter is None:
         delimiter = "\t" if path.suffix.lower() in {".tsv", ".tab", ".txt"} else ","
 
-    with path.open(newline="") as handle:
+    with path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle, delimiter=delimiter)
         header = reader.fieldnames or []
         missing = [
@@ -171,6 +171,7 @@ def load_screen(
     groups: list[str] = []
     dropped_sequence = 0
     dropped_activity = 0
+    dropped_group = 0
 
     for row in rows:
         spacer = _clean_sequence(row.get(columns.spacer) or "")
@@ -198,7 +199,12 @@ def load_screen(
 
         group = (row.get(columns.group) or "").strip()
         if not group:
-            dropped_activity += 1
+            # Its own counter. These rows have a valid spacer and a valid
+            # activity number; what they lack is the transcript label, and
+            # counting them as an activity failure sent the user to fix the
+            # wrong column -- in a module whose whole job is saying precisely
+            # why a screen cannot be used.
+            dropped_group += 1
             continue
 
         spacers.append(spacer)
@@ -214,6 +220,11 @@ def load_screen(
     if dropped_activity:
         report.warnings.append(
             f"dropped {dropped_activity} row(s) with missing or non-numeric activity"
+        )
+    if dropped_group:
+        report.warnings.append(
+            f"dropped {dropped_group} row(s) with a blank {columns.group!r} cell; "
+            "a row with no transcript label cannot be placed in a grouped split"
         )
 
     if not spacers:
@@ -312,7 +323,7 @@ def write_screen(
     columns = columns or ColumnMap()
     rows = list(examples)
     path = Path(path)
-    with path.open("w", newline="") as handle:
+    with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow([columns.spacer, columns.activity, columns.group])
         for e in rows:

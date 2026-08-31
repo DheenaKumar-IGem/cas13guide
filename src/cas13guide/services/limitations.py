@@ -74,6 +74,26 @@ def _calibration_is_synthetic(calibration: Any) -> bool:
     return bool(getattr(calibration, "synthetic", False))
 
 
+def _self_fold_is_proxy(provenance: Any) -> bool:
+    """True when QC judged self-folding by stem count rather than by folding.
+
+    Duck-typed over the ledger's serialised form, so a caller can hand in
+    ``report.provenance`` (a dict) or anything else exposing ``records``.
+    """
+    if provenance is None:
+        return False
+    records = (
+        provenance.get("records", ())
+        if isinstance(provenance, dict)
+        else getattr(provenance, "records", ())
+    )
+    for record in records:
+        get = record.get if isinstance(record, dict) else lambda k: getattr(record, k, None)
+        if get("name") == "qc_self_fold":
+            return str(get("version") or "").startswith("qc/stem-proxy")
+    return False
+
+
 def limitations_for_run(
     spec: ResolvedDesignSpec,
     registry: Any = None,
@@ -82,6 +102,7 @@ def limitations_for_run(
     universe_gaps: frozenset | None = None,
     panel_size: int = 0,
     panel_confidence: Any = None,
+    provenance: Any = None,
 ) -> tuple[Limitation, ...]:
     """Everything this particular run could not establish.
 
@@ -214,6 +235,28 @@ def limitations_for_run(
                 "well-matched guides carries little information. Fit a model on "
                 "a real screen, or plug a published one into the ActivityModel "
                 "seam.",
+            )
+        )
+
+    # ---- QC self-folding -----------------------------------------------
+    # Read off the run's own provenance rather than off the registry: the QC
+    # fold source is chosen in the orchestrator and is NOT
+    # registry.accessibility, which is a different model behind a different
+    # flag. Keying off the wrong one is how a limitation fires on the wrong
+    # runs, which is the failure this module exists to avoid.
+    if _self_fold_is_proxy(provenance):
+        found.append(
+            Limitation(
+                "self-folding-is-a-proxy",
+                Severity.WARNING,
+                "Spacer self-folding was judged by counting the longest "
+                "self-complementary stretch, not by folding the spacer -- "
+                "ViennaRNA was not importable. That proxy recovers 28.9% of "
+                "the guides a real fold rejects, so some self-structured "
+                "spacers passed QC and some innocent ones were failed. A "
+                "self-folding FAIL cannot be bought back, so install ViennaRNA "
+                '(`pip install "cas13guide[structure]"`) before reading these '
+                "verdicts as final.",
             )
         )
 

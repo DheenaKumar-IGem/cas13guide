@@ -143,7 +143,10 @@ class QCFlag(str, Enum):
 
     Members appear in :attr:`QCResult.flags` (hard incompatibilities, which the
     gate turns into a FAIL) or :attr:`QCResult.warnings` (soft findings, which
-    only deprioritize). ``PFS_DISFAVOURED`` is the only soft member today.
+    only deprioritize). The soft members are listed in :data:`SOFT_QC_FLAGS` --
+    named there rather than restated here, because this sentence said
+    "``PFS_DISFAVOURED`` is the only soft member" from the commit that added
+    the second one.
     """
 
     GC_OUT_OF_RANGE = "gc_out_of_range"
@@ -156,7 +159,20 @@ class QCFlag(str, Enum):
     #: the ranking, never fails the guide.
     PFS_DISFAVOURED = "pfs_disfavoured"
     #: Soft: a spacer length the ortholog tolerates but was not published at.
-    #: Usable; the activity model reports it out-of-domain so the bounds widen.
+    #: Usable as a *candidate*; the activity model reports it out-of-domain,
+    #: which refuses to narrow its interval, so the gate then refuses it.
     SPACER_LENGTH_NONCANONICAL = "spacer_length_noncanonical"
     SPACER_LENGTH_UNSUPPORTED = "spacer_length_unsupported"
+    #: Emitted by neither list today: no QC check raises it. Kept because the
+    #: manufacturability score exists and a synthesis rule is the obvious thing
+    #: to route through it.
     SYNTHESIS_CONSTRAINT = "synthesis_constraint"
+
+
+#: The soft members: findings that only ever reach :attr:`QCResult.warnings`
+#: and never fail a guide. A single source of truth rather than a sentence in
+#: the class docstring, which went stale in the same commit that added the
+#: second member to this set.
+SOFT_QC_FLAGS: frozenset[QCFlag] = frozenset(
+    {QCFlag.PFS_DISFAVOURED, QCFlag.SPACER_LENGTH_NONCANONICAL}
+)

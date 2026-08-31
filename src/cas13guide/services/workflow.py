@@ -233,7 +233,12 @@ def build_registry(request: DesignRequest, notes: list[str], spec=None, records=
         from .kinetics import CollateralKineticsModel, KineticConstants
 
         if request.kinetics_json:
-            constants = KineticConstants.from_json(request.kinetics_json)
+            try:
+                constants = KineticConstants.from_json(request.kinetics_json)
+            except (OSError, ValueError, TypeError) as exc:
+                raise DesignRequestError(
+                    f"--kinetics-constants {request.kinetics_json}: {exc}"
+                ) from exc
             extra["kinetics"] = CollateralKineticsModel(constants)
             if constants.provisional:
                 notes.append(
@@ -334,6 +339,21 @@ def _build_arc_model(request: DesignRequest, spec, records):
         raise DesignRequestError(f"could not build the Arc model: {exc}") from exc
 
 
+def _read_fasta_or_fail(path, flag: str) -> list[SequenceRecord]:
+    """``read_fasta``, with the failure typed the way callers are told it is.
+
+    ``run_request`` documents that it raises :class:`DesignRequestError` on bad
+    input, and ``cli._design`` catches exactly that to print a located message
+    instead of a traceback. ``_read_records`` upheld it for ``--fasta`` and the
+    other file arguments did not, so the identical typo produced a clean
+    message on one flag and a stack trace on the next.
+    """
+    try:
+        return read_fasta(path)
+    except SequenceInputError as exc:
+        raise DesignRequestError(f"{flag} {path}: {exc}") from exc
+
+
 def _panel_dependence(request: DesignRequest):
     """The measured common-cause fraction for FR6.3, if one was supplied.
 
@@ -356,9 +376,13 @@ def _panel_dependence(request: DesignRequest):
 def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
     """A stand-in calibration so bounds exist at all.
 
-    Synthetic on purpose and flagged as such in :data:`STANDING_CAVEATS`. Group
-    labels are supplied so the group-adequacy check is actually exercised rather
-    than switching itself off.
+    Synthetic on purpose and *marked* as such -- ``calibration.synthetic`` is
+    set below, and ``services/limitations.py`` reads that flag to raise the
+    CRITICAL synthetic-calibration limitation. This used to point at
+    :data:`STANDING_CAVEATS`, which is the empty tuple: the pointer outlived
+    the constant it named by the commit that emptied it. Group labels are
+    supplied so the group-adequacy check is actually exercised rather than
+    switching itself off.
     """
     from .calibration import CalibrationService
 
@@ -398,35 +422,64 @@ def run_request(request: DesignRequest) -> DesignOutcome:
     for record in records:
         world.add(Locus(record.name, record.sequence, Universe.NCRNA,
                         gene=record.name, expression=request.expression))
+    background_loci: list[Locus] = []
     if request.background_path:
-        for record in read_fasta(request.background_path):
-            world.add(Locus(record.name, record.sequence, Universe.CODING,
-                            gene=record.name, expression=None))
+        for record in _read_fasta_or_fail(request.background_path, "--background"):
+            background_loci.append(Locus(record.name, record.sequence, Universe.CODING,
+                                         gene=record.name, expression=None))
+    for locus in background_loci:
+        world.add(locus)
 
+    reference_index = _reference_index(request, world)
     contexts = [
         DesignContext(
-            "reference", world, _reference_index(request, world),
+            "reference", world, reference_index,
             {record.name: record.name for record in records},
         )
     ]
 
     variant_records: list[SequenceRecord] = []
     if request.variants_path:
-        variant_records = read_fasta(request.variants_path)
+        variant_records = _read_fasta_or_fail(request.variants_path, "--variants")
     elif request.variants_text and request.variants_text.strip():
-        variant_records = parse_sequence_input(request.variants_text, default_name="variant")
+        try:
+            variant_records = parse_sequence_input(
+                request.variants_text, default_name="variant"
+            )
+        except SequenceInputError as exc:
+            raise DesignRequestError(f"variants: {exc}") from exc
     if variant_records:
         from .conservation import summarize_conservation, variant_contexts
 
         combined = [records[0]] + variant_records
-        summary = summarize_conservation(
-            combined, spec.spacer_length, max_mismatches=request.conserved_mismatches
-        )
+        try:
+            summary = summarize_conservation(
+                combined, spec.spacer_length, max_mismatches=request.conserved_mismatches
+            )
+        except ValueError as exc:
+            raise DesignRequestError(f"--variants: {exc}") from exc
         notes.append(f"Conservation across {len(variant_records)} variant(s): "
                      f"{summary.summary()}")
+
+        # The variant contexts REPLACE the reference one, so whatever the
+        # caller loaded has to travel with them. It used to not: each variant
+        # world held that variant and nothing else, and the index was rechosen
+        # locally -- so `--background` was parsed and dropped and `--blast-db`
+        # was validated (ensure_available() and all) and never queried. Adding
+        # `--variants` to an otherwise identical request turned an off-target
+        # report into a vacuously clean one, which is the worst direction for
+        # this particular number to be wrong in.
+        def index_for(variant_world):
+            # A BLAST database is corpus-independent, so the reference index is
+            # reusable as-is; the local scanner is not, and is rebuilt per world.
+            if request.blast_db:
+                return reference_index
+            return ExhaustiveScanIndex(variant_world, ALL_UNIVERSES)
+
         contexts = variant_contexts(
             combined, ALL_UNIVERSES, target_id=records[0].name,
             biotype=Universe.NCRNA, expression=request.expression,
+            background=background_loci, index_for=index_for,
         )
 
     calibration_service = seed_calibration(request, spec)
@@ -457,6 +510,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         universe_gaps=gaps,
         panel_size=len(data.get("panel", {}).get("guides", ())),
         panel_confidence=report.panel_confidence,
+        provenance=data.get("provenance"),
     )
     notes = as_lines(found) + notes
 

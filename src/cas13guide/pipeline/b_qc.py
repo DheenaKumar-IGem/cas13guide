@@ -106,10 +106,10 @@ def qc_candidate(
     # Length outside what the ortholog can physically accommodate is a hard
     # incompatibility. Length merely outside its *canonical* set is not: it is
     # unvalidated, which the activity model's domain check already reports as
-    # out-of-domain so the bounds widen and the gate raises an R3 REVIEW.
-    # Failing it here as well made the window length un-configurable and, for a
-    # 22-24 nt mature miRNA against 28 nt LwaCas13a spacers, made the target
-    # undesignable rather than merely unusual.
+    # out-of-domain -- refusing to narrow the interval at all, which the gate
+    # then turns into a refusal rather than a certification. Failing it *here*
+    # as well would make the window length un-configurable, which is a
+    # different and worse thing: the design could not even be stated.
     if not params.supports_length(candidate.length):
         flags.append(QCFlag.SPACER_LENGTH_UNSUPPORTED)
     elif not params.is_canonical_length(candidate.length):

@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 671 tests
+python -m unittest discover -s tests -t tests    # 718 tests
 pytest                              # same suite under pytest
 ```
 
@@ -456,7 +456,11 @@ package makes the trade-off explicit instead of hiding it:
   (`EffectorParams.spacer_length_range`), so a 24 nt spacer is expressible;
 - a length outside the ortholog's *canonical* set is reported out-of-domain, so
   the bounds widen and the gate refuses to certify rather than inventing
-  confidence for a geometry nobody validated;
+  confidence for a geometry nobody validated. The domain pairs length **with
+  ortholog**: it used to be the union across the two, which admitted RfxCas13d's
+  22/23/30 for LwaCas13a and LwaCas13a's 28 for RfxCas13d — so four of the five
+  miRNA presets were being certified at a length no model here was fit on, on
+  the package's own headline path;
 - `designability()` states up front how many windows a target can yield, so
   "1 candidate" is a prediction rather than a surprise.
 
@@ -723,13 +727,14 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-671 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+718 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
-Fifty-six of those tests were added after a review found bugs the original
-suite did not cover, and each one fails against the code as it stood. The ones
-worth naming, because they were live defects rather than hypotheticals:
+A hundred and one of those tests were added after two review passes found bugs
+the original suite did not cover, and each one fails against the code as it
+stood. The ones worth naming, because they were live defects rather than
+hypotheticals:
 
 | What was wrong | Why it mattered | Pinned by |
 |---|---|---|
@@ -737,6 +742,14 @@ worth naming, because they were live defects rather than hypotheticals:
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| The activity model's domain was a **union** across orthologs | Length and effector were tested as independent axes, so each ortholog's published lengths were admitted for the other. Four of the five miRNA presets returned a certified PASS at a geometry nobody validated, while the note above the table promised the opposite | `test_bugfix_regressions.py` |
+| `--variants` replaced the whole context list | `--background` was parsed and discarded and `--blast-db` was validated and never queried, so adding a variant to an otherwise identical request turned a report with off-target hits into a **clean** one | `test_bugfix_regressions.py` |
+| `fingerprint()` serialised a `frozenset` | Enum hashing is per-process randomised, so the digest that identifies a design — carried in the ledger, the report and every export header — **changed between runs of the same design** | `test_bugfix_regressions.py` |
+| The candidate budget was spent in contract order | The third of three ordinary 3 kb REQUIRED transcripts was never tiled at the shipped default, and the run reported "no feasible panel covers t3" — which reads as "no usable guides" rather than "nobody looked" | `test_bugfix_regressions.py` |
+| A fixed 400 RK4 steps, with clamps | Unstable for an ordinary measured `k_on`; the per-step clamps turned the divergence into a plausible **wrong number** (+19.5%) instead of a NaN, in the one path that unlocks when real constants are supplied | `test_bugfix_regressions.py` |
+| Two variants sharing a FASTA name | `Transcriptome.add` keys by name, so one silently replaced the other and conservation reported "reaches every variant" for a variant it never searched | `test_bugfix_regressions.py` |
+| `RNA.pfl_fold_up` at 3 and 4 nt | A native abort, not an exception: the interpreter died with no traceback, which under `serve` would take every in-flight design with it | `test_bugfix_regressions.py` |
+| `discrimination_margin` returned `inf` before reading the on-target term | The same defect the row above records fixing, surviving in the other branch: a context that had lost a required allele scored the best value the metric can take | `test_bugfix_regressions.py` |
 | `DEFAULT_WEIGHTS` omitted `discrimination_margin` | The one metric an allele task exists for had weight 0, so it could not affect the ranking — while the rationale line still printed it | `test_decision_order.py` |
 | `HazardWeights` replaced its default maps instead of merging | A partial `by_biotype` halved rRNA/mito hazard; a partial `by_class` raised `KeyError` mid-run | `test_context_evidence.py` |
 | Controls were checked against a hand-copied subset of QC | A "matched" control could ship carrying a GC or self-folding violation the gate would FAIL | `test_controls.py` |

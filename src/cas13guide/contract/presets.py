@@ -20,9 +20,11 @@ the trade-off explicit:
 * the spacer length is configurable within each ortholog's tolerated range
   (``EffectorParams.spacer_length_range``), so a 22 nt spacer against a 24 nt
   miRNA is expressible;
-* a length outside the ortholog's *canonical* set is reported out-of-domain, so
-  the activity model's bounds widen and the gate raises an R3 REVIEW rather
-  than handing back a confident number for a geometry nobody validated;
+* a length outside the ortholog's *canonical* set is reported out-of-domain,
+  which refuses to narrow the activity interval at all -- so the guide is
+  refused rather than handed back with a confident number for a geometry nobody
+  validated, and the note names an ortholog that does publish the length when
+  one exists;
 * :func:`designability` says up front how many windows a preset can even yield,
   so "1 candidate" is a stated fact rather than a surprising empty table.
 
@@ -217,10 +219,30 @@ def designability(
     else:
         note = f"{n} windows available."
     if not canonical:
+        # What actually happens, measured, rather than what an earlier draft
+        # of this string promised. Out-of-domain refuses to narrow the
+        # activity interval *at all* (d_pair_evidence substitutes
+        # Interval.unknown), and benefit is read at its lower bound, so the
+        # coverage gate cannot be cleared and the verdict is FAIL -- not the
+        # R3 REVIEW this used to claim. R3 is what an *in-domain* pair with a
+        # weak calibration stratum earns; a length no model was fit at is a
+        # stronger statement than that.
+        covered_by = sorted(
+            other.value
+            for other, other_params in EFFECTORS.items()
+            if length in other_params.spacer_lengths
+        )
         note += (
-            f" {length} nt is outside {effector.value}'s canonical "
-            f"{params.spacer_lengths}, so activity will be reported "
-            "out-of-domain (R3 REVIEW) rather than as a validated prediction."
+            f" {length} nt is outside {effector.value}'s published "
+            f"{params.spacer_lengths}, and no model here was fit at that "
+            "length for this ortholog. Its activity interval is therefore not "
+            "narrowed at all, and since benefit is read at its lower bound the "
+            "guide is refused rather than certified."
+        )
+        note += (
+            f" {', '.join(covered_by)} publishes {length} nt."
+            if covered_by
+            else " No ortholog in this package publishes that length."
         )
     return Designability(
         preset_id=preset.preset_id,

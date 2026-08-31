@@ -32,7 +32,7 @@ from ..services.provenance import ProvenanceLedger
 from ..services.registry import ModelRegistry
 from ..services.transcriptome import Transcriptome
 from .a_candidates import design_candidates
-from .b_qc import run_qc
+from .b_qc import MAX_SELF_STEM, SELF_FOLD_MAX_DG, run_qc
 from .c_search import run_search
 from .d_pair_evidence import build_pair_evidence
 from .e_aggregate import assess_guides
@@ -162,6 +162,21 @@ def run_design(
                   strata=calibration.describe())
     for name, version in registry.versions().items():
         ledger.record("model", name, version)
+    # Two comments -- this module's `_self_fold_energy` and b_qc's MAX_SELF_STEM
+    # block -- promised that "the run says which one it used". Nothing did. The
+    # choice decides SPACER_SELF_FOLDING, which is a hard FAIL nobody can buy
+    # back, and the two criteria disagree: on a 400 nt target the proxy and the
+    # free energy delete different guides (109 vs 102 FAILs, measured), while
+    # the two reports were identical in every field describing the method.
+    ledger.record(
+        "model", "qc_self_fold",
+        "qc/vienna-mfe/v1" if self_fold is not None else "qc/stem-proxy/v1",
+        criterion=(
+            f"dG <= {SELF_FOLD_MAX_DG} kcal/mol"
+            if self_fold is not None
+            else f"longest self-complement > {MAX_SELF_STEM} nt (28.9% recall)"
+        ),
+    )
     for ctx in contexts:
         ledger.record("transcriptome", ctx.name, ctx.transcriptome.version,
                       loci=len(ctx.transcriptome), index=ctx.index.version,

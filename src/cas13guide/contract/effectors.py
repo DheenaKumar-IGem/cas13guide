@@ -11,9 +11,12 @@ produces a tool that refuses designs it should merely discourage:
   the published constructs use and the lengths any bundled model was validated
   on. ``spacer_length_range`` is the wider span the ortholog will actually
   tolerate. Asking for a length inside the range but outside the canonical set
-  is allowed, and the activity model's domain check flags it out-of-domain, so
-  the calibration widens and the gate raises an R3 REVIEW rather than either
-  refusing outright or answering with unearned confidence.
+  is allowed, and the activity model's domain check -- which pairs length with
+  ortholog rather than unioning across them -- flags it out-of-domain. That
+  refuses to narrow the interval at all, so with benefit read at its lower
+  bound the guide is refused rather than answered with unearned confidence.
+  The design stays expressible, which is the difference from refusing outright:
+  the caller can see what it would take to make it designable.
 * **Required PFS vs preferred PFS** (FR2.3). A *required* flanking base is a hard
   incompatibility -- the guide cannot work. A *preferred* one is a bias: it
   lowers expected activity and should push a candidate down the ranking, not

@@ -188,7 +188,15 @@ def select_panel(
             "coverage without violating spacing/diversity constraints"
         )
 
-    constrained = min_spacing > 0 or max_shared_off < len(assessments)
+    # Whether the diversity constraint *can* bind, not how many candidates
+    # there are. The two have nothing to do with each other: `max_shared_off`
+    # is a count of shared off-target loci, and comparing it to the pool size
+    # meant a large `max_shared_off` declared the run unconstrained while
+    # `_compatible` was still rejecting pairs -- printing the (1 - 1/e) bound
+    # for a feasible family that is an independence system, which is the
+    # claim fcb1bd8 removed from the other branch.
+    widest_off = max((len(p.off_loci) for _a, p in pool), default=0)
+    constrained = min_spacing > 0 or max_shared_off < widest_off
     guarantee = (
         "greedy heuristic -- NO approximation guarantee: spacing/diversity "
         "feasibility is an independence system, not a matroid, so the panel can "

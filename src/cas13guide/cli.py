@@ -23,7 +23,14 @@ def _demo(args: argparse.Namespace) -> int:
 
 
 def _check(args: argparse.Namespace) -> int:
-    """Fail loudly if a model/calibration change broke skill or coverage."""
+    """Fail loudly if a calibration change broke conformal coverage.
+
+    Skill (spearman, mae) is measured and printed, and deliberately not gated
+    here: there is no stored baseline to compare against, and a gate with
+    nothing on the other side of it is a green light rather than a check.
+    ``services/benchmark.assert_no_regression`` is the gate for that, and it
+    needs a baseline the caller supplies.
+    """
     import random
 
     from .services.benchmark import BenchmarkCase, run_benchmark
@@ -69,7 +76,12 @@ def _check(args: argparse.Namespace) -> int:
     if not report.coverage_ok:
         print("FAIL: conformal coverage below nominal", file=sys.stderr)
         return 1
-    print("OK: skill and coverage within tolerance")
+    # Names the gate that actually ran. Spearman and MAE are computed and
+    # printed above, and nothing compares them to a baseline --
+    # `benchmark.assert_no_regression` exists for that and this command does
+    # not call it -- so claiming skill was "within tolerance" certified a check
+    # that never happened.
+    print("OK: conformal coverage within tolerance (skill is reported, not gated)")
     return 0
 
 

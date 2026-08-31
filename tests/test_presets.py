@@ -115,12 +115,36 @@ class TestMatureMiRNAGeometry(unittest.TestCase):
             self.assertGreaterEqual(report.windows, 1)
 
     def test_and_is_reported_as_unvalidated_when_it_does(self):
-        """Fitting is not the same as being a geometry anyone has data for."""
+        """Fitting is not the same as being a geometry anyone has data for.
+
+        This asserted the note contained "out-of-domain (R3 REVIEW)". The
+        first half was true and the second was not: an out-of-domain pair gets
+        ``Interval.unknown``, whose lower bound is 0.0, and benefit is read at
+        its lower bound -- so the coverage gate FAILs it. R3 REVIEW is what an
+        *in-domain* pair with a weak calibration stratum earns. The note now
+        says what happens, so the assertion checks that instead of the phrase
+        that was wrong.
+        """
         preset = get_preset("hsa-miR-21-5p")
         length = largest_designable_spacer_length(preset, Effector.LWA_CAS13A)
         report = designability(preset, Effector.LWA_CAS13A, spacer_length=length)
         self.assertFalse(report.canonical_length)
-        self.assertIn("out-of-domain", report.note)
+        self.assertIn("not narrowed at all", report.note)
+        self.assertIn("refused rather than certified", report.note)
+        self.assertNotIn("R3 REVIEW", report.note)
+
+    def test_the_note_names_an_ortholog_that_does_publish_the_length(self):
+        """"Unvalidated here" is only actionable with somewhere to go."""
+        preset = get_preset("hsa-miR-216a-5p")        # 22 nt
+        length = largest_designable_spacer_length(preset, Effector.LWA_CAS13A)
+        note = designability(preset, Effector.LWA_CAS13A, spacer_length=length).note
+        self.assertIn("RfxCas13d publishes 22 nt", note)
+
+    def test_a_length_no_ortholog_publishes_says_so_rather_than_naming_none(self):
+        preset = get_preset("hsa-miR-21-5p")          # 24 nt, nobody publishes it
+        length = largest_designable_spacer_length(preset, Effector.LWA_CAS13A)
+        note = designability(preset, Effector.LWA_CAS13A, spacer_length=length).note
+        self.assertIn("No ortholog in this package publishes that length", note)
 
     def test_largest_fitting_length_is_the_largest_that_fits(self):
         preset = get_preset("hsa-miR-21-5p")          # 24 nt

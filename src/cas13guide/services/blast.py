@@ -230,7 +230,20 @@ class BlastOffTargetIndex:
                 # A partial alignment is not a binding site for a fixed-length
                 # spacer, and padding one out would be inventing sequence.
                 continue
-            site = normalize(row.subject_sequence)
+            try:
+                site = normalize(row.subject_sequence)
+            except ValueError as exc:
+                # Still raises. Skipping the row would reintroduce the defect
+                # pinned by test_search.TestAmbiguityBasesAreNotADeadZone,
+                # where a real off-target hides behind an ambiguity code. What
+                # was wrong is that the message named neither BLAST nor the
+                # subject, so it surfaced as a bare ValueError from the middle
+                # of a design run.
+                raise ValueError(
+                    f"blastn subject {row.subject!r} at "
+                    f"sstart={row.subject_start} carries characters outside "
+                    f"AUGCN: {exc}"
+                ) from exc
             if len(site) != len(spacer):
                 continue
             duplex = profile_duplex(spacer, site)
