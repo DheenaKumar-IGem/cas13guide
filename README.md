@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 741 tests
+python -m unittest discover -s tests -t tests    # 758 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,19 +727,29 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-741 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+758 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
-A hundred and twenty-four of those tests were added after three review passes found
+A hundred and forty-one of those tests were added after four review passes found
 bugs the original suite did not cover, and each one fails against the code as it
 stood. Each pass re-read the previous pass's own diff, and the second found a
-regression in the first — which is the argument for doing that. Confirmed
-defects per pass were **25, then 4, then 2**, and the third pass's two sharpest
-instruments — differential testing across all four `SearchIndex`
-implementations, and property testing of the gate → Pareto → preference order —
-found nothing that survived verification. The ones worth naming, because they
-were live defects rather than hypotheticals:
+regression in the first — which is the argument for doing that.
+
+Confirmed defects per pass were **25, 4, 2, then 6**, and the shape of that
+curve is the useful part. Passes one to three *read* the code, module by module
+and then diff by diff, and converged. The fourth ran the **product** instead —
+combinations of CLI flags, the multi-record path end to end, the README audited
+claim by claim — and the count went back up. Reading a module tells you whether
+it is self-consistent; only running the thing tells you whether two modules
+agree. Three of that pass's six were the same shape as a defect an earlier pass
+had fixed, surviving in a branch the fix did not reach.
+
+Two instruments found nothing that survived verification, which is worth as
+much as a finding: differential testing across all four `SearchIndex`
+implementations, and property testing of the gate → Pareto → preference order.
+The ones worth naming, because they were live defects rather than
+hypotheticals:
 
 | What was wrong | Why it mattered | Pinned by |
 |---|---|---|
@@ -747,6 +757,8 @@ were live defects rather than hypotheticals:
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| A `--background` record sharing a target's name **replaced** it | `Transcriptome.add` overwrites by id, so the run searched the target against a sequence that was not it — PASS 97 → 0, best coverage 0.7647 → 0.0, with nothing said. `variant_contexts` already guarded this, so the two paths disagreed | `test_bugfix_regressions_round4.py` |
+| `distinct_site_ids` grouped by the record a guide was *tiled from* | Not the same question as where it binds: with two target records, guides one nucleotide apart on the REQUIRED target were both marked distinct, under a line that says shifted copies are hidden | `test_bugfix_regressions_round4.py` |
 | The FR8.4 track marked guides from *other* FASTA records | `start` is an offset on the guide's own source target, and records 1+ are DESIRED targets that get tiled too — so marks were drawn at foreign coordinates on the primary's profile, or past its end and silently clipped out of the picture | `test_bugfix_regressions_round3.py` |
 | `--variants` dropped every target record after the first | Records 1+ stayed in the contract and existed in no context, so `desired_utility` — weight 1.0 in the ranking — read 0.0 for every guide, and those loci stopped being searched | `test_bugfix_regressions_round3.py` |
 | `--blast-db` replaced the search instead of adding to it | One index answers both "where does this bind off-target" and "does it bind its target at all", and a BLAST database can only answer the first — it never sees the run's own transcriptome. Every guide came back with no on-target evidence: **39/39 FAIL** against 28 REVIEW for the identical design without the flag | `test_bugfix_regressions_round2.py` |

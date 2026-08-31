@@ -239,6 +239,13 @@ RANKED_COLUMNS: tuple[str, ...] = (
     "predicted_signal",
     "reasons",
     "qc_warnings",
+    # Appended, never inserted: a positional parser of an existing file must
+    # not shift. The README says "nothing is dropped from the data; the exports
+    # carry the flag", and until this row they did not -- so an exported table
+    # of 58 guides, 56 of them single-base shifts of two sites, had nothing in
+    # it saying so. That is the precise failure the distinct-site marking
+    # exists to prevent, surviving in the file that outlives the session.
+    "distinct_site",
 )
 
 
@@ -359,6 +366,11 @@ def ranked_to_fasta(
             if value is not None:
                 parts.append(f"{key}={value}")
         parts.append(f"verdict={entry.get('verdict')}")
+        # Same reason the CSV carries it: without this, an exported FASTA of
+        # sixty spacers looks like sixty independent candidates when it may be
+        # two sites and fifty-eight single-base shifts of them.
+        if "distinct_site" in entry:
+            parts.append(f"distinct_site={entry['distinct_site']}")
         records.append(
             SequenceRecord(
                 name=str(entry.get("guide_id")),

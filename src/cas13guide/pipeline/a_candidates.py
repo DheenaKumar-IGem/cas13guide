@@ -102,19 +102,38 @@ def design_candidates(
         # The remainder goes to the earliest targets, so the split is
         # deterministic rather than dependent on iteration luck.
         allowance = max(1, share + (1 if position < remainder else 0))
-        windows = max(0, len(target.sequence) - spec.spacer_length) + 1
-        target_step = step
-        if windows > allowance * step:
-            target_step = -(-windows // allowance)  # ceil, so the span is kept
-        taken = 0
-        for cand in tile_target(
-            target,
-            spec.spacer_length,
-            step=target_step,
-            junctions=junctions_by_target.get(target.target_id, ()),
+        offered = len(range(0, max(0, len(target.sequence) - spec.spacer_length) + 1, step))
+
+        # Which of this target's windows to keep, when it offers more than its
+        # share. Evenly spaced *by index* rather than by widening the step to an
+        # integer: an integer step overshoots badly just above 1, where
+        # ceil(2973 / 2500) = 2 keeps 1487 windows against an allowance of
+        # 2500 -- 40% of the share unspent, and the target tiled at half the
+        # density the budget allowed, for nothing. Even spacing keeps both ends
+        # and uses the whole allowance, so the transcript is still spanned.
+        keep: set[int] | None = None
+        if offered > allowance:
+            if allowance == 1:
+                keep = {0}
+            else:
+                keep = {
+                    round(i * (offered - 1) / (allowance - 1))
+                    for i in range(allowance)
+                }
+
+        for index, cand in enumerate(
+            tile_target(
+                target,
+                spec.spacer_length,
+                step=step,
+                junctions=junctions_by_target.get(target.target_id, ()),
+            )
         ):
+            # `junctions` can add windows beyond the plain stride, so index them
+            # past the end of the plan rather than dropping them: a
+            # junction-spanning candidate is deliberately generated and is not
+            # the thing the budget is trying to thin out.
+            if keep is not None and index < offered and index not in keep:
+                continue
             seen.setdefault(cand.guide_id, cand)
-            taken += 1
-            if taken >= allowance:
-                break
     return tuple(seen.values())

@@ -417,16 +417,46 @@ def distinct_site_ids(
     distinct sites still displays #1, #4, #9 and a reader can see that guides
     were collapsed rather than never generated.
 
-    Sites are compared within a source target only -- positions on different
-    targets are not comparable.
+    Sites are compared on the coordinates a guide actually **binds**, per
+    target, and two guides are the same site if they overlap on *any* target
+    they share. Keying on the candidate's ``source_target_id`` instead -- the
+    record it happened to be tiled from -- is not the same question, and gets
+    the wrong answer as soon as a run holds more than one target record: a
+    spacer tiled from the second record carries that record's coordinate, so it
+    was never compared against anything from the first, and two guides whose
+    sites on the REQUIRED target sit one nucleotide apart were both listed as
+    distinct. That is the failure this function exists to prevent, reappearing
+    through the door the multi-record path opened.
+
+    Comparing binding sites is also what ``optimizer._profile`` does when it
+    enforces panel spacing, so the ranked list and the panel selector now
+    answer the same question rather than two similar ones.
     """
     seen: dict[str, list[int]] = {}
     distinct: set[str] = set()
     for entry in ranked:
         candidate = entry.assessment.candidate
-        starts = seen.setdefault(candidate.source_target_id, [])
-        if all(abs(candidate.start - start) >= min_spacing for start in starts):
-            starts.append(candidate.start)
+        # Where this guide binds, per target. Falls back to the tiled
+        # coordinate when a guide has no intended evidence at all, which is the
+        # only information there is about it.
+        sites: dict[str, int] = {}
+        for evidence in entry.assessment.evidence:
+            target_id = evidence.hit.target_id
+            if evidence.is_intended and target_id:
+                previous = sites.get(target_id)
+                if previous is None or evidence.hit.start < previous:
+                    sites[target_id] = evidence.hit.start
+        if not sites:
+            sites = {candidate.source_target_id: candidate.start}
+
+        overlaps = any(
+            abs(start - other) < min_spacing
+            for target_id, start in sites.items()
+            for other in seen.get(target_id, ())
+        )
+        if not overlaps:
+            for target_id, start in sites.items():
+                seen.setdefault(target_id, []).append(start)
             distinct.add(entry.assessment.guide_id)
     return frozenset(distinct)
 

@@ -125,7 +125,18 @@ class DesignOutcome:
 
 def _read_records(request: DesignRequest) -> list[SequenceRecord]:
     if request.preset:
-        preset = get_preset(request.preset)
+        try:
+            preset = get_preset(request.preset)
+        except KeyError as exc:
+            # get_preset's KeyError is right for a library caller and wrong
+            # here: run_request documents DesignRequestError, and cli._design
+            # catches exactly that. `_read_fasta_or_fail` below was added to
+            # close this hole for --background and --variants and left the
+            # branch directly above it open, so dropping the "-5p" off a preset
+            # id still produced a traceback where the same typo on --fasta
+            # produced a located message. args[0] rather than str(exc), which
+            # would wrap the whole hint in repr quotes.
+            raise DesignRequestError(exc.args[0]) from exc
         return [
             SequenceRecord(
                 name=preset.preset_id,
@@ -175,21 +186,27 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
         raise DesignRequestError(str(exc)) from exc
 
     spacer_length = _resolve_spacer_length(request, effector, notes)
-    targets = tuple(
-        TargetSpec(
-            target_id=record.name,
-            sequence=record.sequence,
-            # The first record is what the design must hit; the rest are
-            # desirable, not required, so one unusable extra record cannot
-            # fail the whole run.
-            target_class=TargetClass.REQUIRED if index == 0 else TargetClass.DESIRED,
-            gene=record.name,
-            biotype=Universe.NCRNA,
-            expression=request.expression,
-        )
-        for index, record in enumerate(records)
-    )
+    # Inside the guard below, not above it: TargetSpec validates too (expression
+    # is ge=0), so `--expression -5` raised a raw pydantic ValidationError while
+    # the adjacent `--spacer-length 30` rejection produced a clean message. One
+    # function, two contracts.
     try:
+        targets = tuple(
+            TargetSpec(
+                target_id=record.name,
+                sequence=record.sequence,
+                # The first record is what the design must hit; the rest are
+                # desirable, not required, so one unusable extra record cannot
+                # fail the whole run.
+                target_class=(
+                    TargetClass.REQUIRED if index == 0 else TargetClass.DESIRED
+                ),
+                gene=record.name,
+                biotype=Universe.NCRNA,
+                expression=request.expression,
+            )
+            for index, record in enumerate(records)
+        )
         return ResolvedDesignSpec(
             contract=TargetContract(task=task, targets=targets),
             profile=EffectorAssayProfile(
@@ -440,6 +457,22 @@ def run_request(request: DesignRequest) -> DesignOutcome:
             background_loci.append(Locus(record.name, record.sequence, Universe.CODING,
                                          gene=record.name, expression=None))
     for locus in background_loci:
+        if locus.locus_id in world.loci:
+            # Transcriptome.add overwrites by locus_id, so a background record
+            # sharing a target's name replaced the target's own sequence,
+            # biotype and expression -- and `locus_to_target` still pointed at
+            # it, so the run searched the target against something that was not
+            # it. Measured: PASS 97 -> 0 from adding the target's own record to
+            # the background FASTA, with nothing said. The route is ordinary: a
+            # background corpus pulled from the same annotation contains the
+            # target's transcript id. `variant_contexts` already guards this;
+            # the non-variant path did not, so the two disagreed.
+            notes.append(
+                f"--background record {locus.locus_id!r} shares a name with a "
+                "target record. The target is kept and the background copy "
+                "ignored -- rename it if they are meant to be different loci."
+            )
+            continue
         world.add(locus)
 
     reference_index = _reference_index(request, world)
