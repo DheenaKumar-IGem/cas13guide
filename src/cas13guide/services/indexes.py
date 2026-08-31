@@ -19,9 +19,9 @@ claim ``exhaustive=True`` for its supported envelope.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Sequence, runtime_checkable
 
 import numpy as np
 
@@ -420,3 +420,85 @@ class SeedHeuristicIndex:
             ),
         )
         return SearchResult(hits=tuple(hits), bound=bound)
+
+
+class UnionSearchIndex:
+    """Several indexes searched as one, hits merged, weakest bound reported.
+
+    Why this has to exist. ``--blast-db`` *replaced* the context's index, and
+    the same index answers both questions the pipeline asks: where does this
+    guide bind off-target, and does it bind its intended target at all. A BLAST
+    database answers only the first -- it never sees the ``Transcriptome`` the
+    run was built around, and its subject ids are database accessions that
+    ``annotate_hit`` cannot match to the run's own target ids. So every guide
+    came back with no on-target evidence, ``required_coverage`` fell to
+    ``NO_EVIDENCE``, and a run with ``--blast-db`` failed **every** candidate:
+    measured 39/39 FAIL against 28 REVIEW for the identical design without it.
+    A flag that turns every guide into a FAIL is indistinguishable from a
+    target that has no usable guides.
+
+    So BLAST is *additional*, not alternative: the local exhaustive scan keeps
+    answering the on-target question and BLAST widens the off-target corpus,
+    which is what the README says the flag is for.
+
+    Two invariants:
+
+    * **Deduplicated by identity of the site**, ``(locus_id, start)``. Two
+      indexes over overlapping corpora would otherwise report one off-target
+      twice, and ``cumulative_burden`` is a sum -- double-counting a locus
+      inflates the hazard of the guide that found it twice.
+    * **The bound is the weakest**, via :func:`is_weaker`, and the universes are
+      the union. A heuristic member makes the whole search heuristic, which is
+      the honest reading: the union inherits the doubt of its worst member. The
+      union of universes is likewise right, since a hit anywhere in either
+      corpus is a hit.
+    """
+
+    def __init__(self, indexes: Sequence[SearchIndex]) -> None:
+        if not indexes:
+            raise ValueError("a union of no indexes cannot search anything")
+        self.indexes = tuple(indexes)
+        self.version = (
+            "index/union/v1["
+            + "+".join(getattr(index, "version", "?") for index in self.indexes)
+            + "]"
+        )
+
+    def search(self, guide_id: str, spacer: str, max_mismatches: int) -> SearchResult:
+        hits: list[SearchHit] = []
+        seen: set[tuple[str, int]] = set()
+        bound: ExhaustivenessBound | None = None
+        universes: set[Universe] = set()
+        for index in self.indexes:
+            result = index.search(guide_id, spacer, max_mismatches)
+            for hit in result.hits:
+                key = (hit.locus_id, hit.start)
+                if key in seen:
+                    continue
+                seen.add(key)
+                hits.append(hit)
+            universes |= result.bound.universes
+            if bound is None or is_weaker(result.bound, bound):
+                bound = result.bound
+        assert bound is not None  # non-empty by construction
+        hits.sort(key=lambda h: (h.locus_id, h.start))
+        return SearchResult(
+            hits=tuple(hits),
+            bound=replace(bound, universes=frozenset(universes), method=self.version),
+        )
+
+    def any_hit(self, spacer: str, max_mismatches: int) -> bool:
+        """Existence-only query, short-circuiting across members.
+
+        Offered because every member offers it; ``g_output`` uses it to verify
+        a non-targeting control, and falling back to full enumeration there
+        would pay the cost the seam exists to avoid.
+        """
+        for index in self.indexes:
+            probe = getattr(index, "any_hit", None)
+            if probe is not None:
+                if probe(spacer, max_mismatches):
+                    return True
+            elif index.search("__any_hit__", spacer, max_mismatches).hits:
+                return True
+        return False

@@ -292,7 +292,19 @@ def _reference_index(request: DesignRequest, world):
         index.ensure_available()
     except BlastUnavailable as exc:
         raise DesignRequestError(str(exc)) from exc
-    return index
+    # Unioned with the local scan, never substituted for it. The same index
+    # answers both of the pipeline's questions -- where does this guide bind
+    # off-target, and does it bind its intended target at all -- and a BLAST
+    # database can only answer the first: it never sees this run's
+    # Transcriptome, and its subject ids are accessions that `annotate_hit`
+    # cannot match to the run's target ids. Substituting it left every guide
+    # with no on-target evidence, so `--blast-db` FAILed every candidate:
+    # measured 39/39 FAIL against 28 REVIEW for the identical design without
+    # the flag. A flag that fails everything looks exactly like a target with
+    # no usable guides.
+    from .indexes import UnionSearchIndex
+
+    return UnionSearchIndex([ExhaustiveScanIndex(world, ALL_UNIVERSES), index])
 
 
 def _build_arc_model(request: DesignRequest, spec, records):
@@ -367,7 +379,7 @@ def _panel_dependence(request: DesignRequest):
 
     try:
         return PanelDependence.from_json(request.panel_dependence_json)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError) as exc:
         raise DesignRequestError(
             f"--panel-dependence {request.panel_dependence_json}: {exc}"
         ) from exc
@@ -470,11 +482,13 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         # report into a vacuously clean one, which is the worst direction for
         # this particular number to be wrong in.
         def index_for(variant_world):
-            # A BLAST database is corpus-independent, so the reference index is
-            # reusable as-is; the local scanner is not, and is rebuilt per world.
-            if request.blast_db:
-                return reference_index
-            return ExhaustiveScanIndex(variant_world, ALL_UNIVERSES)
+            # Rebuilt per world, because the variant sequence exists only
+            # inside that world. Reusing the reference index looked safe -- a
+            # BLAST database really is corpus-independent -- and was exactly
+            # wrong for that reason: an index that cannot see the context's own
+            # loci cannot find the variant, so robustness (a min of coverage
+            # across contexts) collapsed to 0.000 for every guide.
+            return _reference_index(request, variant_world)
 
         contexts = variant_contexts(
             combined, ALL_UNIVERSES, target_id=records[0].name,

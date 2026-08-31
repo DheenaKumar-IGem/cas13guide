@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 718 tests
+python -m unittest discover -s tests -t tests    # 733 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,14 +727,15 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-718 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+733 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
-A hundred and one of those tests were added after two review passes found bugs
-the original suite did not cover, and each one fails against the code as it
-stood. The ones worth naming, because they were live defects rather than
-hypotheticals:
+A hundred and sixteen of those tests were added after two review passes found
+bugs the original suite did not cover, and each one fails against the code as it
+stood. The second pass re-read the first pass's own diff, and found a regression
+in it — which is the argument for doing that. The ones worth naming, because
+they were live defects rather than hypotheticals:
 
 | What was wrong | Why it mattered | Pinned by |
 |---|---|---|
@@ -742,6 +743,7 @@ hypotheticals:
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| `--blast-db` replaced the search instead of adding to it | One index answers both "where does this bind off-target" and "does it bind its target at all", and a BLAST database can only answer the first — it never sees the run's own transcriptome. Every guide came back with no on-target evidence: **39/39 FAIL** against 28 REVIEW for the identical design without the flag | `test_bugfix_regressions_round2.py` |
 | The activity model's domain was a **union** across orthologs | Length and effector were tested as independent axes, so each ortholog's published lengths were admitted for the other. Four of the five miRNA presets returned a certified PASS at a geometry nobody validated, while the note above the table promised the opposite | `test_bugfix_regressions.py` |
 | `--variants` replaced the whole context list | `--background` was parsed and discarded and `--blast-db` was validated and never queried, so adding a variant to an otherwise identical request turned a report with off-target hits into a **clean** one | `test_bugfix_regressions.py` |
 | `fingerprint()` serialised a `frozenset` | Enum hashing is per-process randomised, so the digest that identifies a design — carried in the ledger, the report and every export header — **changed between runs of the same design** | `test_bugfix_regressions.py` |

@@ -63,7 +63,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -82,8 +82,11 @@ class StiffKineticsError(RuntimeError):
 #: count for constants that do not need it.
 STABILITY_TARGET = 2.0
 
-#: Refuse rather than spend unbounded time. At this cap one integration is a
-#: few seconds, and a design run calls it once per candidate.
+#: Refuse rather than spend unbounded time. At this cap a single integration is
+#: several seconds; a design run performs one per candidate (the eight
+#: degeneracy probes are memoised on the model, not repeated per guide). The cap
+#: bounds one integration, so a large target with constants near it is still
+#: slow -- what it prevents is unbounded.
 MAX_INTEGRATION_STEPS = 200_000
 
 
@@ -183,6 +186,15 @@ class CollateralKineticsModel:
     """Integrates the collateral-cleavage ODE for one candidate at a time."""
 
     constants: KineticConstants = PROVISIONAL_CONSTANTS
+    #: Memoised answer for :meth:`adds_information`, keyed by the inputs it
+    #: actually depends on. The probes are fixed and the answer is a property of
+    #: the *constants*, not of any candidate -- but ``build_metric_vector`` calls
+    #: it once per candidate, so it ran eight extra integrations per guide. That
+    #: was invisible at a fixed 400 steps and is not once the step count follows
+    #: the constants: near the stability cap it is the difference between one
+    #: integration and nine.
+    _degeneracy_cache: dict = field(default_factory=dict, repr=False, compare=False)
+
     #: Minimum integration steps across the assay window. A *floor*, not the
     #: count: :meth:`integrate` raises it as far as the constants require. 400
     #: keeps the RK4 error well below plate-reader precision for the shipped
@@ -237,6 +249,10 @@ class CollateralKineticsModel:
         returning ``True`` on its own when constants that leave the linear
         regime are supplied.
         """
+        key = (self.constants, self.steps, tolerance)
+        cached = self._degeneracy_cache.get(key)
+        if cached is not None:
+            return cached
         ratios = []
         for activity, accessibility in self._PROBES:
             product = activity * accessibility
@@ -244,12 +260,13 @@ class CollateralKineticsModel:
             if product <= 0.0:
                 continue
             ratios.append(signal / product)
-        if not ratios:
-            return False
-        largest = max(ratios)
-        if largest <= 0.0:
-            return False
-        return (largest - min(ratios)) / largest > tolerance
+        answer = False
+        if ratios:
+            largest = max(ratios)
+            if largest > 0.0:
+                answer = (largest - min(ratios)) / largest > tolerance
+        self._degeneracy_cache[key] = answer
+        return answer
 
     def integrate(self, effective_target_nm: float) -> tuple[float, float, float]:
         """RK4 over the two-state system.

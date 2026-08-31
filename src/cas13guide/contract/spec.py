@@ -272,10 +272,13 @@ class ContextScope(_Frozen):
 class ResolvedDesignSpec(_Frozen):
     """The design contract. Immutable, and carried in provenance.
 
-    Not hashable: pydantic models are unhashable unless configured otherwise,
-    and this one holds a mutable-by-nature tuple tree. Identity across runs is
-    :meth:`fingerprint`, which is what provenance records and what a caller
-    should compare -- ``hash()`` raises ``TypeError``.
+    Not hashable, though every other model here is. ``_Frozen`` sets
+    ``frozen=True``, so pydantic *does* generate a ``__hash__`` -- and
+    :class:`HazardWeights` holds ``by_class`` and ``by_biotype`` as plain
+    ``dict``s, so hashing recurses into them and raises ``TypeError:
+    unhashable type: 'dict'``. The ``contract`` tuple tree hashes fine; the two
+    maps are the whole reason. Identity across runs is :meth:`fingerprint`,
+    which is what provenance records and what a caller should compare.
     """
 
     spec_version: str = "cas13guide/spec/v2"
