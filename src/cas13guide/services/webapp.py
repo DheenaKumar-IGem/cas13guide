@@ -176,6 +176,8 @@ def _request_from_fields(fields: dict[str, Any]) -> DesignRequest:
 
 
 def _render_outcome(outcome) -> str:
+    from ..cli import _track_rows
+
     tracks = []
     if outcome.profile:
         tracks = [
@@ -183,10 +185,12 @@ def _render_outcome(outcome) -> str:
                 name=f"{outcome.records[0].name} "
                      f"({len(outcome.records[0].sequence)} nt)",
                 profile=outcome.profile,
+                # Same filter as the CLI, from the same helper: a track that
+                # depicts one record must not mark guides tiled from another.
                 guides=[
                     (row.get("start", 0), outcome.spec.spacer_length,
                      f"#{row['rank']} {row['guide_id']}")
-                    for row in outcome.ranked[:5]
+                    for row in _track_rows(outcome.ranked, outcome.records[0].name, 5)
                 ],
             )
         ]

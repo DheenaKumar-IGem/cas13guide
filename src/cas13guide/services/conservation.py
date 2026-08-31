@@ -265,6 +265,7 @@ def variant_contexts(
     expression: float | None = None,
     expected_queries: int = 1000,
     background: Sequence[Locus] = (),
+    extra_targets: Sequence[SequenceRecord] = (),
     index_for=None,
 ):
     """One :class:`DesignContext` per variant, for FR7.2.
@@ -276,14 +277,23 @@ def variant_contexts(
     which is what makes them alternative realisations of one target rather than
     several different targets.
 
-    ``background`` and ``index_for`` exist because a variant world used to hold
-    the variant and *nothing else*. The caller's off-target corpus and the
-    caller's chosen index were built, paid for, and then discarded the moment
-    ``--variants`` was supplied, so adding a variant to an otherwise unchanged
-    request turned a report with off-target hits into a clean one. Both are now
-    threaded through: ``background`` is added to every variant world, and
-    ``index_for`` picks the index the caller asked for instead of always
-    letting :meth:`DesignContext.auto` choose a local scanner.
+    ``background``, ``extra_targets`` and ``index_for`` exist because a variant
+    world used to hold the variant and *nothing else*. Everything else the
+    caller had loaded was built, paid for, and discarded the moment
+    ``--variants`` was supplied:
+
+    * ``background`` -- the off-target corpus, so a report with off-target hits
+      did not become a clean one merely because a variant was added;
+    * ``extra_targets`` -- the caller's *other* target records. A multi-record
+      FASTA makes records 1+ DESIRED targets, and they vanished from every
+      context while the contract still listed them, so ``desired_utility``
+      read 0.0 for every guide (it weighs 1.0 in the ranking) and those loci
+      stopped being searched at all. They go in as targets, mapped to their own
+      ids -- *not* through ``background``, which is deliberately absent from
+      ``locus_to_target`` and would turn a DESIRED target into an off-target
+      hazard, wrong in the other direction;
+    * ``index_for`` -- the index the caller asked for, instead of always letting
+      :meth:`DesignContext.auto` choose a local scanner.
     """
     from ..pipeline.orchestrator import DesignContext
 
@@ -296,19 +306,28 @@ def variant_contexts(
             Locus(record.name, record.sequence, biotype, gene=record.name,
                   expression=expression)
         )
+        mapping = {record.name: target_id}
+        for extra in extra_targets:
+            if extra.name in (record.name, target_id):
+                continue
+            world.add(
+                Locus(extra.name, extra.sequence, biotype, gene=extra.name,
+                      expression=expression)
+            )
+            mapping[extra.name] = extra.name
         for locus in background:
-            if locus.locus_id != record.name:
+            if locus.locus_id not in world.loci:
                 world.add(locus)
         name = "reference" if index == 0 else record.name
         if index_for is None:
             contexts.append(
                 DesignContext.auto(
-                    name, world, universes, {record.name: target_id},
+                    name, world, universes, mapping,
                     expected_queries=expected_queries,
                 )
             )
         else:
             contexts.append(
-                DesignContext(name, world, index_for(world), {record.name: target_id})
+                DesignContext(name, world, index_for(world), mapping)
             )
     return contexts

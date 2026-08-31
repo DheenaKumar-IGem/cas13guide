@@ -200,8 +200,13 @@ def _accessibility_svg(track: AccessibilityTrack, width: int = 1100, height: int
     )
     marks = []
     for start, length, label in track.guides:
-        x1 = pad + start * step
-        x2 = pad + min(n - 1, start + length) * step
+        # Both edges clamped. x2 was clamped and x1 was not, so a mark whose
+        # start lay past the end of the profile rendered at an x outside the
+        # viewBox with a width floored to 1 -- the labelled guide vanishing
+        # from the picture rather than being drawn wrongly, which is the worse
+        # of the two failures because nothing shows it happened.
+        x1 = pad + min(n - 1, max(0, start)) * step
+        x2 = pad + min(n - 1, max(0, start + length)) * step
         marks.append(
             f'<rect x="{x1:.2f}" y="{pad}" width="{max(1.0, x2 - x1):.2f}" '
             f'height="{plot_h}" fill="var(--accent)" opacity="0.15">'

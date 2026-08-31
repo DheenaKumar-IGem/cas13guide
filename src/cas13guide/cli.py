@@ -120,6 +120,20 @@ def _train(args: argparse.Namespace) -> int:
 
 
 
+def _track_rows(ranked, target_id: str, limit: int) -> list:
+    """Ranked rows whose ``start`` is an offset on ``target_id``.
+
+    Shared by the CLI and the web server so the two cannot draw different
+    pictures from the same report. Rows without the field are kept: an older
+    report dict has no ``source_target_id``, and dropping every mark is a worse
+    answer than the one that was already being drawn.
+    """
+    return [
+        row for row in ranked
+        if row.get("source_target_id", target_id) == target_id
+    ][:limit]
+
+
 def _design(args: argparse.Namespace) -> int:
     """Design guides against a pasted sequence, a FASTA file, or a preset.
 
@@ -257,10 +271,20 @@ def _design(args: argparse.Namespace) -> int:
                     name=f"{outcome.records[0].name} "
                          f"({len(outcome.records[0].sequence)} nt)",
                     profile=outcome.profile,
+                    # Only guides tiled from the record this track depicts.
+                    # `start` is an offset on the guide's OWN source target, and
+                    # a multi-record FASTA makes records 1+ DESIRED targets that
+                    # are tiled too -- so an unfiltered top-N drew guides from a
+                    # paralog at their own coordinates on the primary's profile:
+                    # marks shifted by the other record's offset, and marks past
+                    # the end of the transcript silently clipped out of the
+                    # picture. Measured: all five default marks foreign, one of
+                    # them 6 nt beyond a 150 nt track.
                     guides=[
                         (r.get("start", 0), outcome.spec.spacer_length,
                          f"#{r['rank']} {r['guide_id']}")
-                        for r in data["ranked"][: args.track_guides]
+                        for r in _track_rows(data["ranked"], outcome.records[0].name,
+                                             args.track_guides)
                     ],
                 )
             ]

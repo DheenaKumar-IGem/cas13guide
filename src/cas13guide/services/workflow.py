@@ -493,7 +493,8 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         contexts = variant_contexts(
             combined, ALL_UNIVERSES, target_id=records[0].name,
             biotype=Universe.NCRNA, expression=request.expression,
-            background=background_loci, index_for=index_for,
+            background=background_loci, extra_targets=records[1:],
+            index_for=index_for,
         )
 
     calibration_service = seed_calibration(request, spec)

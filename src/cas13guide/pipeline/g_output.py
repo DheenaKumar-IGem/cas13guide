@@ -236,9 +236,15 @@ class DesignReport:
                     "guide_id": r.assessment.guide_id,
                     "spacer": r.assessment.spacer,
                     "spans_junction": r.assessment.candidate.spans_junction,
-                    # 0-based start of the target site on its source target,
-                    # so a report can place the guide on an accessibility track.
+                    # 0-based start of the target site on ``source_target_id``,
+                    # so a report can place the guide on that target's
+                    # accessibility track. Both fields, because `start` alone
+                    # cannot: candidates are tiled from every REQUIRED *and
+                    # DESIRED* target, so a ranked row may carry a coordinate on
+                    # a record the track does not depict, and no consumer of
+                    # this dict could tell.
                     "start": r.assessment.candidate.start,
+                    "source_target_id": r.assessment.candidate.source_target_id,
                     "distinct_site": r.assessment.guide_id in self.distinct_sites,
                     "pfs_3prime": r.assessment.candidate.three_prime_flank,
                     "pfs_preferred": r.assessment.qc.pfs_preference == 1.0,
