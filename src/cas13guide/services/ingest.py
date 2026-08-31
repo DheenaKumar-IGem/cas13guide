@@ -140,13 +140,42 @@ def load_screen(
     if delimiter is None:
         delimiter = "\t" if path.suffix.lower() in {".tsv", ".tab", ".txt"} else ","
 
-    with path.open(newline="", encoding="utf-8-sig") as handle:
+    # Opened inside the guard, because `path.exists()` is not "readable as a
+    # UTF-8 text file". A directory, or a screen exported from Excel or a LIMS
+    # as UTF-16 or latin-1, escaped as PermissionError / IsADirectoryError /
+    # UnicodeDecodeError -- and `cli._train` catches only DatasetError, so it
+    # reached the top as a traceback and exited 1, which is the code that
+    # command uses to mean "loaded, and rejected by the acceptance gate". The
+    # FASTA door already converts exactly this class into a located message;
+    # the two input doors disagreed on the same malformed file.
+    try:
+        handle = path.open(newline="", encoding="utf-8-sig")
+    except OSError as exc:
+        raise DatasetError(
+            f"cannot open {path}: {exc.strerror or exc}"
+        ) from exc
+
+    with handle:
         reader = csv.DictReader(handle, delimiter=delimiter)
-        header = reader.fieldnames or []
+        try:
+            header = reader.fieldnames or []
+        except UnicodeDecodeError as exc:
+            raise DatasetError(
+                f"{path.name} is not readable as UTF-8 text -- if it was "
+                "exported from Excel or a LIMS, re-save it as UTF-8 CSV "
+                f"({exc})"
+            ) from exc
+        # target_site is checked too, when the caller named one. Leaving it
+        # out meant a typo in --target-site-column dropped every row and
+        # charged them to `dropped_sequence`, telling the user their spacers
+        # were unusable when the spacers were fine and the column they named
+        # did not exist. That is the same misattribution `dropped_group` was
+        # split out to stop, one column over.
+        required = [columns.spacer, columns.activity, columns.group]
+        if columns.target_site:
+            required.append(columns.target_site)
         missing = [
-            name
-            for name in (columns.spacer, columns.activity, columns.group)
-            if name not in header
+            name for name in dict.fromkeys(required) if name not in header
         ]
         if missing:
             if columns.group in missing:
@@ -161,7 +190,15 @@ def load_screen(
                     report.errors.append(f"missing required column {name!r} in {header}")
             return [], report
 
-        rows = list(reader)
+        try:
+            rows = list(reader)
+        except UnicodeDecodeError as exc:
+            # The header may decode and a later row may not: a latin-1 accent
+            # halfway down the file is the common shape.
+            raise DatasetError(
+                f"{path.name} is not readable as UTF-8 text -- if it was "
+                f"exported from Excel or a LIMS, re-save it as UTF-8 CSV ({exc})"
+            ) from exc
 
     report.rows_read = len(rows)
 

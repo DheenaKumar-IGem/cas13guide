@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 782 tests
+python -m unittest discover -s tests -t tests    # 802 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,25 +727,26 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-782 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+802 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
-A hundred and sixty-five of those tests were added after five review passes
+A hundred and eighty-four of those tests were added after six review passes
 found bugs the original suite did not cover, and each one fails against the code
-as it stood. Each pass re-read the previous pass's own diff, and two of them
+as it stood. Each pass re-read the previous pass's own diff, and three of them
 caught a regression the previous pass had introduced — which is the argument for
 doing that, and also its limit.
 
-Confirmed defects per pass were **25, 4, 2, 6, 9**, and the shape of that curve
-is the useful part. Passes one to three *read* the code — module by module, then
-diff by diff — and converged. Passes four and five *ran* it: flag combinations
-rather than one flag at a time, input fuzzing, determinism across process
-boundaries, the three output surfaces compared field by field, real HTTP POSTs
-to the server, and the README audited claim by claim. The count went back up and
-stayed up. Reading a module tells you whether it is self-consistent; only
-running the thing tells you whether two modules agree — and most of what was
-left was two modules disagreeing.
+Confirmed defects per pass were **25, 4, 2, 6, 9, 7**, and the shape of that
+curve is the useful part. Passes one to three *read* the code — module by module,
+then diff by diff — and converged. Passes four to six *ran* it: flag
+combinations rather than one flag at a time, input fuzzing, determinism across
+process boundaries, the three output surfaces compared field by field, real HTTP
+POSTs to the server, the `train` and `demo` subcommands nobody had exercised,
+the `--out`/`--stem` paths, and the README audited claim by claim. The count
+went back up and stayed up. Reading a module tells you whether it is
+self-consistent; only running the thing tells you whether two modules agree —
+and nearly everything left was two modules disagreeing.
 
 Two instruments found nothing that survived verification, which is worth as much
 as a finding: differential testing across all four `SearchIndex` implementations,
@@ -758,6 +759,10 @@ naming, because they were live defects rather than hypotheticals:
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| `reference` is a reserved context key **and** a name a user may give a record | A variant record called `reference` shared a key with the reference context, so the variant's evidence overwrote the target's and every number for the REQUIRED target was computed against the variant: renaming one record took a run from PASS=96 to PASS=0 with a shortfall about a target that was never evaluated | `test_bugfix_regressions_round6.py` |
+| The web form folded an upload into the paste field | So the one-source guard could not see it, and a filled textarea silently discarded an uploaded FASTA — the exact behaviour the guard was added to stop, on the door it was added for | `test_bugfix_regressions_round6.py` |
+| Measured kinetic constants killed the run | `StiffKineticsError` is raised from inside stage E, past every input check, so the flag advertised as the way to unlock absolute signal answered real constants with a traceback | `test_bugfix_regressions_round6.py` |
+| `--stem ../escaped` wrote outside `--out` | A stem names a file, not a path; and every other filesystem failure arrived as a pathlib traceback and exit 1 — the same code `design` returns for "no guide cleared the gate" | `test_bugfix_regressions_round6.py` |
 | An `N` in the target attracted the ranking | `classify_pair` calls `N:N` a Watson-Crick pair and RNAplfold reports unpaired probability exactly 1.0 there, so an assembly gap scored a **perfect duplex with inflated accessibility** — ranks 1, 2, 3, 4 and 6 of 101 were N-bearing spacers, exported as orderable oligos | `test_bugfix_regressions_round5.py` |
 | The paste door rejected FASTA the file door read | `parse_sequence_input` sniffed FASTA from the first non-blank line while `parse_fasta` skips `;` comments, so a comment-first file — including **this tool's own exported FASTA** — was refused at character one as a malformed raw sequence | `test_bugfix_regressions_round5.py` |
 | Calibration seed and noise were in no recorded field | They set every conformal interval and therefore every verdict, so two runs disagreeing on fifty verdicts carried byte-identical provenance — the one thing provenance exists to make impossible | `test_bugfix_regressions_round5.py` |

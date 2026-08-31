@@ -152,6 +152,29 @@ def _design(args: argparse.Namespace) -> int:
             print(f"  {preset_id:18s} {preset.accession:14s} {preset.length:3d} nt")
         return 0
 
+    # Checked before the pipeline runs, so a typo costs no compute -- and
+    # because both failures used to arrive as a pathlib traceback after the
+    # work was already done.
+    if args.out:
+        destination = pathlib.Path(args.out)
+        if destination.exists() and not destination.is_dir():
+            print(
+                f"cannot write the exports: --out must name a directory; "
+                f"{destination} is a file",
+                file=sys.stderr,
+            )
+            return 2
+    # `--stem` names a file, not a path. "../escaped" wrote all four exports
+    # outside the directory the user named, which is not what a stem is for
+    # and not something a user asking for a filename prefix can expect.
+    if pathlib.Path(args.stem).name != args.stem or args.stem in ("", ".", ".."):
+        print(
+            f"cannot write the exports: --stem must be a plain file name, not a "
+            f"path; got {args.stem!r}",
+            file=sys.stderr,
+        )
+        return 2
+
     request = DesignRequest(
         sequence_text=args.sequence,
         fasta_path=args.fasta,
@@ -262,57 +285,72 @@ def _design(args: argparse.Namespace) -> int:
               "independently")
 
     if args.out:
-        from .services.report_html import AccessibilityTrack, write_report
+        # Every path problem here used to arrive as a pathlib traceback and
+        # exit 1 -- the same code `design` returns for the legitimate "no
+        # guide cleared the gate" outcome, so a wrapper script could not tell
+        # "nothing ranked" from "could not write the report". The pipeline's
+        # own failures have had a located message and exit 2 all along; the
+        # filesystem's did not.
+        try:
+            from .services.report_html import AccessibilityTrack, write_report
 
-        tracks = []
-        if outcome.profile:
-            tracks = [
-                AccessibilityTrack(
-                    name=f"{outcome.records[0].name} "
-                         f"({len(outcome.records[0].sequence)} nt)",
-                    profile=outcome.profile,
-                    # Only guides tiled from the record this track depicts.
-                    # `start` is an offset on the guide's OWN source target, and
-                    # a multi-record FASTA makes records 1+ DESIRED targets that
-                    # are tiled too -- so an unfiltered top-N drew guides from a
-                    # paralog at their own coordinates on the primary's profile:
-                    # marks shifted by the other record's offset, and marks past
-                    # the end of the transcript silently clipped out of the
-                    # picture. Measured: all five default marks foreign, one of
-                    # them 6 nt beyond a 150 nt track.
-                    guides=[
-                        (r.get("start", 0), outcome.spec.spacer_length,
-                         f"#{r['rank']} {r['guide_id']}")
-                        for r in _track_rows(data["ranked"], outcome.records[0].name,
-                                             args.track_guides)
-                    ],
-                )
-            ]
-        html_path = write_report(
-            data,
-            pathlib.Path(args.out) / f"{args.stem}.html",
-            title=f"Cas13 guide design - {outcome.records[0].name}",
-            subtitle=(
+            tracks = []
+            if outcome.profile:
+                tracks = [
+                    AccessibilityTrack(
+                        name=f"{outcome.records[0].name} "
+                             f"({len(outcome.records[0].sequence)} nt)",
+                        profile=outcome.profile,
+                        # Only guides tiled from the record this track depicts.
+                        # `start` is an offset on the guide's OWN source target, and
+                        # a multi-record FASTA makes records 1+ DESIRED targets that
+                        # are tiled too -- so an unfiltered top-N drew guides from a
+                        # paralog at their own coordinates on the primary's profile:
+                        # marks shifted by the other record's offset, and marks past
+                        # the end of the transcript silently clipped out of the
+                        # picture. Measured: all five default marks foreign, one of
+                        # them 6 nt beyond a 150 nt track.
+                        guides=[
+                            (r.get("start", 0), outcome.spec.spacer_length,
+                             f"#{r['rank']} {r['guide_id']}")
+                            for r in _track_rows(data["ranked"], outcome.records[0].name,
+                                                 args.track_guides)
+                        ],
+                    )
+                ]
+            html_path = write_report(
+                data,
+                pathlib.Path(args.out) / f"{args.stem}.html",
+                title=f"Cas13 guide design - {outcome.records[0].name}",
+                subtitle=(
+                    f"{request.effector} / {request.assay} / "
+                    f"{outcome.spec.spacer_length} nt spacer  |  "
+                    f"spec {outcome.spec.fingerprint()}"
+                ),
+                tracks=tracks,
+                notes=outcome.notes,
+            )
+            subtitle = (
                 f"{request.effector} / {request.assay} / "
-                f"{outcome.spec.spacer_length} nt spacer  |  "
-                f"spec {outcome.spec.fingerprint()}"
-            ),
-            tracks=tracks,
-            notes=outcome.notes,
-        )
-        subtitle = (
-            f"{request.effector} / {request.assay} / "
-            f"{outcome.spec.spacer_length} nt spacer"
-        )
-        written = write_exports(
-            data, args.out, stem=args.stem,
-            subtitle=subtitle, limitations=outcome.notes,
-        )
-        written["html"] = html_path
-        print()
-        print("wrote:")
-        for label, path in written.items():
-            print(f"  {label:9s} {path}")
+                f"{outcome.spec.spacer_length} nt spacer"
+            )
+            written = write_exports(
+                data, args.out, stem=args.stem,
+                subtitle=subtitle, limitations=outcome.notes,
+            )
+            written["html"] = html_path
+            print()
+            print("wrote:")
+            for label, path in written.items():
+                print(f"  {label:9s} {path}")
+        except OSError as exc:
+            target = getattr(exc, "filename", None) or args.out
+            print(
+                f"cannot write the exports: {exc.strerror or exc}: {target} "
+                "(from --out/--stem)",
+                file=sys.stderr,
+            )
+            return 2
     return 0 if rows else 1
 
 

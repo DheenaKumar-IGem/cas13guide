@@ -168,7 +168,12 @@ def _number(fields: dict[str, Any], key: str, cast, default=None):
 
 def _request_from_fields(fields: dict[str, Any]) -> DesignRequest:
     return DesignRequest(
-        sequence_text=fields.get("sequence") or fields.get("fasta__file"),
+        # Kept apart, so `_read_records` can see that both were supplied. This
+        # was `sequence or fasta__file`, which meant a filled textarea silently
+        # discarded an uploaded file -- and made the refusal that did fire name
+        # "--sequence" for an input the browser user never pasted.
+        sequence_text=fields.get("sequence") or None,
+        fasta_text=fields.get("fasta__file") or None,
         preset=fields.get("preset") or None,
         variants_text=fields.get("variants__file"),
         effector=fields.get("effector") or "LwaCas13a",

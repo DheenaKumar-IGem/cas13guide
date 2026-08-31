@@ -283,6 +283,26 @@ def ranked_rows(report_dict: dict) -> list[dict]:
     return rows
 
 
+def _render_detail(value) -> str:
+    """A detail mapping as one stable, comment-safe line.
+
+    Sorted, so two runs with the same parameters produce the same bytes; no
+    newlines, because this goes inside a comment line that a parser skips by
+    prefix.
+    """
+    def _flat(item) -> str:
+        # Newlines stripped from every value, not only the scalar branch. A
+        # provenance header is comment lines a parser skips *by prefix*, so an
+        # embedded newline puts the rest of the value on an unprefixed line and
+        # the consumer reads it as data -- the corruption this module already
+        # refuses to allow through the FASTA comment character.
+        return " ".join(str(item).split())
+
+    if isinstance(value, dict):
+        return ", ".join(f"{key}={_flat(value[key])}" for key in sorted(value))
+    return _flat(value)
+
+
 def provenance_lines(
     report_dict: dict,
     subtitle: str = "",
@@ -317,7 +337,17 @@ def provenance_lines(
         )
     for record in (report_dict.get("provenance") or {}).get("records", []):
         if record.get("kind") in ("model", "calibration", "search"):
-            lines.append(f"{record.get('kind')}: {record.get('name')} = {record.get('version')}")
+            line = f"{record.get('kind')}: {record.get('name')} = {record.get('version')}"
+            # The parameters that generated a model, not only its version
+            # string. Recording the calibration's seed and noise in the ledger
+            # and not here left the exported header byte-identical for two runs
+            # whose every number differed -- which is the failure the ledger
+            # entry was added to fix, surviving one level out in the file that
+            # is supposed to outlive the session.
+            source = (record.get("detail") or {}).get("source")
+            if source:
+                line += f" [{_render_detail(source)}]"
+            lines.append(line)
     for shortfall in report_dict.get("shortfalls") or []:
         lines.append(f"shortfall: {shortfall}")
     for limitation in limitations:

@@ -106,6 +106,41 @@ def _refuse_duplicate_names(records: Sequence[SequenceRecord]) -> None:
         )
 
 
+#: The first variant context is keyed by this literal, and two readers look it
+#: up by name: ``orchestrator`` files per-guide evidence under ``ctx.name``, and
+#: ``e_aggregate`` fetches the intended target's evidence back with
+#: ``by_context.get("reference")``.
+RESERVED_CONTEXT_NAME = "reference"
+
+
+def _refuse_reserved_names(records: Sequence[SequenceRecord]) -> None:
+    """No variant may be called what the reference context is called.
+
+    Context names are a namespace mixing one reserved literal with
+    user-supplied FASTA record names, and nothing separated them. A variant
+    record literally named ``reference`` produced two contexts under one key:
+    the variant's evidence overwrote the target's, the target's own evidence
+    was discarded, and every downstream number for the REQUIRED target was
+    computed against the variant instead. Measured on one 140 nt target,
+    renaming a single variant record and changing nothing else took the run
+    from PASS=96 / coverage 0.7647 to PASS=0 / coverage 0.0, with a shortfall
+    claiming no feasible panel covers a target that was never evaluated.
+
+    ``_refuse_duplicate_names`` cannot see this: the record names really are
+    distinct, and the collision is with a literal that is not a record at all.
+    """
+    offenders = sorted(
+        {record.name for record in records[1:] if record.name == RESERVED_CONTEXT_NAME}
+    )
+    if offenders:
+        raise ValueError(
+            f"{RESERVED_CONTEXT_NAME!r} is the name of the reference context, so "
+            "a variant record cannot also be called that -- the two would share "
+            "one key and the variant would silently replace the target. Rename "
+            "the variant record."
+        )
+
+
 def find_conserved_windows(
     records: Sequence[SequenceRecord],
     spacer_length: int,
@@ -299,6 +334,7 @@ def variant_contexts(
 
     records = list(records)
     _refuse_duplicate_names(records)
+    _refuse_reserved_names(records)
     contexts = []
     for index, record in enumerate(records):
         world = Transcriptome("variants", record.name)
@@ -318,7 +354,7 @@ def variant_contexts(
         for locus in background:
             if locus.locus_id not in world.loci:
                 world.add(locus)
-        name = "reference" if index == 0 else record.name
+        name = RESERVED_CONTEXT_NAME if index == 0 else record.name
         if index_for is None:
             contexts.append(
                 DesignContext.auto(

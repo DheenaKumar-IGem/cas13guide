@@ -55,6 +55,14 @@ class DesignRequest:
 
     sequence_text: str | None = None
     fasta_path: str | Path | None = None
+    #: An uploaded FASTA's *text*, as the browser supplies it. Distinct from
+    #: ``sequence_text`` so the one-source guard can see it: the web form used
+    #: to fold the two together, which put the upload beyond the guard's reach
+    #: and silently dropped it whenever the textarea was also filled -- the
+    #: precise behaviour the guard was added to stop, on the door it was added
+    #: for. Text rather than a path, so the upload keeps going through
+    #: ``parse_sequence_input`` and the two doors stay identical.
+    fasta_text: str | None = None
     preset: str | None = None
     variants_path: str | Path | None = None
     variants_text: str | None = None
@@ -136,7 +144,11 @@ def _read_records(request: DesignRequest) -> list[SequenceRecord]:
         flag
         for flag, present in (
             ("--preset", bool(request.preset)),
-            ("--fasta", bool(request.fasta_path)),
+            (
+                "--fasta",
+                bool(request.fasta_path)
+                or bool(request.fasta_text and request.fasta_text.strip()),
+            ),
             ("--sequence", bool(request.sequence_text and request.sequence_text.strip())),
         )
         if present
@@ -169,6 +181,8 @@ def _read_records(request: DesignRequest) -> list[SequenceRecord]:
         ]
     if request.fasta_path:
         return read_fasta(request.fasta_path)
+    if request.fasta_text and request.fasta_text.strip():
+        return parse_sequence_input(request.fasta_text)
     if request.sequence_text and request.sequence_text.strip():
         return parse_sequence_input(request.sequence_text)
     raise DesignRequestError(
@@ -578,19 +592,40 @@ def run_request(request: DesignRequest) -> DesignOutcome:
             # across contexts) collapsed to 0.000 for every guide.
             return _reference_index(request, variant_world)
 
-        contexts = variant_contexts(
-            combined, ALL_UNIVERSES, target_id=records[0].name,
-            biotype=Universe.NCRNA, expression=request.expression,
-            background=background_loci, extra_targets=records[1:],
-            index_for=index_for,
-        )
+        # Wrapped for the same reason summarize_conservation above is: both
+        # refuse a variant set they cannot tell apart, and both are reached
+        # with user-supplied FASTA, so the refusal has to arrive as the type
+        # run_request documents rather than as a ValueError from two modules
+        # down.
+        try:
+            contexts = variant_contexts(
+                combined, ALL_UNIVERSES, target_id=records[0].name,
+                biotype=Universe.NCRNA, expression=request.expression,
+                background=background_loci, extra_targets=records[1:],
+                index_for=index_for,
+            )
+        except ValueError as exc:
+            raise DesignRequestError(f"--variants: {exc}") from exc
 
     calibration_service = seed_calibration(request, spec)
-    report = run_design(
-        spec, contexts, registry, calibration_service,
-        panel_size=request.panel_size,
-        panel_dependence=_panel_dependence(request),
-    )
+    from .kinetics import StiffKineticsError
+
+    try:
+        report = run_design(
+            spec, contexts, registry, calibration_service,
+            panel_size=request.panel_size,
+            panel_dependence=_panel_dependence(request),
+        )
+    except StiffKineticsError as exc:
+        # Raised from inside stage E, long after the JSON was validated, so it
+        # escaped run_request untyped and the CLI printed a traceback. The
+        # trigger is not exotic: kinetics.py names k_on = 1 /nM/s as an
+        # ordinary measured association rate, and --kinetics-constants is
+        # advertised as the flag that unlocks absolute signal -- so the flag
+        # that is supposed to reward real constants punished them.
+        raise DesignRequestError(
+            f"--kinetics-constants {request.kinetics_json}: {exc}"
+        ) from exc
     data = report.to_dict()
     weakest_bound = report.search_bound
     gaps = report.universe_gaps

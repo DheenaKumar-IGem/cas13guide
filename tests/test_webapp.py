@@ -260,13 +260,34 @@ class TestMultipartParsing(unittest.TestCase):
         fields = _parse_multipart(body, f"multipart/form-data; boundary={boundary}")
         self.assertNotIn("fasta__file", fields)
 
-    def test_an_uploaded_file_beats_an_empty_textarea(self):
+    def test_an_uploaded_file_is_used_when_the_textarea_is_empty(self):
         request = _request_from_fields({"sequence": "", "fasta__file": ">x\nAUGC"})
-        self.assertEqual(request.sequence_text, ">x\nAUGC")
+        self.assertIsNone(request.sequence_text)
+        self.assertEqual(request.fasta_text, ">x\nAUGC")
 
-    def test_a_pasted_sequence_wins_when_both_are_present(self):
+    def test_the_two_are_kept_apart_so_the_one_source_guard_can_see_both(self):
+        """This asserted that the paste silently won.
+
+        It pinned the precedence the browser had before ``_read_records``
+        began refusing more than one target source -- and because the form
+        folded the upload into the paste field, that guard could not see the
+        upload at all, so the file was dropped with nothing said. Which is
+        exactly the behaviour the guard exists to prevent, on the door it was
+        written for.
+        """
         request = _request_from_fields({"sequence": "AUGC", "fasta__file": ">x\nGGGG"})
         self.assertEqual(request.sequence_text, "AUGC")
+        self.assertEqual(request.fasta_text, ">x\nGGGG")
+
+    def test_paste_plus_upload_is_refused_rather_than_silently_resolved(self):
+        from cas13guide.services.workflow import DesignRequestError, run_request
+
+        request = _request_from_fields(
+            {"sequence": "AUGCAUGCAUGCAUGCAUGCAUGCAUGCAUGC", "fasta__file": ">x\nGGGG"}
+        )
+        with self.assertRaises(DesignRequestError) as caught:
+            run_request(request)
+        self.assertIn("--fasta", str(caught.exception))
 
     def test_blank_selects_fall_back_to_the_defaults(self):
         request = _request_from_fields({"sequence": "AUGC", "effector": "", "assay": ""})

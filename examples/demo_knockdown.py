@@ -147,7 +147,18 @@ def main() -> None:
     print("\n--- verdicts ---")
     print(report.verdict_counts, f"review_rate={report.review_rate:.2%}")
 
-    print("\n--- top ranked (PASS only) ---")
+    # `report.ranked` is every gate survivor, PASS and REVIEW alike. The header
+    # used to say "PASS only" two lines under a line reading "0 PASS of 108" --
+    # asserting, for every row it listed, a property the run had just reported
+    # as false for all of them. The CLI already carries the triage note; the
+    # demo is the first thing a new user runs, so it needs it more.
+    print("\n--- top ranked (gate survivors: PASS and REVIEW) ---")
+    if not report.panel.guides:
+        print(
+            "  ! no panel: guides ranked but none PASSed the gate, and the "
+            "panel is PASS-only. The rows below are candidates to triage, "
+            "not a recommendation."
+        )
     for r in report.ranked[:5]:
         m = r.assessment.metrics
         print(
