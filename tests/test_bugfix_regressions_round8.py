@@ -194,9 +194,6 @@ class TestTheDefaultTestReadsAnInstance(unittest.TestCase):
         self.assertFalse(vector.predicted_signal_ranks)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestStatedFiguresMatchWhatTheCodeDoes(unittest.TestCase):
     """Two figures in comments that the repository itself contradicted.
@@ -261,3 +258,6 @@ class TestStatedFiguresMatchWhatTheCodeDoes(unittest.TestCase):
             / "src" / "cas13guide" / "services" / "registry.py"
         ).read_text(encoding="utf-8")
         self.assertIn("four of the five miRNA presets", source)
+
+if __name__ == "__main__":
+    unittest.main()

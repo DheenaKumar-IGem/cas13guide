@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 904 tests
+python -m unittest discover -s tests -t tests    # 909 tests
 pytest                              # same suite under pytest
 ```
 
@@ -763,7 +763,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-904 tests, run under `unittest` or `pytest`, and 90% line coverage.
+909 tests, run under `unittest` or `pytest`, and 90% line coverage.
 
 Four claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -771,7 +771,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 904 tests
+pytest                                                   # 909 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python -m mypy src/cas13guide --ignore-missing-imports   # py.typed, checked
 ```
@@ -797,6 +797,18 @@ and no checker had ever been run: 21 errors in ten files. Most were imprecision
 — but imprecision is what the marker promises there is none of, and one was a
 real inconsistency in the CIGAR builder that worked only because a `str` Enum
 formats as its value.
+
+**The suite itself can fail.** Nine tests that could not have failed turned up
+across the nine passes — and two of the nine were written *by* the pass hunting
+them. They recur because a green test is indistinguishable from a green test
+until you break the thing it names. `tests/test_the_suite_can_fail.py` now
+checks the three shapes that have actually occurred here: a `__main__` guard
+above a class, so `python tests/x.py` silently runs a subset (`test_blast.py`
+ran 21 of 27 that way); a test with no assertion at all; and `assertTrue` on a
+class attribute, which for a `slots` dataclass is a `member_descriptor` that is
+unconditionally truthy. Nothing static catches every vacuous test — this catches
+the ones that have happened, which is the difference between a lesson and a
+guard.
 
 **The invariants hold on generated input.** `tests/test_properties.py` states 33
 of them for `hypothesis`, which was a declared dev dependency that nothing
