@@ -729,7 +729,30 @@ thermodynamic fold the model already used as a feature.
 
 828 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
-behaviour is reverted.
+behaviour is reverted — and that sentence is now *measured* rather than
+asserted, by the same rule that gave `verify_against_mirbase()` its reason to
+exist. A claim is worth what the procedure that reproduces it is worth.
+
+```bash
+python examples/verify_mutation_coverage.py     # 32 mutations, 32 caught, 0 holes
+```
+
+It copies the tree to a temporary directory, applies one small **semantic**
+change at a time — code that still runs and still looks plausible — and reports
+any that the suite fails to notice. Two things keep the result honest rather
+than flattering. The mutations are subtle: disabling a whole check is caught by
+any competent suite and proves nothing, so half of these instead move a boundary
+one step, swap a bound for its opposite, drop the finite-sample `(n+1)`
+correction from the conformal quantile, or take the right operation on the wrong
+variable. And a survivor is confirmed against the **whole** suite before being
+called a hole — **10 of the 32 are caught only by the full run**, so a screening
+subset would have reported ten holes that are not there.
+
+What it mutates: the LCB/UCB asymmetry, the six named metrics, every FAIL branch
+in the gate, the QC checks, the panel's spacing and diversity constraints, the
+candidate-budget split, the out-of-domain substitution, the conformal quantile
+and its group-adequacy floor, the search-bound algebra, the FR6.3 posterior, the
+kinetics stability guard, the conservation worst-case, and the wobble rule.
 
 Two hundred and nine of those tests were added after eight review passes found
 bugs the original suite did not cover, and each one fails against the code as it
