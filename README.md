@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 828 tests
+python -m unittest discover -s tests -t tests    # 861 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,7 +727,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-828 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+861 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted — and that sentence is now *measured* rather than
 asserted, by the same rule that gave `verify_against_mirbase()` its reason to
@@ -756,7 +756,17 @@ kinetics stability guard, the conservation worst-case, and the wobble rule.
 
 Two hundred and nine of those tests were added after eight review passes found
 bugs the original suite did not cover, and each one fails against the code as it
-stood. Each pass re-read the previous pass's own diff, and three of them
+stood. A further thirty-three are **property** tests (`tests/test_properties.py`)
+— `hypothesis` was a declared dev dependency that nothing imported and that was
+not even installed, so it had never run once. Almost every load-bearing rule
+here is a property rather than a value, and the example-based suite pins each
+one at the handful of points somebody thought of: `revcomp` is its own inverse,
+a spacer against its own target is a perfect duplex, hazard is monotone in every
+factor, a smaller alpha never buys a narrower interval, the FR6.3 point estimate
+never leaves the interval it is printed beside, the scanner and the FM index
+return the same hit set on any generated world, and — the rule seven passes kept
+finding new ways to break — an accepted sequence comes back unchanged and
+nothing but whitespace is ever removed. Each pass re-read the previous pass's own diff, and three of them
 caught a regression the previous pass had introduced — which is the argument for
 doing that, and also its limit.
 
