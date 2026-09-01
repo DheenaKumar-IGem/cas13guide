@@ -266,15 +266,36 @@ def limitations_for_run(
     accessibility = getattr(registry, "accessibility", None)
     access_version = getattr(accessibility, "version", "") or ""
     if access_version.startswith("accessibility/none"):
-        found.append(
-            Limitation(
-                "no-accessibility",
-                Severity.WARNING,
-                "No structural accessibility was computed, so a site buried in a "
-                "stable hairpin is scored the same as an open one. Install "
-                'ViennaRNA (`pip install "cas13guide[structure]"`) to enable it.',
+        # A floor the user set explicitly is a different situation from one
+        # they never asked for. The gate skips TARGET_INACCESSIBLE when the
+        # metric is None -- correctly, since absent evidence is not bad
+        # evidence -- so `--min-accessibility 0.9` with no folding engine
+        # installed asks for a gate that cannot fire, and the generic warning
+        # never connected the two. Say which number went unused.
+        floor = spec.thresholds.min_accessibility
+        if floor > 0.0:
+            found.append(
+                Limitation(
+                    "accessibility-floor-inert",
+                    Severity.CRITICAL,
+                    f"An accessibility floor of {floor:.2f} was requested, and "
+                    "no accessibility was computed, so the floor was NOT "
+                    "applied -- no guide was held back for being buried. "
+                    'Install ViennaRNA (`pip install "cas13guide[structure]"`) '
+                    "or drop the floor, but do not read this run as having "
+                    "enforced it.",
+                )
             )
-        )
+        else:
+            found.append(
+                Limitation(
+                    "no-accessibility",
+                    Severity.WARNING,
+                    "No structural accessibility was computed, so a site buried in a "
+                    "stable hairpin is scored the same as an open one. Install "
+                    'ViennaRNA (`pip install "cas13guide[structure]"`) to enable it.',
+                )
+            )
     elif not getattr(accessibility, "is_independent_evidence", False):
         found.append(
             Limitation(
@@ -285,6 +306,24 @@ def limitations_for_run(
                 "calibrated bound, because it is a prediction from the same "
                 "sequence the activity model already sees. A SHAPE, DMS-seq or "
                 "icSHAPE track is independent evidence and does reach the model.",
+            )
+        )
+
+    energy_version = getattr(getattr(registry, "energy", None), "version", "") or ""
+    window = (spec.thresholds.duplex_dg_per_nt_min, spec.thresholds.duplex_dg_per_nt_max)
+    if energy_version.startswith("thermodynamics/none") and any(
+        bound is not None for bound in window
+    ):
+        low, high = window
+        found.append(
+            Limitation(
+                "duplex-window-inert",
+                Severity.CRITICAL,
+                f"A duplex energy window of [{low}, {high}] kcal/mol/nt was "
+                "requested, and no duplex energy was computed, so the window "
+                "was NOT applied -- no guide was flagged for binding too "
+                "tightly or too weakly. Install ViennaRNA "
+                '(`pip install "cas13guide[structure]"`) or drop the window.',
             )
         )
 
