@@ -78,6 +78,32 @@ _OFF_TARGET_HEADINGS: tuple[tuple[str, str, str], ...] = (
 _OFF_TARGET_COLUMNS: tuple[str, ...] = tuple(key for key, _l, _d in _OFF_TARGET_HEADINGS)
 
 
+def track_rows(ranked: Sequence[dict], target_id: str, limit: int) -> list[dict]:
+    """Ranked rows whose ``start`` is an offset on ``target_id``.
+
+    Lives here, beside :data:`REPORT_CSS`, for the same reason and by the same
+    rule: it crosses the boundary between the CLI and the web server, so it is
+    public and it belongs to the module that owns the picture rather than to
+    either caller. It was briefly private in ``cli.py`` with ``webapp`` reaching
+    up to import it, which is backwards -- a service depending on an entry
+    point -- and would have made "a real deployment can delete
+    ``services/webapp.py``" true only in one direction.
+
+    Both callers need the same filter because ``start`` is an offset on the
+    guide's *own* source target, and a multi-record FASTA makes records 1+
+    DESIRED targets that are tiled too: an unfiltered top-N drew guides from a
+    paralog at their own coordinates on the primary's profile.
+
+    Rows without the field are kept. An older report dict has no
+    ``source_target_id``, and drawing nothing is a worse answer than the one
+    that was already being drawn.
+    """
+    return [
+        row for row in ranked
+        if row.get("source_target_id", target_id) == target_id
+    ][:limit]
+
+
 @dataclass(frozen=True, slots=True)
 class AccessibilityTrack:
     """Per-nucleotide unpaired probability for one target (FR8.4)."""

@@ -125,20 +125,6 @@ def _train(args: argparse.Namespace) -> int:
 
 
 
-def _track_rows(ranked, target_id: str, limit: int) -> list:
-    """Ranked rows whose ``start`` is an offset on ``target_id``.
-
-    Shared by the CLI and the web server so the two cannot draw different
-    pictures from the same report. Rows without the field are kept: an older
-    report dict has no ``source_target_id``, and dropping every mark is a worse
-    answer than the one that was already being drawn.
-    """
-    return [
-        row for row in ranked
-        if row.get("source_target_id", target_id) == target_id
-    ][:limit]
-
-
 def _design(args: argparse.Namespace) -> int:
     """Design guides against a pasted sequence, a FASTA file, or a preset.
 
@@ -297,7 +283,7 @@ def _design(args: argparse.Namespace) -> int:
         # own failures have had a located message and exit 2 all along; the
         # filesystem's did not.
         try:
-            from .services.report_html import AccessibilityTrack, write_report
+            from .services.report_html import AccessibilityTrack, track_rows, write_report
 
             tracks = []
             if outcome.profile:
@@ -318,8 +304,8 @@ def _design(args: argparse.Namespace) -> int:
                         guides=[
                             (r.get("start", 0), outcome.spec.spacer_length,
                              f"#{r['rank']} {r['guide_id']}")
-                            for r in _track_rows(data["ranked"], outcome.records[0].name,
-                                                 args.track_guides)
+                            for r in track_rows(data["ranked"], outcome.records[0].name,
+                                                args.track_guides)
                         ],
                     )
                 ]

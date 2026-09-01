@@ -78,7 +78,7 @@ class TestTheAccessibilityTrackMarksOnlyItsOwnTarget(unittest.TestCase):
         )
 
     def test_only_the_primary_record_s_guides_are_tracked(self):
-        from cas13guide.cli import _track_rows
+        from cas13guide.services.report_html import track_rows
 
         ranked = [
             {"rank": 1, "guide_id": "gA", "start": 10, "source_target_id": "t2"},
@@ -87,27 +87,27 @@ class TestTheAccessibilityTrackMarksOnlyItsOwnTarget(unittest.TestCase):
             {"rank": 4, "guide_id": "gD", "start": 40, "source_target_id": "t1"},
         ]
         self.assertEqual(
-            [row["guide_id"] for row in _track_rows(ranked, "t1", 5)], ["gB", "gD"]
+            [row["guide_id"] for row in track_rows(ranked, "t1", 5)], ["gB", "gD"]
         )
 
     def test_the_limit_is_applied_after_the_filter(self):
         """Otherwise a page of foreign guides leaves the track empty."""
-        from cas13guide.cli import _track_rows
+        from cas13guide.services.report_html import track_rows
 
         ranked = [
             {"guide_id": f"g{i}", "source_target_id": "t2"} for i in range(10)
         ] + [{"guide_id": "mine", "source_target_id": "t1"}]
         self.assertEqual(
-            [row["guide_id"] for row in _track_rows(ranked, "t1", 5)], ["mine"]
+            [row["guide_id"] for row in track_rows(ranked, "t1", 5)], ["mine"]
         )
 
     def test_a_row_without_the_field_is_kept(self):
         """An older report dict has no source_target_id; drawing nothing at all
         would be a worse answer than what was already being drawn."""
-        from cas13guide.cli import _track_rows
+        from cas13guide.services.report_html import track_rows
 
         ranked = [{"guide_id": "old", "start": 5}]
-        self.assertEqual([row["guide_id"] for row in _track_rows(ranked, "t1", 5)], ["old"])
+        self.assertEqual([row["guide_id"] for row in track_rows(ranked, "t1", 5)], ["old"])
 
     def test_a_mark_past_the_end_stays_inside_the_viewbox(self):
         """x2 was clamped and x1 was not, so an out-of-range mark left the

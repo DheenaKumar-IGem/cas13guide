@@ -46,6 +46,26 @@ class TestTheDemoShipsWithThePackage(unittest.TestCase):
         self.assertNotIn("import demo_knockdown", source)
         self.assertIn("from .demo import main", source)
 
+    def test_no_service_imports_the_entry_point(self):
+        """Dependencies point one way: cli -> services, never back.
+
+        ``webapp`` briefly reached up into ``cli`` for a shared helper, which
+        made "a real deployment can delete services/webapp.py and keep
+        everything else" true in only one direction. The helper now lives in
+        ``report_html``, beside ``REPORT_CSS``, which is where the other thing
+        shared across that seam already lived.
+        """
+        offenders = []
+        for path in (REPO / "src" / "cas13guide").rglob("*.py"):
+            # ``cli`` is the entry point, and ``__main__`` exists precisely to
+            # wrap it -- ``python -m cas13guide``. Everything else is below it.
+            if path.name in ("cli.py", "__main__.py"):
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "from ..cli import" in text or "from .cli import" in text:
+                offenders.append(path.relative_to(REPO).as_posix())
+        self.assertEqual(offenders, [])
+
     def test_the_package_never_puts_anything_on_sys_path(self):
         """A library adjusting sys.path is how this defect was possible.
 

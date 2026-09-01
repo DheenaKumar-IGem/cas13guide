@@ -37,7 +37,7 @@ from urllib.parse import parse_qs
 from ..contract.enums import AssayType, Effector, Task
 from ..contract.presets import get_preset, preset_ids
 from .fasta import SequenceInputError, decode_text
-from .report_html import REPORT_CSS, AccessibilityTrack, render_report
+from .report_html import REPORT_CSS, AccessibilityTrack, render_report, track_rows
 from .workflow import DesignRequest, DesignRequestError, run_request
 
 #: Upload ceiling. A transcript is kilobytes; anything past this is a mistake or
@@ -202,8 +202,6 @@ def _request_from_fields(fields: dict[str, Any]) -> DesignRequest:
 
 
 def _render_outcome(outcome) -> str:
-    from ..cli import _track_rows
-
     tracks = []
     if outcome.profile:
         tracks = [
@@ -216,7 +214,7 @@ def _render_outcome(outcome) -> str:
                 guides=[
                     (row.get("start", 0), outcome.spec.spacer_length,
                      f"#{row['rank']} {row['guide_id']}")
-                    for row in _track_rows(outcome.ranked, outcome.records[0].name, 5)
+                    for row in track_rows(outcome.ranked, outcome.records[0].name, 5)
                 ],
             )
         ]
