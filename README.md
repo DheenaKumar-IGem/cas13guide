@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 890 tests
+python -m unittest discover -s tests -t tests    # 894 tests
 pytest                              # same suite under pytest
 ```
 
@@ -342,7 +342,7 @@ now makes the second one out loud.
 | ✅ | FR7.1–7.2 conserved regions, variant robustness | `services/conservation.py` |
 | ✅ | Trained activity model | `services/arc_model.py` + `services/contrafold.py` — Arc CNN on real CONTRAfold energies, 399/399 reference folds exact. `--arc` |
 | ✅ | FR8.1–8.4 ranking, table, export, visual | `pipeline/f_decide.py`, `services/fasta.py`, `services/report_html.py` |
-| ✅ | NFR1–NFR6 | measured at 0.2–3.4 s; `serve`; located errors; provenance ledger; 375 px verified; score glossary |
+| ✅ | NFR1–NFR6 | measured at 0.2–10 s, bounded by the candidate budget rather than by target length — see [Runtime](#runtime); `serve`; located errors; provenance ledger; 375 px verified; score glossary |
 | ⚠️ | DR1 RefSeq database, DR3 BLAST+, DR5 compute | your infrastructure to provision — no compiler or admin needed; `--background` needs none of it |
 | ✅ | DR2 ViennaRNA | `pip install -e ".[structure]"` |
 | ⚠️ | DR4 model constants | JSON storage and loaders exist for both (`--kinetics-constants`, `--panel-dependence`); kinetic values are placeholders and no common-cause fraction ships |
@@ -707,6 +707,34 @@ orthologs trans-cleavage is a property of *activation*, so it scales with target
 abundance rather than with off-target similarity. The report keeps it separate
 from specificity and the validation plan assays it directly.
 
+## Runtime
+
+Measured on one desktop, warm, `RfxCas13d` / knockdown, one target and no
+background corpus. Re-measure on your own machine before quoting these.
+
+| Target | Default | `--no-structure` | Candidates |
+|---|---|---|---|
+| 300 nt | 0.20 s | 0.12 s | 216 |
+| 1 kb | 0.61 s | 0.31 s | 761 |
+| 3 kb | 3.51 s | 1.88 s | 2,509 |
+| 6 kb | 7.12 s | 3.91 s | 4,156 |
+| 12 kb | 10.07 s | 4.88 s | 4,271 |
+
+The shape matters more than the numbers. Runtime tracks the **candidate count**,
+not the target length, and the candidate count is capped by
+`SearchBudget.max_candidates` (5,000) — so it climbs to about ten seconds and
+then flattens, and a 12 kb transcript costs barely more than a 6 kb one. What
+you lose past the cap is tiling *density*, not coverage: each target is spanned
+end to end at a widened step, and the run says so.
+
+Where the time goes, profiled at 10 kb: ViennaRNA's `pfl_fold_up` for the
+accessibility profile (3.2 s, one call over the whole transcript), the
+wobble-aware scan (2.0 s), `duplexfold` for the per-guide hybridisation energy
+(1.3 s), and the QC self-fold (0.6 s). Three of those four are ViennaRNA, which
+is why `--no-structure` roughly halves the total and why the README quoted a
+much smaller range before anyone measured a full-length mRNA: the earlier figure
+was taken on targets short enough that folding was cheap.
+
 ## Seams for real components
 
 Everything expensive sits behind a `Protocol` with a working reference
@@ -727,7 +755,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-890 tests, run under `unittest` or `pytest`, and 90% line coverage.
+894 tests, run under `unittest` or `pytest`, and 90% line coverage.
 
 Four claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -735,7 +763,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 890 tests
+pytest                                                   # 894 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python -m mypy src/cas13guide --ignore-missing-imports   # py.typed, checked
 ```

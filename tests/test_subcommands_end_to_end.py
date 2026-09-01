@@ -195,5 +195,69 @@ class TestTheCommandSurfaceIsConsistent(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
 
 
+
+class TestRuntimeIsBoundedByTheCandidateBudget(unittest.TestCase):
+    """The README quotes runtime figures; this pins the *shape* behind them.
+
+    The requirement-coverage table said "measured at 0.2-3.4 s" until a 6 kb
+    transcript -- an ordinary mRNA -- was timed at 7.1 s. The figure was not
+    wrong when it was taken; it was taken on targets short enough that folding
+    was cheap, and nobody re-measured on a full-length one.
+
+    Wall-clock is machine-dependent and a poor thing to assert, so this pins the
+    property the figures rest on instead: runtime tracks the candidate count,
+    the candidate count is capped by ``SearchBudget.max_candidates``, and past
+    the cap a longer target costs little more. A change that made runtime scale
+    with target length again would break this while any absolute threshold
+    would either be flaky or unfalsifiable.
+    """
+
+    @staticmethod
+    def _candidates(length: int) -> int:
+        import random
+
+        from cas13guide.contract.enums import TargetClass
+        from cas13guide.contract.spec import TargetSpec
+        from cas13guide.pipeline.a_candidates import design_candidates
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from helpers import make_spec
+
+        rng = random.Random(length)
+        sequence = "".join(rng.choice("ACGU") for _ in range(length))
+        spec = make_spec(
+            targets=(
+                TargetSpec(target_id="t1", sequence=sequence,
+                           target_class=TargetClass.REQUIRED),
+            )
+        )
+        return len(design_candidates(spec)), spec.budget.max_candidates
+
+    def test_the_candidate_count_is_capped(self):
+        count, budget = self._candidates(40_000)
+        self.assertLessEqual(count, budget)
+
+    def test_a_much_longer_target_does_not_cost_proportionally_more(self):
+        """The flattening the Runtime table shows, as a property."""
+        smaller, _ = self._candidates(12_000)
+        larger, _ = self._candidates(40_000)
+        self.assertLess(
+            larger, smaller * 2,
+            "candidate count is scaling with target length again, so runtime will too",
+        )
+
+    def test_a_target_under_the_cap_is_tiled_densely(self):
+        """The cap must not be paid by targets that do not need it."""
+        length = 1_000
+        count, _ = self._candidates(length)
+        self.assertGreater(count, length * 0.5)
+
+    def test_the_readme_quotes_a_range_that_covers_the_capped_case(self):
+        """A figure measured only on short targets is how this went stale."""
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("bounded by the candidate budget", readme)
+        self.assertNotIn("measured at 0.2–3.4 s", readme)
+
 if __name__ == "__main__":
     unittest.main()
