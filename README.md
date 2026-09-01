@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 924 tests
+python -m unittest discover -s tests -t tests    # 930 tests
 pytest                              # same suite under pytest
 ```
 
@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-924 tests, run under `unittest` or `pytest`, and 90% line coverage.
+930 tests, run under `unittest` or `pytest`, and 90% line coverage.
 
 Four claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 924 tests
+pytest                                                   # 930 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python -m mypy src/cas13guide --ignore-missing-imports   # py.typed, checked
 ```
