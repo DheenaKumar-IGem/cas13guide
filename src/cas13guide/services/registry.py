@@ -127,8 +127,10 @@ class HeuristicCas13Model:
             # Paired with the ortholog, not flattened across orthologs. The
             # flat union above is {22, 23, 28, 30}, which would admit
             # LwaCas13a at 22 nt (RfxCas13d's length) and RfxCas13d at 28 nt
-            # (LwaCas13a's) as in-domain -- and every miRNA preset resolves to
-            # 22 or 23 nt against the default LwaCas13a, so that union was
+            # (LwaCas13a's) as in-domain -- and four of the five miRNA presets
+            # resolve to 22 or 23 nt against the default LwaCas13a (the fifth,
+            # hsa-miR-21-5p, is 24 nt and no ortholog publishes that), so the
+            # union was
             # certifying the package's own headline path at a geometry no
             # model here was fit on.
             lengths_by_effector={

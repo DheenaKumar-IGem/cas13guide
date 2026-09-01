@@ -21,7 +21,12 @@ produces a tool that refuses designs it should merely discourage:
   incompatibility -- the guide cannot work. A *preferred* one is a bias: it
   lowers expected activity and should push a candidate down the ranking, not
   out of the design. The reported LwaCas13a 3' H preference is the second kind,
-  and treating it as the first silently deleted a third of every candidate set.
+  and treating it as the first silently deleted a quarter of every candidate set
+  -- a quarter because ``three_prime_preferred`` excludes exactly one of the
+  four bases, so under uniform composition one window in four is G-flanked.
+  This said "a third" while the entry below and the test that pins it both said
+  a quarter; measured on uniform random RNA it is 0.2502, and on the shipped
+  demo target 0.2745.
 """
 
 from __future__ import annotations

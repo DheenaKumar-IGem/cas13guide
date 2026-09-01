@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 869 tests
+python -m unittest discover -s tests -t tests    # 871 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,7 +727,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-869 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+871 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted — and that sentence is now *measured* rather than
 asserted, by the same rule that gave `verify_against_mirbase()` its reason to
@@ -770,8 +770,8 @@ nothing but whitespace is ever removed. Each pass re-read the previous pass's ow
 caught a regression the previous pass had introduced — which is the argument for
 doing that, and also its limit.
 
-Confirmed defects per pass were **25, 4, 2, 6, 9, 7, 3, 4**, and the shape of
-that curve is the useful part. Passes one to three *read* the code — module by module,
+Confirmed defects per pass were **25, 4, 2, 6, 9, 7, 3, 4, 1, 2**, and the shape
+of that curve is the useful part. Passes one to three *read* the code — module by module,
 then diff by diff — and converged at 2. Passes four to six *ran* it: flag
 combinations rather than one flag at a time, input fuzzing, determinism across
 process boundaries, the three output surfaces compared field by field, real HTTP
@@ -785,10 +785,14 @@ The eighth pass turned the instruments on the project's own quality machinery
 rather than on the product — the docstrings audited claim by claim, a sweep for
 tests that cannot fail, and the four service modules nothing had pointed at.
 
-Three instruments found nothing that survived verification, which is worth as
+Five instruments found nothing that survived verification, which is worth as
 much as a finding: differential testing across all four `SearchIndex`
-implementations, property testing of the gate → Pareto → preference order, and
-the threaded server under genuine concurrent load. The ones worth naming,
+implementations, property testing of the gate → Pareto → preference order, the
+threaded server under genuine concurrent load, mutation testing (32 mutations,
+32 caught), and an audit of the units and directions every quantity travels in
+— the error class that produces confident, in-range, wrong numbers. The last
+pass, a domain audit of the biological constants and the cited claims against
+each other, returned two stale figures in comments and nothing else. The ones worth naming,
 because they were live defects rather than hypotheticals:
 
 | What was wrong | Why it mattered | Pinned by |

@@ -196,3 +196,68 @@ class TestTheDefaultTestReadsAnInstance(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStatedFiguresMatchWhatTheCodeDoes(unittest.TestCase):
+    """Two figures in comments that the repository itself contradicted.
+
+    Found by the ninth pass, which audited the domain constants and the cited
+    claims against each other rather than against outside literature -- the
+    only kind of domain check this repository can actually settle.
+    """
+
+    def test_the_hard_pfs_cost_is_a_quarter_not_a_third(self):
+        """Excluding one base of four deletes a quarter of the windows.
+
+        ``effectors.py`` said "a third" in its module docstring while the
+        entry a hundred lines below and the test that pins it both said a
+        quarter. Measured on uniform random RNA it is 0.2502.
+        """
+        import random
+        from pathlib import Path
+
+        from cas13guide.contract.effectors import EFFECTORS
+        from cas13guide.contract.enums import Effector
+
+        preferred = EFFECTORS[Effector.LWA_CAS13A].pfs.three_prime_preferred
+        self.assertEqual(len(preferred), 3, "the claim assumes one excluded base")
+
+        rng = random.Random(4)
+        sequence = "".join(rng.choice("ACGU") for _ in range(60_000))
+        spacer_length = 28
+        flanks = [
+            sequence[start + spacer_length]
+            for start in range(len(sequence) - spacer_length)
+        ]
+        excluded = sum(1 for base in flanks if base not in preferred) / len(flanks)
+        self.assertAlmostEqual(excluded, 0.25, places=1)
+
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "cas13guide" / "contract" / "effectors.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("deleted a third of every candidate set", source)
+
+    def test_the_preset_length_claim_counts_correctly(self):
+        """"every miRNA preset resolves to 22 or 23 nt" is four of the five."""
+        from pathlib import Path
+
+        from cas13guide.contract.enums import Effector
+        from cas13guide.contract.presets import (
+            MIRNA_PRESETS,
+            largest_designable_spacer_length,
+        )
+
+        resolved = {
+            preset_id: largest_designable_spacer_length(preset, Effector.LWA_CAS13A)
+            for preset_id, preset in MIRNA_PRESETS.items()
+        }
+        matching = [pid for pid, length in resolved.items() if length in (22, 23)]
+        self.assertEqual(len(matching), 4)
+        self.assertEqual(resolved["hsa-miR-21-5p"], 24)
+
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "cas13guide" / "services" / "registry.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("four of the five miRNA presets", source)
