@@ -17,10 +17,18 @@ GC_MIN, GC_MAX = 0.30, 0.70
 MAX_HOMOPOLYMER = 4
 #: Longest self-hairpin stem tolerated, when no real folding engine is
 #: available. This is a fallback and it is not good: measured against ViennaRNA
-#: over 6,000 random 22-mers it flags 1.9% of spacers and catches 28.9% of those
-#: that genuinely fold to -8 kcal/mol or tighter, with roughly half its flags
-#: being sequences that barely fold at all. The wobble fix raised recall from
-#: 5.6%, which is an improvement rather than a solution.
+#: over 60,000 random 22-mers (seed 12345) it flags 1.77% of spacers and catches
+#: 34.9% +/- 3.7% of those that genuinely fold to -8 kcal/mol or tighter, while
+#: only 21% of its flags are sequences that really do fold -- four in five are
+#: false. The wobble fix raised recall from 5.6%, which is an improvement rather
+#: than a solution.
+#:
+#: Those figures were 1.9%, 28.9% and "roughly half its flags" on a 6,000-mer
+#: sample, which puts ~53 genuine folders behind the recall estimate and a 95%
+#: interval about +/-11% wide. The recall number was not wrong so much as noisy;
+#: the precision one was materially optimistic. Re-measured at ten times the
+#: sample, and pinned by ``tests/test_measured_claims.py`` so it cannot drift
+#: again unnoticed.
 #:
 #: A helix length is simply not a good estimator of a free energy, and no
 #: threshold makes it one. Install ViennaRNA and the real fold is used instead;
@@ -54,7 +62,7 @@ def longest_self_complement(seq: str, min_len: int = 3) -> int:
     * it applied no loop constraint, so it counted helices closing on zero
       unpaired bases.
 
-    Fixing both raised recall against real folding from 5.6% to 28.9%.
+    Fixing both raised recall against real folding from 5.6% to ~35%.
     """
     s = seq.upper().replace("T", "U")
     n = len(s)
@@ -158,7 +166,7 @@ def qc_candidate(
     if has_polyu_terminator(spacer):
         flags.append(QCFlag.POLY_U_TERMINATOR)
 
-    # Prefer a real fold. The proxy below catches 28.9% of genuinely
+    # Prefer a real fold. The proxy below catches ~35% of genuinely
     # self-structured spacers; thermodynamics catches them because it IS the
     # thing being approximated. The docstring on longest_self_complement has
     # promised this swap since the module was written.

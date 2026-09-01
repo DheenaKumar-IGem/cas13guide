@@ -251,9 +251,11 @@ def limitations_for_run(
                 Severity.WARNING,
                 "Spacer self-folding was judged by counting the longest "
                 "self-complementary stretch, not by folding the spacer -- "
-                "ViennaRNA was not importable. That proxy recovers 28.9% of "
-                "the guides a real fold rejects, so some self-structured "
-                "spacers passed QC and some innocent ones were failed. A "
+                "ViennaRNA was not importable. That proxy recovers about a "
+                "third of the guides a real fold rejects, and four in five of "
+                "the guides it does reject fold no more tightly than average -- "
+                "so some self-structured spacers passed QC and rather more "
+                "innocent ones were failed. A "
                 "self-folding FAIL cannot be bought back, so install ViennaRNA "
                 '(`pip install "cas13guide[structure]"`) before reading these '
                 "verdicts as final.",

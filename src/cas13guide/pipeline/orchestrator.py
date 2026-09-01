@@ -123,7 +123,7 @@ def _self_fold_energy():
     """ViennaRNA MFE of a single sequence, or ``None`` if it is not installed.
 
     QC's built-in stem count is a proxy for exactly this number and a poor one
-    (28.9% recall, measured). When the real thing is available it is used, and
+    (~35% recall, measured). When the real thing is available it is used, and
     the run records which -- an unbuyable-back FAIL should not rest on a guess
     when thermodynamics is one import away.
     """
@@ -179,7 +179,7 @@ def run_design(
         criterion=(
             f"dG <= {SELF_FOLD_MAX_DG} kcal/mol"
             if self_fold is not None
-            else f"longest self-complement > {MAX_SELF_STEM} nt (28.9% recall)"
+            else f"longest self-complement > {MAX_SELF_STEM} nt (~35% recall)"
         ),
     )
     for ctx in contexts:
