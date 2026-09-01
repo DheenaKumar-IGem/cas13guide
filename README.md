@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 916 tests
+python -m unittest discover -s tests -t tests    # 920 tests
 pytest                              # same suite under pytest
 ```
 
@@ -763,7 +763,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-916 tests, run under `unittest` or `pytest`, and 90% line coverage.
+920 tests, run under `unittest` or `pytest`, and 90% line coverage.
 
 Four claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -771,7 +771,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 916 tests
+pytest                                                   # 920 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python -m mypy src/cas13guide --ignore-missing-imports   # py.typed, checked
 ```
@@ -820,7 +820,12 @@ sample too small to support them — at 6,000 random 22-mers only ~53 sequences
 genuinely fold, so 28.9% was really 34.9% ± 3.7% at ten times the sample, and
 "roughly half its flags" was 21%. Asserted as intervals, because a test
 demanding three decimals of a Monte Carlo quantity is a flaky test dressed as a
-precise one.
+precise one. Two further figures recomputed clean and are now pinned rather
+than merely believed: the signal-degeneracy ratio that justifies reporting
+`predicted_signal` without ranking on it (0.161% against a stated 0.159%), and
+the 4.9% of DR-interaction verdicts the superseded RfxCas13d direct repeat
+flipped — recovered from the first commit and re-measured at 4.64%, well inside
+sampling noise at that sample size.
 
 **The invariants hold on generated input.** `tests/test_properties.py` states 33
 of them for `hypothesis`, which was a declared dev dependency that nothing

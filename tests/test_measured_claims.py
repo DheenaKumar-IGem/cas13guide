@@ -131,5 +131,86 @@ class TestTheCommentsQuoteTheseFigures(unittest.TestCase):
                 self.assertEqual(mentions, allowed)
 
 
+class TestTheSignalDegeneracyFigure(unittest.TestCase):
+    """"the ratio varies by 0.159% across the unit square".
+
+    That figure is why ``predicted_signal`` is reported and not ranked on: with
+    the shipped constants the ODE sits in its linear regime, so the output is a
+    constant multiple of ``activity_lower * accessibility`` -- two axes already
+    in the objective set -- and adding it silently re-weights them. If the
+    constants or the integrator ever move the model out of that regime, the
+    figure grows and the axis should return; ``adds_information`` probes for
+    exactly that, so this pins the number the probe is calibrated against.
+    """
+
+    def test_the_ratio_is_flat_to_about_a_sixth_of_a_percent(self):
+        from cas13guide.services.kinetics import CollateralKineticsModel
+
+        model = CollateralKineticsModel()
+        ratios = []
+        for i in range(21):
+            for j in range(21):
+                activity = i / 20 or 0.001
+                accessibility = j / 20 or 0.001
+                signal = model.predict(activity, accessibility).relative_signal
+                ratios.append(signal / (activity * accessibility))
+        spread = (max(ratios) - min(ratios)) / max(ratios)
+        self.assertAlmostEqual(spread, 0.0016, delta=0.0008)
+
+    def test_and_the_pipeline_therefore_declines_to_rank_on_it(self):
+        """The consequence the figure exists to justify."""
+        from cas13guide.services.kinetics import CollateralKineticsModel
+
+        self.assertFalse(CollateralKineticsModel().adds_information())
+
+
+class TestTheDirectRepeatIsWorthGettingRight(unittest.TestCase):
+    """"the old value changed that verdict for 4.9% of random 22 nt spacers".
+
+    The DR is data that looks like decoration, and a wrong one does not fail
+    loudly -- it moves verdicts. This recomputes the figure that says how much,
+    against the superseded value recovered from the first commit.
+    """
+
+    #: The corrupted RfxCas13d repeat as it shipped in 8cbe60f, before the Arc
+    #: weights showed it disagreed with the published CasRx mature repeat.
+    SUPERSEDED = "CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU"
+
+    def test_the_verdict_flip_rate_is_about_five_percent(self):
+        from cas13guide.contract.effectors import EFFECTORS
+        from cas13guide.contract.enums import Effector
+        from cas13guide.pipeline.b_qc import MAX_DR_STEM, longest_cross_complement
+
+        current = EFFECTORS[Effector.RFX_CAS13D].direct_repeat
+        self.assertNotEqual(current, self.SUPERSEDED)
+        rng = random.Random(7)
+        flips = 0
+        n = 4_000
+        for _ in range(n):
+            spacer = "".join(rng.choice("AUGC") for _ in range(22))
+            before = longest_cross_complement(spacer, self.SUPERSEDED) > MAX_DR_STEM
+            after = longest_cross_complement(spacer, current) > MAX_DR_STEM
+            flips += before != after
+        self.assertAlmostEqual(flips / n, 0.049, delta=0.02)
+
+    def test_the_flip_goes_in_both_directions(self):
+        """"in both directions" -- a DR error is not simply more or less strict."""
+        from cas13guide.contract.effectors import EFFECTORS
+        from cas13guide.contract.enums import Effector
+        from cas13guide.pipeline.b_qc import MAX_DR_STEM, longest_cross_complement
+
+        current = EFFECTORS[Effector.RFX_CAS13D].direct_repeat
+        rng = random.Random(11)
+        gained = lost = 0
+        for _ in range(4_000):
+            spacer = "".join(rng.choice("AUGC") for _ in range(22))
+            before = longest_cross_complement(spacer, self.SUPERSEDED) > MAX_DR_STEM
+            after = longest_cross_complement(spacer, current) > MAX_DR_STEM
+            gained += after and not before
+            lost += before and not after
+        self.assertGreater(gained, 0)
+        self.assertGreater(lost, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
