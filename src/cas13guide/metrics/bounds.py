@@ -3,6 +3,14 @@
 The asymmetry is the whole point: benefit is read at its *lower* confidence
 bound, hazard at its *upper* one. A low point prediction is not evidence of
 safety, so hazards must never be read at their point estimate.
+
+This module imports nothing, deliberately. :class:`Interval` is a primitive --
+``models/evidence.py`` is built out of it, and ``metrics/aggregate.py`` consumes
+both -- so the ``metrics`` package spans two layers: this file sits *below*
+``models`` and its sibling sits above. That reads as an upward dependency if you
+group by package and is acyclic by module, which is what actually matters. Add a
+top-level import of ``models`` here and it stops being: ``tests/test_layering.py``
+fails if anything in this package grows one.
 """
 
 from __future__ import annotations
