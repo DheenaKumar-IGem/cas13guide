@@ -218,6 +218,13 @@ class DesignReport:
     #: not have to parse a sentence back into facts.
     search_bound: "ExhaustivenessBound | None" = None
     universe_gaps: frozenset = frozenset()
+    #: Why the guides that failed the gate failed it, grouped by reason code
+    #: with a few worked examples. ``ranked`` deliberately holds no FAIL rows
+    #: -- a refusal is not a recommendation and does not belong in a table
+    #: somebody might order from -- but the consequence was that a run could
+    #: report "FAIL: 41" and offer nothing else. The gate had already composed
+    #: the numbers; nothing read them.
+    rejected: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     #: FR6.3 -- bounded detection probability for the panel, or ``None`` when
     #: no confidence model was supplied. Kept beside the panel rather than
     #: inside it because ``Panel`` is what the optimizer returns and this is
@@ -269,6 +276,10 @@ class DesignReport:
                         else None
                     ),
                     "reasons": [c.value for c in r.assessment.gate.reasons],
+                    # The reason code says which rule spoke; the detail says by
+                    # how much. The gate composed both and only the code was
+                    # ever exported.
+                    "detail": list(r.assessment.gate.detail),
                     "metrics": asdict(r.assessment.metrics),
                     "rationale": list(r.rationale),
                 }
@@ -297,6 +308,7 @@ class DesignReport:
             "provenance": self.provenance,
             "validation_plan": list(self.validation_plan),
             "shortfalls": list(self.shortfalls),
+            "rejected": [dict(row) for row in self.rejected],
         }
 
 
@@ -352,6 +364,39 @@ def _validation_plan(panel: Panel, controls: tuple[ControlGuide, ...], spec: Res
     return tuple(plan)
 
 
+#: How many worked examples to carry per reason group. The detail strings hold
+#: per-guide numbers, so grouping on them would put most guides in a group of
+#: one and reproduce the wall of rows this is meant to replace.
+REJECTION_EXAMPLES = 3
+
+
+def _rejection_rows(assessments: list[GuideAssessment]) -> tuple[dict[str, Any], ...]:
+    """Group the failed guides by what the gate said about them.
+
+    Ordered by how many guides each reason set accounts for, then by the reason
+    text, so the output is stable across runs and the dominant cause is first.
+    """
+    groups: dict[tuple[str, ...], list[GuideAssessment]] = {}
+    for a in assessments:
+        if a.gate.verdict is not Verdict.FAIL:
+            continue
+        groups.setdefault(tuple(c.value for c in a.gate.reasons), []).append(a)
+
+    rows: list[dict[str, Any]] = []
+    for reasons, members in groups.items():
+        members.sort(key=lambda a: a.guide_id)
+        rows.append({
+            "reasons": list(reasons),
+            "count": len(members),
+            "examples": [
+                {"guide_id": a.guide_id, "detail": list(a.gate.detail)}
+                for a in members[:REJECTION_EXAMPLES]
+            ],
+        })
+    rows.sort(key=lambda row: (-int(row["count"]), row["reasons"]))
+    return tuple(rows)
+
+
 def build_report(
     assessments: list[GuideAssessment],
     ranked: list[RankedGuide],
@@ -393,6 +438,7 @@ def build_report(
         validation_plan=_validation_plan(panel, controls, spec),
         pareto_frontier=pareto_frontier,
         shortfalls=shortfalls,
+        rejected=_rejection_rows(assessments),
         search_bound=search_bound,
         universe_gaps=universe_gaps,
         panel_confidence=panel_confidence,

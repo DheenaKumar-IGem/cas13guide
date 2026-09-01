@@ -32,7 +32,7 @@ from typing import Any, Sequence
 #: Column key -> (heading, plain-English explanation). NFR6.
 SCORE_GLOSSARY: dict[str, tuple[str, str]] = {
     "rank": ("Rank", "Position after the composite weighted score. Rank 1 is the best overall trade-off, not the best on any single axis."),
-    "verdict": ("Verdict", "PASS cleared every gate. REVIEW cleared the hard gates but something needs a human — see the tier. FAIL never reaches this table."),
+    "verdict": ("Verdict", "PASS cleared every gate. REVIEW cleared the hard gates but something needs a human — see the tier. FAIL never reaches this table — when anything did fail, “Why guides were rejected” below says what the gate measured."),
     "review_tier": ("Tier", "R1 a borderline number. R2 a gap in the evidence, such as an off-target whose expression is unknown. R3 nobody validated this case — the model was asked outside its domain."),
     "spacer": ("Spacer", "The guide RNA sequence to order, 5'→3'. It is the reverse complement of the target site, because Cas13 binds its target as an antiparallel RNA:RNA duplex."),
     "score": ("Score", "Weighted sum of the normalised objectives. Useful for ordering, meaningless as an absolute number — the weights are a preference, not a measurement."),
@@ -367,6 +367,38 @@ def render_report(
         for t in tracks
     )
 
+    # A refusal is a result. The gate composes a numeric explanation for every
+    # guide it fails, and until this section existed a run could say "FAIL: 41"
+    # and offer the reader nothing further -- the strings were built and
+    # dropped. Grouped rather than listed per guide: the reason set is what a
+    # reader acts on, and the counts say which one to act on first.
+    rejected = report.get("rejected") or []
+    rejected_html = ""
+    if rejected:
+        rows = []
+        for group in rejected:
+            reasons = ", ".join(html.escape(str(r)) for r in group.get("reasons") or [])
+            examples = "".join(
+                "<li><code>{}</code>{}</li>".format(
+                    html.escape(str(ex.get("guide_id", ""))),
+                    (" &mdash; " + "; ".join(
+                        html.escape(str(d)) for d in ex.get("detail") or []))
+                    if ex.get("detail") else "",
+                )
+                for ex in group.get("examples") or []
+            )
+            rows.append(
+                f"<tr><td class='FAIL'>{reasons or '&mdash;'}</td>"
+                f"<td>{int(group.get('count', 0))}</td>"
+                f"<td><ul class='plan' style='margin:0'>{examples}</ul></td></tr>"
+            )
+        rejected_html = (
+            "<h2>Why guides were rejected</h2><div class='tablewrap'><table>"
+            "<thead><tr><th>Gate reason</th><th>Guides</th>"
+            "<th>Examples, with the numbers the gate used</th></tr></thead>"
+            "<tbody>" + "".join(rows) + "</tbody></table></div>"
+        )
+
     shortfalls = report.get("shortfalls") or []
     shortfall_html = (
         "<h2>Shortfalls</h2><ul class='plan'>"
@@ -517,6 +549,7 @@ def render_report(
 {confidence_html}
 {controls_html}
 {shortfall_html}
+{rejected_html}
 {plan_html}
 
 <h2>What the scores mean</h2>
