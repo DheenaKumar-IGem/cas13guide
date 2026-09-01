@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 874 tests
+python -m unittest discover -s tests -t tests    # 890 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,7 +727,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-874 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+890 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted — and that sentence is now *measured* rather than
 asserted, by the same rule that gave `verify_against_mirbase()` its reason to
@@ -737,6 +737,16 @@ exist. A claim is worth what the procedure that reproduces it is worth.
 python examples/verify_mutation_coverage.py     # 32 mutations, 32 caught, 0 holes
 python -m mypy src/cas13guide --ignore-missing-imports   # py.typed, checked
 ```
+
+Line coverage is **90%**, and measuring it has one trap worth naming because it
+nearly sent this in the wrong direction. Several tests drive the CLI through
+`subprocess`, and `coverage` does not follow a child process unless it is told
+to — so a plain run reports `cli.py` at **7%** and `_contrafold_kernel.py` at
+**2%**, both of which are artefacts. The kernel is `@njit`, and numba-compiled
+code is not traced at all. With subprocess tracing enabled (a `.pth` calling
+`coverage.process_startup()` plus `COVERAGE_PROCESS_START`), `cli.py` is 86%.
+A coverage number you have not checked the instrument on is a number about the
+instrument.
 
 It copies the tree to a temporary directory, applies one small **semantic**
 change at a time — code that still runs and still looks plausible — and reports
