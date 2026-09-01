@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .calibration import COVERAGE_SLACK
 from .training import (
     TrainingExample,
     TrainingResult,
@@ -151,13 +152,24 @@ def evaluate_dataset(
         )
     else:
         worst_coverage = min((c.empirical for c in result.benchmark.coverage), default=0.0)
+        # The floor the gate applies, not the nominal level it aims at. Every
+        # other criterion here is an exact `>=` against the number it prints,
+        # so a reader had no reason to suspect a hidden 0.05 slack on this one
+        # -- and the line rendered "[PASS] conformal coverage 0.889 (need 0.9)",
+        # self-contradictory on its face, in the criterion annotated "bounds
+        # mean what they claim". Reproduced on a shipped-default `train` run.
+        floor = nominal - COVERAGE_SLACK
         report.criteria.append(
             Criterion(
                 "conformal coverage",
                 result.benchmark.coverage_ok,
                 worst_coverage,
-                nominal,
-                note="bounds mean what they claim",
+                floor,
+                note=(
+                    f"bounds mean what they claim; floor is nominal {nominal:.2f} "
+                    f"less {COVERAGE_SLACK:.2f} for finite-sample slack under "
+                    "grouped splitting"
+                ),
             )
         )
 

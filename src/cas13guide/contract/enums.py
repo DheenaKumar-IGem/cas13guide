@@ -168,9 +168,12 @@ class QCFlag(str, Enum):
     #: which refuses to narrow its interval, so the gate then refuses it.
     SPACER_LENGTH_NONCANONICAL = "spacer_length_noncanonical"
     SPACER_LENGTH_UNSUPPORTED = "spacer_length_unsupported"
-    #: Emitted by neither list today: no QC check raises it. Kept because the
-    #: manufacturability score exists and a synthesis rule is the obvious thing
-    #: to route through it.
+    #: Hard: the spacer carries a character outside ACGU -- an ambiguity code
+    #: from an assembly gap. Not synthesisable as written, and every downstream
+    #: number treats the base as known: ``classify_pair`` scores N:N as
+    #: Watson-Crick and RNAplfold reports it fully unpaired, so a gap *attracted*
+    #: the ranking. Fails the guide rather than deprioritising it, because a
+    #: deprioritised guide is still orderable from the export.
     SYNTHESIS_CONSTRAINT = "synthesis_constraint"
 
 

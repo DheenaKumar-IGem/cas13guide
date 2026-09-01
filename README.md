@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 817 tests
+python -m unittest discover -s tests -t tests    # 828 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,18 +727,18 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-817 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+828 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted.
 
-A hundred and ninety-eight of those tests were added after seven review passes
-found bugs the original suite did not cover, and each one fails against the code
-as it stood. Each pass re-read the previous pass's own diff, and three of them
+Two hundred and nine of those tests were added after eight review passes found
+bugs the original suite did not cover, and each one fails against the code as it
+stood. Each pass re-read the previous pass's own diff, and three of them
 caught a regression the previous pass had introduced — which is the argument for
 doing that, and also its limit.
 
-Confirmed defects per pass were **25, 4, 2, 6, 9, 7, 3**, and the shape of that
-curve is the useful part. Passes one to three *read* the code — module by module,
+Confirmed defects per pass were **25, 4, 2, 6, 9, 7, 3, 4**, and the shape of
+that curve is the useful part. Passes one to three *read* the code — module by module,
 then diff by diff — and converged at 2. Passes four to six *ran* it: flag
 combinations rather than one flag at a time, input fuzzing, determinism across
 process boundaries, the three output surfaces compared field by field, real HTTP
@@ -747,6 +747,10 @@ POSTs, the `train` and `demo` subcommands nobody had exercised, the
 straight back up. Reading a module tells you whether it is self-consistent; only
 running the thing tells you whether two modules agree — and nearly everything
 left was two modules disagreeing.
+
+The eighth pass turned the instruments on the project's own quality machinery
+rather than on the product — the docstrings audited claim by claim, a sweep for
+tests that cannot fail, and the four service modules nothing had pointed at.
 
 Three instruments found nothing that survived verification, which is worth as
 much as a finding: differential testing across all four `SearchIndex`
@@ -760,6 +764,8 @@ because they were live defects rather than hypotheticals:
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| The acceptance gate printed `PASS` beside a value below the threshold on the same line | The verdict applied `empirical >= nominal - 0.05` and the line printed `nominal`, so `[PASS] conformal coverage 0.889 (need 0.9)` accepted a dataset — in the one criterion annotated "bounds mean what they claim" | `test_bugfix_regressions_round8.py` |
+| `BenchmarkReport.summary()` printed `1.000` for strata with **no calibration data** | The `[0,1]` fallback covers by construction, so that figure is vacuous rather than perfect. `acceptance.py` already refused to print it and said why — and the summary it *embeds* printed it two lines away | `test_bugfix_regressions_round8.py` |
 | `-` and `*` were stripped from input sequences as if they were whitespace | Deleting a gap **splices**: the base before the run joins the base after it, and the tiler walks a window across a junction in no molecule. On a 400 nt target with a 30-base gap, 21 of 297 exported guides had a site occurring nowhere in the real sequence — while the same alignment's ruler *digits* were refused with a located message | `test_bugfix_regressions_round7.py` |
 | The web upload decoded with `errors="replace"` | So a cp1252 FASTA the CLI refuses as unreadable ran to completion in the browser with its record name silently swapped to U+FFFD — on the one door whose users cannot read a traceback | `test_bugfix_regressions_round7.py` |
 | A target shorter than the spacer vanished without a word | The run said only "no feasible panel covers t1", which reads as "t1 has no usable guides" rather than "nobody looked" — and on a multi-record FASTA shipped 271 scored candidates from the *other* record while saying it | `test_bugfix_regressions_round7.py` |

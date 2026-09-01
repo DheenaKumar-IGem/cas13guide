@@ -89,7 +89,11 @@ class TestItIsReportedButNotRanked(unittest.TestCase):
 
     def test_the_default_is_to_rank(self):
         """Only a model that has been probed and found flat opts out."""
-        self.assertTrue(MetricVector.predicted_signal_ranks)
+        # On an *instance*. MetricVector is a slots dataclass, so the
+        # class attribute is a member_descriptor whose bool() is
+        # unconditionally True -- this asserted a shape, not the default it
+        # names, and flipping that default left it green.
+        self.assertTrue(MetricVector(0.0, 0.0, 0.0, 0.0, 0.0, 1.0).predicted_signal_ranks)
 
 
 class TestTheRunSaysWhy(unittest.TestCase):

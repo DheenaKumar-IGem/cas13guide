@@ -44,7 +44,18 @@ class BenchmarkReport:
         return all(c.ok for c in self.coverage)
 
     def summary(self) -> str:
-        cov = ", ".join(f"{c.stratum}:{c.empirical:.3f}" for c in self.coverage)
+        # A stratum with no calibration data is scored against the [0, 1]
+        # fallback, which covers by construction -- so 1.000 formatted like a
+        # measurement reads as perfect coverage rather than as no coverage.
+        # `acceptance.py` already refuses to print that number and says why;
+        # `AcceptanceReport.summary()` embeds this line, so the same block
+        # carried both the fix and the thing it was fixing, two lines apart.
+        cov = ", ".join(
+            f"{c.stratum}:vacuous(no calibration data)"
+            if c.uncalibrated
+            else f"{c.stratum}:{c.empirical:.3f}"
+            for c in self.coverage
+        )
         return f"n={self.n} spearman={self.spearman:.3f} mae={self.mae:.3f} coverage[{cov}]"
 
 
