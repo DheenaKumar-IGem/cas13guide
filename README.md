@@ -727,84 +727,93 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-890 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
-invariants the README claims are each pinned by a test that fails when the
-behaviour is reverted — and that sentence is now *measured* rather than
-asserted, by the same rule that gave `verify_against_mirbase()` its reason to
-exist. A claim is worth what the procedure that reproduces it is worth.
+890 tests, run under `unittest` or `pytest`, and 90% line coverage.
+
+Four claims this section makes are **measured rather than asserted**, each by a
+procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
+reason to exist. A claim is worth what the procedure that reproduces it is
+worth.
 
 ```bash
-python examples/verify_mutation_coverage.py     # 32 mutations, 32 caught, 0 holes
+pytest                                                   # 890 tests
+python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python -m mypy src/cas13guide --ignore-missing-imports   # py.typed, checked
 ```
 
-Line coverage is **90%**, and measuring it has one trap worth naming because it
-nearly sent this in the wrong direction. Several tests drive the CLI through
-`subprocess`, and `coverage` does not follow a child process unless it is told
-to — so a plain run reports `cli.py` at **7%** and `_contrafold_kernel.py` at
-**2%**, both of which are artefacts. The kernel is `@njit`, and numba-compiled
-code is not traced at all. With subprocess tracing enabled (a `.pth` calling
-`coverage.process_startup()` plus `COVERAGE_PROCESS_START`), `cli.py` is 86%.
-A coverage number you have not checked the instrument on is a number about the
-instrument.
+**The suite is mutation-checked.** `verify_mutation_coverage.py` copies the tree
+to a temporary directory, applies one small *semantic* change at a time — code
+that still runs and still looks plausible — and reports any the suite fails to
+notice. Two things keep that honest rather than flattering. The mutations are
+subtle: disabling a whole check is caught by any competent suite and proves
+nothing, so half of these instead move a boundary one step, swap a bound for its
+opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
+or take the right operation on the wrong variable. And a survivor is confirmed
+against the **whole** suite before being called a hole — 10 of the 32 are caught
+only by the full run, so a screening subset would have reported ten holes that
+are not there. It mutates the LCB/UCB asymmetry, the six named metrics, every
+FAIL branch in the gate, the QC checks, the panel constraints, the candidate
+budget, the out-of-domain substitution, the conformal quantile, the search-bound
+algebra, the FR6.3 posterior, the kinetics stability guard, and the wobble rule.
 
-It copies the tree to a temporary directory, applies one small **semantic**
-change at a time — code that still runs and still looks plausible — and reports
-any that the suite fails to notice. Two things keep the result honest rather
-than flattering. The mutations are subtle: disabling a whole check is caught by
-any competent suite and proves nothing, so half of these instead move a boundary
-one step, swap a bound for its opposite, drop the finite-sample `(n+1)`
-correction from the conformal quantile, or take the right operation on the wrong
-variable. And a survivor is confirmed against the **whole** suite before being
-called a hole — **10 of the 32 are caught only by the full run**, so a screening
-subset would have reported ten holes that are not there.
+**`py.typed` means what it says.** The marker has shipped in the wheel since the
+first commit, telling every consumer's type checker to trust these annotations,
+and no checker had ever been run: 21 errors in ten files. Most were imprecision
+— but imprecision is what the marker promises there is none of, and one was a
+real inconsistency in the CIGAR builder that worked only because a `str` Enum
+formats as its value.
 
-What it mutates: the LCB/UCB asymmetry, the six named metrics, every FAIL branch
-in the gate, the QC checks, the panel's spacing and diversity constraints, the
-candidate-budget split, the out-of-domain substitution, the conformal quantile
-and its group-adequacy floor, the search-bound algebra, the FR6.3 posterior, the
-kinetics stability guard, the conservation worst-case, and the wobble rule.
+**The invariants hold on generated input.** `tests/test_properties.py` states 33
+of them for `hypothesis`, which was a declared dev dependency that nothing
+imported and that was not even installed. `revcomp` is its own inverse, a spacer
+against its own target is a perfect duplex, hazard is monotone in every factor,
+a smaller alpha never buys a narrower interval, the FR6.3 point estimate never
+leaves the interval it is printed beside, the scanner and the FM index return
+the same hit set on any generated world, and — the rule seven passes kept
+finding new ways to break — an accepted sequence comes back unchanged.
 
-Two hundred and nine of those tests were added after eight review passes found
-bugs the original suite did not cover, and each one fails against the code as it
-stood. A further thirty-three are **property** tests (`tests/test_properties.py`)
-— `hypothesis` was a declared dev dependency that nothing imported and that was
-not even installed, so it had never run once. Almost every load-bearing rule
-here is a property rather than a value, and the example-based suite pins each
-one at the handful of points somebody thought of: `revcomp` is its own inverse,
-a spacer against its own target is a perfect duplex, hazard is monotone in every
-factor, a smaller alpha never buys a narrower interval, the FR6.3 point estimate
-never leaves the interval it is printed beside, the scanner and the FM index
-return the same hit set on any generated world, and — the rule seven passes kept
-finding new ways to break — an accepted sequence comes back unchanged and
-nothing but whitespace is ever removed. Each pass re-read the previous pass's own diff, and three of them
-caught a regression the previous pass had introduced — which is the argument for
-doing that, and also its limit.
+**Coverage is 90%, and the instrument needs checking before the number does.**
+Several tests drive the CLI through `subprocess`, which `coverage` does not
+follow unless told to, so a plain run reports `cli.py` at 7%; with subprocess
+tracing it is 86%. `_contrafold_kernel.py` reports 2% because it is `@njit` and
+numba-compiled code is not traced at all. Both are artefacts, and acting on
+either would have meant writing tests for code that is already tested.
 
-Confirmed defects per pass were **25, 4, 2, 6, 9, 7, 3, 4, 1, 2**, and the shape
-of that curve is the useful part. Passes one to three *read* the code — module by module,
-then diff by diff — and converged at 2. Passes four to six *ran* it: flag
-combinations rather than one flag at a time, input fuzzing, determinism across
-process boundaries, the three output surfaces compared field by field, real HTTP
-POSTs, the `train` and `demo` subcommands nobody had exercised, the
-`--out`/`--stem` paths, and the README audited claim by claim. The count went
+### What nine review passes found
+
+A hundred and fifty-five of them are regression tests from nine review passes
+over the finished code, each written against a defect the original suite did not
+cover, and each failing against the code as it stood. A further sixty came from
+the instruments in the section above — properties, packaging, and the two
+subcommands nothing had run. **61 defects** were fixed, in batches of
+**23, 4, 2, 6, 9, 8, 3, 4, 2** — and the shape of that curve is the useful part.
+
+Passes one to three *read* the code, module by module and then diff by diff, and
+converged at 2. Passes four to six *ran* it — flag combinations rather than one
+flag at a time, input fuzzing, determinism across process boundaries, the three
+output surfaces compared field by field, real HTTP POSTs, the `train` and `demo`
+subcommands nobody had exercised, the `--out`/`--stem` paths — and the count went
 straight back up. Reading a module tells you whether it is self-consistent; only
-running the thing tells you whether two modules agree — and nearly everything
-left was two modules disagreeing.
+running the thing tells you whether two modules agree, and nearly everything left
+was two modules disagreeing. Passes seven to nine turned the instruments on the
+project's own machinery: the docstrings audited claim by claim, a sweep for tests
+that cannot fail, and the biological constants checked against each other.
 
-The eighth pass turned the instruments on the project's own quality machinery
-rather than on the product — the docstrings audited claim by claim, a sweep for
-tests that cannot fail, and the four service modules nothing had pointed at.
+Each pass re-read the previous pass's diff, and **three caught a regression the
+previous pass had introduced** — which is the argument for doing that, and also
+its limit.
 
-Five instruments found nothing that survived verification, which is worth as
+Two later instruments found one more defect each, outside the passes: installing
+the wheel into a clean interpreter (`cas13guide demo` had never worked for anyone
+who did not clone the repo), and the type check above.
+
+**Six instruments found nothing that survived verification**, which is worth as
 much as a finding: differential testing across all four `SearchIndex`
 implementations, property testing of the gate → Pareto → preference order, the
-threaded server under genuine concurrent load, mutation testing (32 mutations,
-32 caught), and an audit of the units and directions every quantity travels in
-— the error class that produces confident, in-range, wrong numbers. The last
-pass, a domain audit of the biological constants and the cited claims against
-each other, returned two stale figures in comments and nothing else. The ones worth naming,
-because they were live defects rather than hypotheticals:
+threaded server under genuine concurrent load, mutation testing, an audit of the
+units and directions every quantity travels in — the error class that produces
+confident, in-range, wrong numbers — and a review of the packaging change itself.
+
+The defects worth naming, because they were live rather than hypothetical:
 
 | What was wrong | Why it mattered | Pinned by |
 |---|---|---|
