@@ -520,5 +520,206 @@ class TestInputIsNeverSilentlyAltered(unittest.TestCase):
         self.assertEqual(record.sequence, sequence)
 
 
+class TestTheDecisionLayerHoldsUnderAnyWeighting(unittest.TestCase):
+    """The claims the gate rests on, stated as properties rather than examples.
+
+    A sweep of this codebase's prose turned up 89 sentences of the form "X
+    never happens" or "Y is always read this way". The structural ones were
+    settled by parsing; these are the behavioural ones, and a generator is the
+    right instrument because each has to hold for *every* weighting a user might
+    supply, not for the handful somebody thought to write down.
+
+    Two of them exist because a weighting is the one input this system lets an
+    outsider choose freely, and the whole architecture rests on it not being
+    able to buy back a refusal.
+    """
+
+    WEIGHTS = st.dictionaries(
+        st.sampled_from([
+            "required_coverage", "desired_utility", "worst_off_target",
+            "cumulative_burden", "robustness", "manufacturability",
+            "pfs_preference", "accessibility", "predicted_signal",
+        ]),
+        st.floats(min_value=0.0, max_value=1000.0, allow_nan=False, allow_infinity=False),
+        min_size=0, max_size=9,
+    )
+
+    @staticmethod
+    def _assessment(guide_id, verdict, coverage):
+        from cas13guide.contract.enums import ReasonCode, Verdict
+        from cas13guide.models.evidence import (
+            Candidate, GateResult, GuideAssessment, MetricVector,
+        )
+
+        reason = (ReasonCode.CONSTRAINTS_SATISFIED if verdict is Verdict.PASS
+                  else ReasonCode.REQUIRED_TARGET_MISSED)
+        return GuideAssessment(
+            guide_id=guide_id,
+            candidate=Candidate(guide_id=guide_id, spacer="A" * 22,
+                                source_target_id="t1", start=0),
+            qc=clean_qc(guide_id),
+            metrics=MetricVector(coverage, 0.0, 0.0, 0.0, coverage, 1.0),
+            gate=GateResult(verdict, (reason,)),
+        )
+
+    @given(weights=WEIGHTS, coverages=st.lists(UNIT, min_size=1, max_size=8))
+    @SETTINGS
+    def test_no_weighting_can_resurrect_a_failed_guide(self, weights, coverages):
+        """"the gate runs first and a failed guide must never be resurrected".
+
+        This is the architectural promise of gate -> Pareto -> preferences. A
+        weight is the one number an outsider supplies freely, so if any
+        assignment of weights could float a FAIL into the ranking, the gate
+        would be advisory rather than a gate.
+        """
+        from cas13guide.contract.enums import Verdict
+        from cas13guide.pipeline.f_decide import rank_by_preference
+
+        pool = [
+            self._assessment(f"g{i}", Verdict.FAIL if i % 2 else Verdict.PASS, c)
+            for i, c in enumerate(coverages)
+        ]
+        ranked = rank_by_preference(pool, weights)
+        self.assertTrue(all(r.assessment.gate.verdict is not Verdict.FAIL for r in ranked))
+
+    @given(weights=WEIGHTS, coverages=st.lists(UNIT, min_size=1, max_size=8))
+    @SETTINGS
+    def test_ranks_are_dense_and_start_at_one(self, weights, coverages):
+        """Ranks number the surviving list; the *marking* of shifted copies is
+        what leaves gaps in what a reader sees, not the ranking itself."""
+        from cas13guide.contract.enums import Verdict
+        from cas13guide.pipeline.f_decide import rank_by_preference
+
+        pool = [self._assessment(f"g{i}", Verdict.PASS, c) for i, c in enumerate(coverages)]
+        ranked = rank_by_preference(pool, weights)
+        self.assertEqual([r.rank for r in ranked], list(range(1, len(pool) + 1)))
+
+    @given(weights=WEIGHTS, coverages=st.lists(UNIT, min_size=1, max_size=8))
+    @SETTINGS
+    def test_a_weighting_never_changes_a_verdict(self, weights, coverages):
+        """Preferences order what survives; they do not decide what survives."""
+        from cas13guide.contract.enums import Verdict
+        from cas13guide.pipeline.f_decide import rank_by_preference
+
+        pool = [
+            self._assessment(f"g{i}", Verdict.PASS if i % 3 else Verdict.REVIEW, c)
+            for i, c in enumerate(coverages)
+        ]
+        before = {a.guide_id: a.gate.verdict for a in pool}
+        ranked = rank_by_preference(pool, weights)
+        # Both halves matter. Checking only the verdicts that come back would
+        # pass vacuously against a ranker that silently dropped guides instead
+        # of reordering them, so the surviving *set* is pinned as well.
+        self.assertEqual({e.assessment.guide_id for e in ranked}, set(before))
+        for entry in ranked:
+            self.assertIs(entry.assessment.gate.verdict, before[entry.assessment.guide_id])
+
+
+class TestHazardIsNeverSoftened(unittest.TestCase):
+    """"Hazard is read at its worst across contexts too -- never averaged."
+
+    Averaging is the tempting mistake: a guide that is safe in three contexts
+    and dangerous in one reads as mostly safe. ``build_metric_vector`` takes the
+    worst, and takes robustness as the *lowest* coverage rather than the
+    reference one -- the headline numbers come from the reference context, and
+    these two deliberately do not.
+
+    Written as properties because the claim is about every possible spread of
+    contexts, and the example suite pins one spread.
+    """
+
+    LEVELS = st.lists(
+        st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False),
+        min_size=2, max_size=6,
+    )
+
+    @staticmethod
+    def _contexts(coverages, hazards):
+        """One context per pair, each with an on-target and an off-target locus."""
+        from cas13guide.contract.enums import TargetClass
+
+        return {
+            ("reference" if i == 0 else f"v{i}"): (
+                make_evidence(cov, cov, locus_id="L1", target_id="t1",
+                              target_class=TargetClass.REQUIRED),
+                make_evidence(haz, haz, locus_id="off1"),
+            )
+            for i, (cov, haz) in enumerate(zip(coverages, hazards))
+        }
+
+    @given(hazards=LEVELS)
+    @SETTINGS
+    def test_hazard_is_the_worst_context_and_never_the_mean(self, hazards):
+        from cas13guide.metrics.aggregate import build_metric_vector, worst_off_target
+
+        contexts = self._contexts([0.5] * len(hazards), hazards)
+        per_context = [worst_off_target(ev) for ev in contexts.values()]
+        vector = build_metric_vector(contexts, clean_qc(), make_spec())
+
+        self.assertEqual(vector.worst_off_target, max(per_context))
+        # The two ways of softening it: averaging, and reading the reference
+        # context alone. Both are strictly wrong whenever the spread is real.
+        if max(per_context) > min(per_context):
+            self.assertGreater(vector.worst_off_target,
+                               sum(per_context) / len(per_context))
+            if per_context[0] < max(per_context):
+                self.assertGreater(vector.worst_off_target, per_context[0])
+
+    @given(hazards=LEVELS, coverages=LEVELS)
+    @SETTINGS
+    def test_one_more_world_can_only_make_a_guide_look_worse(self, hazards, coverages):
+        """Monotone in the evidence: evaluating one further context can lower a
+        guide's standing and never raise it.
+
+        Stated with a context that is strictly worst on both axes, because the
+        weaker phrasing -- "hazard does not decrease" -- is satisfied by taking
+        the mean and by reading the reference alone, and so pins nothing.
+        """
+        from cas13guide.metrics.aggregate import build_metric_vector
+
+        spec, qc = make_spec(), clean_qc()
+        size = min(len(hazards), len(coverages))
+        hazards, coverages = hazards[:size], coverages[:size]
+        before = build_metric_vector(self._contexts(coverages, hazards), qc, spec)
+        after = build_metric_vector(
+            self._contexts(coverages + [0.0], hazards + [1.0]), qc, spec
+        )
+
+        self.assertGreaterEqual(after.worst_off_target, before.worst_off_target)
+        self.assertLessEqual(after.robustness, before.robustness)
+        # And it lands exactly on the new worst, rather than being diluted by
+        # the contexts that were already there.
+        self.assertEqual(after.robustness, 0.0)
+        self.assertGreater(after.worst_off_target, 0.0)
+        self.assertEqual(after.worst_off_target,
+                         max(before.worst_off_target, after.worst_off_target))
+
+    @given(coverages=LEVELS)
+    @SETTINGS
+    def test_robustness_is_the_lowest_coverage_and_not_the_reference(self, coverages):
+        """A guide is only as robust as the variant it does worst against."""
+        from cas13guide.metrics.aggregate import build_metric_vector, required_coverage
+
+        contexts = self._contexts(coverages, [0.1] * len(coverages))
+        per_context = [required_coverage(ev, make_spec()) for ev in contexts.values()]
+        vector = build_metric_vector(contexts, clean_qc(), make_spec())
+
+        self.assertEqual(vector.robustness, min(per_context))
+        for coverage in per_context:
+            self.assertLessEqual(vector.robustness, coverage)
+        # The headline coverage stays the reference context's -- robustness is
+        # the axis that carries the spread, and conflating the two would hide it.
+        self.assertEqual(vector.required_coverage, per_context[0])
+
+    @given(biotype=st.sampled_from(list(__import__(
+        "cas13guide.contract.enums", fromlist=["Universe"]).Universe)))
+    @SETTINGS
+    def test_an_unknown_intent_class_never_zeroes_the_hazard(self, biotype):
+        """``never 0.0, which would erase the hazard``. Ignorance about intent
+        has to cost something, or an unlabelled locus becomes free."""
+        weight = make_spec().hazard.weight_for(None, biotype)
+        self.assertGreater(weight, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
