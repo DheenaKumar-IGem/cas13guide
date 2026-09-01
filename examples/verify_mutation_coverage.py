@@ -22,9 +22,9 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 828 tests before being called a hole. So a
+  survives is re-run against all 976 tests before being called a hole. So a
   "hole" is never an artefact of which modules were chosen. Ten of the
-  thirty-three are caught *only* by the full suite, which is why that second
+  thirty-two are caught *only* by the full suite, which is why that second
   stage is not optional.
 
 Run it::
