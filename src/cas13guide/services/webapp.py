@@ -144,11 +144,19 @@ def _parse_multipart(body: bytes, content_type: str) -> dict[str, Any]:
     if not message.is_multipart():
         return fields
     for part in message.iter_parts():
-        name = part.get_param("name", header="content-disposition")
-        if not name:
+        raw_name = part.get_param("name", header="content-disposition")
+        if not raw_name:
             continue
+        # ``get_param`` returns a 3-tuple (charset, language, value) for an
+        # RFC 2231 encoded parameter, and a plain str otherwise. A client that
+        # sends the encoded form would otherwise key the field dict by a tuple,
+        # which nothing downstream looks up.
+        name = raw_name[2] if isinstance(raw_name, tuple) else str(raw_name)
         filename = part.get_filename()
-        payload = part.get_payload(decode=True) or b""
+        raw_payload = part.get_payload(decode=True)
+        # ``decode=True`` yields bytes for a leaf part and None for a multipart
+        # one; a nested multipart in a form field is not something to guess at.
+        payload = raw_payload if isinstance(raw_payload, bytes) else b""
         if filename:
             if payload:
                 # Strictly, and through the same helper the file door uses. It

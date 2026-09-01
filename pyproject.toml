@@ -31,7 +31,8 @@ arc = ["onnxruntime>=1.17"]
 # A pure-Python CONTRAfold CRF, so it needs no compiler -- which is the only
 # reason the Arc model is usable on a machine without a C++ toolchain.
 contrafold = ["gpu-contrafold>=0.1"]
-dev = ["pytest>=7.4", "hypothesis>=6.90", "ViennaRNA>=2.6", "onnxruntime>=1.17", "gpu-contrafold>=0.1"]
+dev = ["pytest>=7.4", "hypothesis>=6.90", "mypy>=1.8", "ViennaRNA>=2.6",
+       "onnxruntime>=1.17", "gpu-contrafold>=0.1"]
 
 [project.scripts]
 cas13guide = "cas13guide.cli:main"

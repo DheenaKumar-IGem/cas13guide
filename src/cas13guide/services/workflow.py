@@ -276,7 +276,7 @@ def build_registry(request: DesignRequest, notes: list[str], spec=None, records=
             from .accessibility import ViennaRNAAccessibilityModel
             from .thermodynamics import ViennaRNADuplexEnergyModel
 
-            accessibility = ViennaRNAAccessibilityModel()
+            accessibility = ViennaRNAAccessibilityModel()   # type: ignore[assignment]
             extra["energy"] = ViennaRNADuplexEnergyModel()
         except Exception as exc:
             notes.append(

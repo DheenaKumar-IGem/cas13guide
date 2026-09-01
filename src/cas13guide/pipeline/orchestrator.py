@@ -299,7 +299,7 @@ def run_design(
         # folded to the weakest: a variant context whose index covers fewer
         # universes leaves exactly the same hole, and reading the reference
         # context alone would not see it.
-        universe_gaps: frozenset[Universe] = outcome.universe_gaps
+        universe_gaps = outcome.universe_gaps
 
         for ctx in contexts:
             ctx_outcome = (

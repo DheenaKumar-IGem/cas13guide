@@ -192,6 +192,20 @@ class CalibrationService:
 
     version = "calibration/split-conformal/v1"
 
+    #: True when this set was generated rather than measured.
+    #: ``services/limitations.py`` reads it to raise the CRITICAL
+    #: synthetic-calibration warning, and ``services/workflow.py`` sets it when
+    #: it seeds a stand-in. Declared here rather than attached to the instance
+    #: from outside: an attribute a module conjures onto an object it does not
+    #: own is one typo away from being silently ignored by the reader, and the
+    #: reader is a ``getattr`` with a default that would not notice.
+    synthetic: bool = False
+
+    #: What produced this set -- for a synthetic one, the seed, size and noise.
+    #: The orchestrator records it in the provenance ledger and the exports
+    #: carry it, so two runs differing only in seed are distinguishable.
+    source: dict | None = None
+
     def __init__(
         self,
         min_stratum_n: int = MIN_STRATUM_N,

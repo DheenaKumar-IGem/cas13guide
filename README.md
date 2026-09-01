@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 871 tests
+python -m unittest discover -s tests -t tests    # 874 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,7 +727,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-871 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+874 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted — and that sentence is now *measured* rather than
 asserted, by the same rule that gave `verify_against_mirbase()` its reason to
@@ -735,6 +735,7 @@ exist. A claim is worth what the procedure that reproduces it is worth.
 
 ```bash
 python examples/verify_mutation_coverage.py     # 32 mutations, 32 caught, 0 holes
+python -m mypy src/cas13guide --ignore-missing-imports   # py.typed, checked
 ```
 
 It copies the tree to a temporary directory, applies one small **semantic**

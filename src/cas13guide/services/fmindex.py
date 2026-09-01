@@ -252,6 +252,11 @@ class FMIndexSearchIndex:
         )
         if self.fm is None:
             return SearchResult(hits=(), bound=bound)
+        # Bound once, after the guard. The walk below is a closure, and a
+        # closure re-reading ``self.fm`` is not covered by the narrowing above
+        # -- true for a type checker and true for a future maintainer who moves
+        # the guard.
+        fm = self.fm
 
         pattern = revcomp(spacer)  # the perfect target site
         length = len(pattern)
@@ -261,7 +266,7 @@ class FMIndexSearchIndex:
             if lo >= hi:
                 return
             if pos < 0:
-                starts.extend(self.fm.sa[lo:hi])
+                starts.extend(fm.sa[lo:hi])
                 return
             expected = pattern[pos]
             for c in self.walk_alphabet:
@@ -271,11 +276,11 @@ class FMIndexSearchIndex:
                     delta = 1
                 if cost + delta > max_mismatches:
                     continue
-                next_lo, next_hi = self.fm.extend_backward(c, lo, hi)
+                next_lo, next_hi = fm.extend_backward(c, lo, hi)
                 if next_lo < next_hi:
                     walk(pos - 1, next_lo, next_hi, cost + delta)
 
-        lo, hi = self.fm.full_interval()
+        lo, hi = fm.full_interval()
         walk(length - 1, lo, hi, 0)
 
         hits: list[SearchHit] = []
@@ -324,6 +329,7 @@ class FMIndexSearchIndex:
         """
         if self.fm is None:
             return False
+        fm = self.fm            # see search(): the walk below is a closure
 
         pattern = revcomp(spacer)
         length = len(pattern)
@@ -335,7 +341,7 @@ class FMIndexSearchIndex:
             if lo >= hi:
                 return
             if pos < 0:
-                for global_start in self.fm.sa[lo:hi]:
+                for global_start in fm.sa[lo:hi]:
                     if self._locate(global_start, length) is not None:
                         raise _Found
                 return
@@ -348,11 +354,11 @@ class FMIndexSearchIndex:
                 )
                 if cost + delta > max_mismatches:
                     continue
-                next_lo, next_hi = self.fm.extend_backward(c, lo, hi)
+                next_lo, next_hi = fm.extend_backward(c, lo, hi)
                 if next_lo < next_hi:
                     walk(pos - 1, next_lo, next_hi, cost + delta)
 
-        lo, hi = self.fm.full_interval()
+        lo, hi = fm.full_interval()
         try:
             walk(length - 1, lo, hi, 0)
         except _Found:

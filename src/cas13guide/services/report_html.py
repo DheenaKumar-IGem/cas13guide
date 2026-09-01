@@ -411,7 +411,7 @@ def render_report(
             attrs = ' class="seq"' if key in ("guide_id", "locus") else ""
             return f"<td{attrs}>{html.escape(_fmt(row.get(key)))}</td>"
 
-        rows = "".join(
+        off_target_rows = "".join(
             "<tr>" + "".join(_cell(row, key) for key in _OFF_TARGET_COLUMNS) + "</tr>"
             for row in off_targets
         )
@@ -428,14 +428,14 @@ def render_report(
             "<div class='tablewrap'><table><thead><tr>"
             + head
             + "</tr></thead><tbody>"
-            + rows
+            + off_target_rows
             + "</tbody></table></div>"
         )
 
     controls = report.get("controls") or []
     controls_html = ""
     if controls:
-        rows = "".join(
+        control_rows = "".join(
             f"<tr><td class='seq'>{html.escape(str(c.get('guide_id')))}</td>"
             f"<td class='seq'>{html.escape(str(c.get('spacer')) or '—')}</td>"
             f"<td>{_fmt(c.get('gc'))}</td>"
@@ -446,7 +446,7 @@ def render_report(
             "<h2>Non-targeting controls</h2><div class='tablewrap'><table>"
             "<thead><tr><th>Control</th><th>Spacer</th><th>GC</th>"
             "<th>Verified non-targeting</th></tr></thead>"
-            f"<tbody>{rows}</tbody></table></div>"
+            f"<tbody>{control_rows}</tbody></table></div>"
         )
 
     # Limitations lead, above the table. A reader who stops after the first

@@ -124,12 +124,12 @@ def profile_duplex(spacer: str, target_site: str) -> DuplexProfile:
     ordered = list(reversed(cigar_parts))
     cigar: list[str] = []
     run_kind, run_len = ordered[0], 1
-    for kind in ordered[1:]:
-        if kind == run_kind:
+    for symbol in ordered[1:]:
+        if symbol == run_kind:
             run_len += 1
         else:
             cigar.append(f"{run_len}{run_kind}")
-            run_kind, run_len = kind, 1
+            run_kind, run_len = symbol, 1
     cigar.append(f"{run_len}{run_kind}")
 
     return DuplexProfile(

@@ -33,6 +33,7 @@ from .contract.spec import (
     TargetContract,
     TargetSpec,
 )
+from .pipeline.g_output import DesignReport
 from .pipeline.orchestrator import DesignContext, run_design
 from .services.calibration import CalibrationService
 from .services.registry import (
@@ -102,7 +103,7 @@ def seed_calibration(spec: ResolvedDesignSpec) -> CalibrationService:
     return cs
 
 
-def main() -> None:
+def main() -> DesignReport:
     reference, variant, locus_to_target = build_world()
 
     contract = TargetContract(

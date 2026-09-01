@@ -143,7 +143,7 @@ def limitations_for_run(
         )
 
     # ---- panel confidence (FR6.3) ---------------------------------------
-    if panel_confidence is not None and getattr(panel_confidence, "targets", ()):
+    if panel_confidence is not None and getattr(panel_confidence, "targets", None):
         if not getattr(panel_confidence, "has_point_estimates", False):
             found.append(
                 Limitation(

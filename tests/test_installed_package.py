@@ -100,5 +100,48 @@ class TestThePackagedDataIsDeclared(unittest.TestCase):
                 self.assertTrue(callable(getattr(module, attribute)))
 
 
+
+class TestThePyTypedClaimHolds(unittest.TestCase):
+    """``py.typed`` tells a downstream type checker to trust these annotations.
+
+    It is a promise made to every consumer of the package, shipped in the wheel
+    since the first commit, and no type checker had ever been run over the
+    source: 21 errors, in ten files. Most were imprecision rather than a runtime
+    fault -- but imprecision is exactly what the marker promises there is none
+    of, and one of the twenty-one was a real inconsistency in the CIGAR builder
+    that only worked because a ``str`` Enum formats as its value.
+
+    The check is a script rather than an assertion in this test, because mypy is
+    a dev dependency and this suite must run without it -- the same shape as
+    ``examples/verify_mutation_coverage.py``. The test below states the promise
+    and skips, loudly, when the tool to check it is absent.
+    """
+
+    def test_mypy_reports_no_errors_in_the_package(self):
+        try:
+            import mypy  # noqa: F401
+        except ImportError:
+            self.skipTest("mypy is not installed; pip install -e '.[dev]'")
+
+        result = subprocess.run(
+            [sys.executable, "-m", "mypy", "src/cas13guide", "--ignore-missing-imports"],
+            capture_output=True, text=True, timeout=900, cwd=str(REPO),
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            "py.typed promises these annotations are reliable:\n" + result.stdout,
+        )
+
+    def test_the_marker_is_shipped_where_it_has_to_be(self):
+        """A marker outside the package directory is invisible to consumers."""
+        self.assertTrue((REPO / "src" / "cas13guide" / "py.typed").is_file())
+
+    def test_mypy_is_declared_so_the_promise_is_checkable(self):
+        import tomllib
+
+        config = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+        dev = " ".join(config["project"]["optional-dependencies"]["dev"])
+        self.assertIn("mypy", dev)
+
 if __name__ == "__main__":
     unittest.main()

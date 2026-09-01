@@ -281,6 +281,12 @@ class ExhaustiveScanIndex:
                 [start + len(locus.sequence) for start, locus in zip(offsets, self._loci)],
                 dtype=np.int64,
             )
+        # Narrowed for the return: all three are filled together above, and a
+        # reader (or a type checker) should not have to prove that from the
+        # branch structure.
+        assert self._corpus is not None
+        assert self._offsets is not None
+        assert self._ends is not None
         return self._corpus, self._offsets, self._ends
 
     def _within_locus(self, starts: np.ndarray, length: int) -> tuple[np.ndarray, np.ndarray]:
