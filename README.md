@@ -771,9 +771,9 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-930 tests, run under `unittest` or `pytest`, and 90% line coverage.
+976 tests, run under `unittest` or `pytest`, and 90% line coverage.
 
-Four claims this section makes are **measured rather than asserted**, each by a
+Five claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
 reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
@@ -781,6 +781,7 @@ worth.
 ```bash
 pytest                                                   # 976 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
+python examples/verify_gate_coverage.py                  # 18 of 18 verdicts reached
 python -m mypy                                           # py.typed, checked
 ```
 
@@ -798,6 +799,20 @@ are not there. It mutates the LCB/UCB asymmetry, the six named metrics, every
 FAIL branch in the gate, the QC checks, the panel constraints, the candidate
 budget, the out-of-domain substitution, the conformal quantile, the search-bound
 algebra, the FR6.3 posterior, the kinetics stability guard, and the wobble rule.
+
+**Every verdict the tool can reach is reached by a test.** `verify_gate_coverage.py`
+records which `ReasonCode` values the suite actually produces — at the gate and
+in the orchestrator's budget shortfalls — and reports any that never come out. A
+code nothing produces is a verdict a user can receive that nobody has watched
+happen: either dead code, or a live path with no coverage. It found three of the
+second kind. Two were reachable only once the spec sets a floor or a window, and
+`--min-accessibility` is a shipped flag, so turning it on ran code no test had
+executed; the third needed no flag at all and sat in the narrow band just under
+the hazard budget. All three were correct — which is the usual outcome, and not
+a reason to skip the check, because nobody knew. It measures whether a verdict
+is *produced*, not whether anything asserts it: a floor, in the way line
+coverage is a floor. The mutation check above is what asks whether behaviour is
+pinned.
 
 **`py.typed` means what it says.** The marker has shipped in the wheel since the
 first commit, telling every consumer's type checker to trust these annotations,
