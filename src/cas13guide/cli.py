@@ -15,10 +15,15 @@ from pathlib import Path
 
 
 def _demo(args: argparse.Namespace) -> int:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples"))
-    import demo_knockdown  # type: ignore
+    # Imported from the package, not fished out of an ``examples/`` directory
+    # two levels up. That path exists only in a source checkout and does not
+    # ship in the wheel, so for anyone who pip-installed this package the
+    # subcommand advertised in ``--help`` died with ModuleNotFoundError and
+    # exit 1. Found by installing the wheel into a clean interpreter and
+    # running the documented commands from outside the source tree.
+    from .demo import main as run_demo
 
-    demo_knockdown.main()
+    run_demo()
     return 0
 
 

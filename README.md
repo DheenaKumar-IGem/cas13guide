@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 861 tests
+python -m unittest discover -s tests -t tests    # 869 tests
 pytest                              # same suite under pytest
 ```
 
@@ -727,7 +727,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-861 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
+869 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
 invariants the README claims are each pinned by a test that fails when the
 behaviour is reverted — and that sentence is now *measured* rather than
 asserted, by the same rule that gave `verify_against_mirbase()` its reason to
@@ -797,6 +797,7 @@ because they were live defects rather than hypotheticals:
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| `cas13guide demo` **tracebacked for every installed user** | `_demo` put `<cli.py>/../../examples` on `sys.path` and imported `demo_knockdown`; from site-packages that resolves to `Lib/examples`, which does not exist, because `examples/` is not in the wheel. A subcommand named in `--help` died with `ModuleNotFoundError` and exit 1 for anyone who did not clone the repo | `test_installed_package.py` |
 | The acceptance gate printed `PASS` beside a value below the threshold on the same line | The verdict applied `empirical >= nominal - 0.05` and the line printed `nominal`, so `[PASS] conformal coverage 0.889 (need 0.9)` accepted a dataset — in the one criterion annotated "bounds mean what they claim" | `test_bugfix_regressions_round8.py` |
 | `BenchmarkReport.summary()` printed `1.000` for strata with **no calibration data** | The `[0,1]` fallback covers by construction, so that figure is vacuous rather than perfect. `acceptance.py` already refused to print it and said why — and the summary it *embeds* printed it two lines away | `test_bugfix_regressions_round8.py` |
 | `-` and `*` were stripped from input sequences as if they were whitespace | Deleting a gap **splices**: the base before the run joins the base after it, and the tiler walks a window across a junction in no molecule. On a 400 nt target with a 30-base gap, 21 of 297 exported guides had a site occurring nowhere in the real sequence — while the same alignment's ruler *digits* were refused with a located message | `test_bugfix_regressions_round7.py` |

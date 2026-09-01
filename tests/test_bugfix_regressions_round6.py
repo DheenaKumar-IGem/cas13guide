@@ -316,18 +316,21 @@ class TestTheDemoDoesNotClaimAVerdictItsRowsLack(unittest.TestCase):
     """The bundled demo printed "top ranked (PASS only)" two lines under its
     own "0 PASS of 108"."""
 
-    def test_the_header_names_what_ranked_actually_is(self):
-        source = (
-            Path(__file__).resolve().parents[1] / "examples" / "demo_knockdown.py"
+    @staticmethod
+    def _demo_source() -> str:
+        """The demo moved into the package so ``cas13guide demo`` works from a
+        wheel; ``examples/demo_knockdown.py`` is now a wrapper around it."""
+        return (
+            Path(__file__).resolve().parents[1] / "src" / "cas13guide" / "demo.py"
         ).read_text(encoding="utf-8")
+
+    def test_the_header_names_what_ranked_actually_is(self):
+        source = self._demo_source()
         self.assertNotIn("top ranked (PASS only)", source)
         self.assertIn("gate survivors", source)
 
     def test_it_carries_the_triage_note_the_cli_carries(self):
-        source = (
-            Path(__file__).resolve().parents[1] / "examples" / "demo_knockdown.py"
-        ).read_text(encoding="utf-8")
-        self.assertIn("not a recommendation", source)
+        self.assertIn("not a recommendation", self._demo_source())
 
 
 if __name__ == "__main__":
