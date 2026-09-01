@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 920 tests
+python -m unittest discover -s tests -t tests    # 924 tests
 pytest                              # same suite under pytest
 ```
 
@@ -372,9 +372,17 @@ first three are announced on every run; the last raises.
 ## The load-bearing ideas
 
 **Asymmetric bounds.** Benefit is read at its lower confidence bound, hazard at
-its upper one. `metrics/bounds.py` is the only place intervals are constructed,
-so the asymmetry cannot be accidentally dropped downstream. A low point
-prediction is never evidence of safety.
+its upper one. A low point prediction is never evidence of safety.
+
+What holds that in place is not where intervals are *constructed* — they are
+built in three modules, and construction is not what could drop the asymmetry
+anyway. It is that **every benefit read goes through `benefit_lower`**: no
+module anywhere reads `.lower` off an activity or expression interval directly,
+so the one dangerous mistake — reading a benefit at the *upper* end of a wide
+interval and calling it evidence — has no site to happen at. Hazards do read
+`.upper` directly in five places, which is the safe direction and visibly so.
+`tests/test_bound_asymmetry.py` checks both halves; this section used to claim
+the construction mechanism instead, which was false and protected nothing.
 
 **Evidence is normalised at the pair level.** `PairEvidence` is
 `guide × locus × context`; `GuideAssessment` is what you get after aggregation.
@@ -763,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-920 tests, run under `unittest` or `pytest`, and 90% line coverage.
+924 tests, run under `unittest` or `pytest`, and 90% line coverage.
 
 Four claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -771,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 920 tests
+pytest                                                   # 924 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python -m mypy src/cas13guide --ignore-missing-imports   # py.typed, checked
 ```
