@@ -259,5 +259,131 @@ class TestRuntimeIsBoundedByTheCandidateBudget(unittest.TestCase):
         self.assertIn("bounded by the candidate budget", readme)
         self.assertNotIn("measured at 0.2–3.4 s", readme)
 
+
+class TestOffTargetSitesAreNotFolded(unittest.TestCase):
+    """Accessibility was computed for every hit, including off-target ones.
+
+    Every reader of ``PairEvidence.accessibility`` is guarded by
+    ``is_intended``: ``intended_accessibility`` and the metric vector both skip
+    a non-intended pair, the off-target explorer has no accessibility column,
+    and a folded profile is not independent evidence so it never reaches the
+    activity model. Computing it for an off-target hit meant a full
+    ``pfl_fold_up`` over that locus's whole sequence, thrown away.
+
+    It is the dominant cost of any run with a real background corpus, because
+    that is precisely where the off-target hits are: 7.85s to 0.90s of folding
+    on a 1.5 kb target against 25 background loci, for a report that is
+    byte-identical either way.
+    """
+
+    def _design(self, background: bool):
+        import random
+        import tempfile as tf
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        rng = random.Random(3)
+        target = "".join(rng.choice("ACGU") for _ in range(900))
+        directory = Path(tf.mkdtemp())
+        (directory / "t.fa").write_text(f">T1\n{target}\n", encoding="utf-8")
+        extra = {}
+        if background:
+            loci = []
+            for index in range(4):
+                filler = "".join(rng.choice("ACGU") for _ in range(120))
+                loci.append(f">BG{index}\n{filler}{target[100:300]}{filler}")
+            (directory / "bg.fa").write_text("\n".join(loci) + "\n", encoding="utf-8")
+            extra["background_path"] = str(directory / "bg.fa")
+        return run_request(
+            DesignRequest(fasta_path=str(directory / "t.fa"), task="knockdown",
+                          assay="cell_culture_knockdown", effector="RfxCas13d", **extra)
+        )
+
+    def test_an_off_target_pair_carries_no_accessibility(self):
+        """Asserted on the evidence, because the report has no column for it --
+        which is exactly why computing it was waste."""
+        import dataclasses
+
+        from cas13guide.contract.enums import TargetClass
+        from cas13guide.pipeline.d_pair_evidence import evidence_for_hit
+        from cas13guide.services.calibration import CalibrationService
+        from cas13guide.services.context import StaticExpressionSource
+        from cas13guide.services.registry import ModelRegistry
+        from cas13guide.services.transcriptome import Locus, Transcriptome
+        from cas13guide.contract.enums import Universe
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from helpers import SEQ_A, SEQ_B, make_hit, make_spec  # noqa: F401
+
+        class _Folding:
+            """Records every sequence it is asked to fold."""
+
+            version = "accessibility/test/v1"
+            is_independent_evidence = False
+
+            def __init__(self):
+                self.asked = []
+
+            def accessibility(self, sequence, start, length):
+                self.asked.append(sequence)
+                return 0.5
+
+        world = Transcriptome("GRCh38", "v44")
+        world.add(Locus("L_t1", SEQ_A, Universe.NCRNA, gene="t1", expression=10.0))
+        world.add(Locus("L_off", SEQ_B, Universe.CODING, gene="off", expression=10.0))
+        model = _Folding()
+        from cas13guide.services.registry import HeuristicCas13Model
+
+        registry = ModelRegistry(HeuristicCas13Model(), model)
+        spec = make_spec()
+        calibration = CalibrationService()
+        expression = StaticExpressionSource({})
+
+        intended = evidence_for_hit(
+            make_hit("g1", "L_t1", "t1", TargetClass.REQUIRED), "A" * 22, spec,
+            registry, calibration, world, expression,
+        )
+        off_target = evidence_for_hit(
+            dataclasses.replace(make_hit("g1", "L_off"), target_class=None),
+            "A" * 22, spec, registry, calibration, world, expression,
+        )
+        self.assertIsNotNone(intended.accessibility)
+        self.assertIsNone(off_target.accessibility)
+        self.assertEqual(model.asked, [SEQ_A], "an off-target locus was folded")
+
+    def test_the_intended_site_still_has_one(self):
+        """The saving must not have cost the value that is actually used."""
+        outcome = self._design(background=True)
+        values = [
+            row["accessibility"] for row in outcome.report["ranked"][:10]
+            if row["accessibility"] is not None
+        ]
+        self.assertTrue(values, "intended accessibility disappeared")
+        for value in values:
+            self.assertGreaterEqual(value, 0.0)
+            self.assertLessEqual(value, 1.0)
+
+    def test_the_gate_still_sees_accessibility(self):
+        """`min_accessibility` reads the intended-site value; it must survive."""
+        from cas13guide.metrics.aggregate import intended_accessibility
+
+        self.assertTrue(callable(intended_accessibility))
+        outcome = self._design(background=False)
+        self.assertTrue(
+            any(row["accessibility"] is not None for row in outcome.report["ranked"])
+        )
+
+    def test_adding_background_does_not_change_the_intended_numbers(self):
+        """The whole argument for the change: identical report, less work."""
+        with_bg = self._design(background=True)
+        without = self._design(background=False)
+        pick = lambda outcome: {          # noqa: E731
+            row["guide_id"]: row["accessibility"] for row in outcome.report["ranked"]
+        }
+        shared = set(pick(with_bg)) & set(pick(without))
+        self.assertTrue(shared)
+        for guide_id in shared:
+            self.assertEqual(pick(with_bg)[guide_id], pick(without)[guide_id])
+
 if __name__ == "__main__":
     unittest.main()

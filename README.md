@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 894 tests
+python -m unittest discover -s tests -t tests    # 898 tests
 pytest                              # same suite under pytest
 ```
 
@@ -735,6 +735,14 @@ is why `--no-structure` roughly halves the total and why the README quoted a
 much smaller range before anyone measured a full-length mRNA: the earlier figure
 was taken on targets short enough that folding was cheap.
 
+Profiling also found work being done for nothing. Accessibility was computed for
+*every* hit, and every reader of it is guarded by `is_intended` — so each
+off-target hit paid a full fold over its locus's whole sequence and the result
+was discarded. That is the dominant cost of a run with a real background corpus,
+because a background corpus is precisely where the off-target hits are: on a
+1.5 kb target against 25 background loci, **7.85 s → 3.01 s**, for a report that
+is byte-identical either way.
+
 ## Seams for real components
 
 Everything expensive sits behind a `Protocol` with a working reference
@@ -755,7 +763,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-894 tests, run under `unittest` or `pytest`, and 90% line coverage.
+898 tests, run under `unittest` or `pytest`, and 90% line coverage.
 
 Four claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -763,7 +771,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 894 tests
+pytest                                                   # 898 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python -m mypy src/cas13guide --ignore-missing-imports   # py.typed, checked
 ```
