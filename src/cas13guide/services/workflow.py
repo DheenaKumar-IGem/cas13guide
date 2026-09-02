@@ -652,6 +652,27 @@ def run_request(request: DesignRequest) -> DesignOutcome:
     )
     notes = as_lines(found) + notes
 
+    # The terminal, the HTML report and the export headers all carried these.
+    # The machine-readable report did not -- `report.json` had no limitations
+    # key at all, so a pipeline reading it saw PASS verdicts and calibrated
+    # intervals with nothing saying the calibration was synthetic and every
+    # PASS therefore exercisable rather than earned. That is the one surface
+    # where a caveat cannot be inferred from tone, and it was the only surface
+    # without them.
+    #
+    # Structured rather than rendered: `notes` is the prose form and is already
+    # in the exports. A caller switching on severity should not have to parse
+    # "CRITICAL: " off the front of a sentence.
+    data["limitations"] = [
+        {
+            "id": limitation.id,
+            "severity": limitation.severity.value,
+            "text": limitation.text,
+            "source": limitation.source,
+        }
+        for limitation in found
+    ]
+
     return DesignOutcome(
         report=data, records=records, spec=spec, notes=notes, profile=profile,
         limitations=found,

@@ -205,8 +205,41 @@ def main() -> DesignReport:
         for s in report.shortfalls:
             print(f"  ! {s}")
 
+    # The demo printed a panel, a ranking and a validation plan, and not one
+    # word about what none of it establishes -- no mention that the calibration
+    # is synthetic and every PASS therefore exercisable rather than earned,
+    # that the activity model is a saturating heuristic, or that collateral is
+    # not predicted at all. `design` prints all four. This is the first command
+    # anybody runs, and a tool whose argument is that it says what it could not
+    # establish cannot have its showcase say nothing.
+    from .services.limitations import as_lines, limitations_for_run
+
+    limitations = limitations_for_run(
+        spec,
+        registry=registry,
+        calibration=calibration,
+        bound=report.search_bound,
+        universe_gaps=report.universe_gaps,
+        panel_size=len(report.panel.guides),
+        panel_confidence=report.panel_confidence,
+        provenance=report.provenance,
+    )
+    if limitations:
+        print("\n--- what this run does not establish ---")
+        for line in as_lines(limitations):
+            print(f"  {line}")
+
+    data = report.to_dict()
+    # Structured, not the rendered lines: a caller switching on severity should
+    # not have to parse "CRITICAL: " off the front of a sentence.
+    data["limitations"] = [
+        {"id": item.id, "severity": item.severity.value,
+         "text": item.text, "source": item.source}
+        for item in limitations
+    ]
+
     destination = Path("report.json")
-    destination.write_text(json.dumps(report.to_dict(), indent=2, default=str))
+    destination.write_text(json.dumps(data, indent=2, default=str))
     # Resolved, because "wrote report.json" does not say *where* when the
     # command can now be run from any directory on any machine.
     print(f"\nwrote {destination.resolve()}")
