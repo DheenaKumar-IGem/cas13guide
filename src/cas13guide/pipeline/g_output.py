@@ -256,6 +256,19 @@ class DesignReport:
                     "pfs_3prime": r.assessment.candidate.three_prime_flank,
                     "pfs_preferred": r.assessment.qc.pfs_preference == 1.0,
                     "qc_warnings": [w.value for w in r.assessment.qc.warnings],
+                    # QC measures three things about every spacer and, until
+                    # now, reported none of them. GC fraction in particular is
+                    # the first number anybody ordering an oligo writes down,
+                    # and the gate FAILs outside [0.30, 0.70] -- so where a
+                    # surviving guide sits inside that band is exactly what a
+                    # reader wants and could not get.
+                    "gc": round(r.assessment.qc.gc, 4),
+                    "max_homopolymer": r.assessment.qc.max_homopolymer,
+                    # The *proxy* stem length, which is not always what gated
+                    # the guide: with ViennaRNA installed the flag comes from a
+                    # real fold energy instead. Named for what it is so the two
+                    # cannot be confused.
+                    "self_fold_stem": r.assessment.qc.self_fold_score,
                     "accessibility": (
                         None if r.assessment.metrics.accessibility is None
                         else round(r.assessment.metrics.accessibility, 4)

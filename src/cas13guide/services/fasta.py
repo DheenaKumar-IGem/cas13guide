@@ -316,6 +316,10 @@ RANKED_COLUMNS: tuple[str, ...] = (
     # from a multi-record design said which guide, and never which target.
     "source_target_id",
     "start",
+    # Measured by QC for every candidate and, until now, reported nowhere.
+    "gc",
+    "max_homopolymer",
+    "self_fold_stem",
 )
 
 
@@ -475,7 +479,8 @@ def ranked_to_fasta(
         # only as a companion to the CSV", and a spacer with no target and no
         # coordinate is not: recovering either means searching the sequence
         # back against the input by hand.
-        for key, label in (("source_target_id", "target"), ("start", "start")):
+        for key, label in (("source_target_id", "target"), ("start", "start"),
+                           ("gc", "gc")):
             if entry.get(key) is not None:
                 parts.append(f"{label}={entry[key]}")
         records.append(

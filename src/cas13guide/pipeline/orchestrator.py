@@ -364,6 +364,12 @@ def run_design(
         search_escalations=telemetry.search_escalations,
         panel_retiles=telemetry.panel_retiles,
         final_envelope=telemetry.final_envelope,
+        # The retile loop's counterpart to final_envelope. It was assigned on
+        # the line above the ledger call and reported nowhere, so a reader
+        # could see that two retiles happened without seeing what step they
+        # settled on -- which is the number that says how densely the target
+        # was actually tiled.
+        final_step=telemetry.final_step,
         shortfall_codes=[c.value for c in telemetry.reason_codes],
     )
 
