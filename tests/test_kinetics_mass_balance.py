@@ -204,6 +204,81 @@ class TestConstantsCanActuallyBeSupplied(unittest.TestCase):
             model.absolute_signal(0.9)
 
 
+class TestConstantsSuppliedWithSignalOff(unittest.TestCase):
+    """Two flags that contradict each other, and the file went unread.
+
+    ``--kinetics-constants FILE --no-signal`` asks for constants and turns off
+    the only thing that uses them. The file was not opened at all, so a
+    malformed one passed unnoticed: a typo in a scripted pipeline would surface
+    the first time somebody dropped ``--no-signal``, on a run that had
+    "worked" for weeks.
+
+    Same shape as an accessibility floor set without a folding engine -- a
+    request the run cannot honour has to say so rather than proceed quietly.
+    """
+
+    @staticmethod
+    def _constants_file(*, valid: bool):
+        import dataclasses
+        import json
+        import pathlib
+        import tempfile
+
+        from cas13guide.services.kinetics import PROVISIONAL_CONSTANTS
+
+        path = pathlib.Path(tempfile.mkdtemp()) / "kinetics.json"
+        if valid:
+            data = dataclasses.asdict(PROVISIONAL_CONSTANTS)
+            data["provisional"] = False
+            data["source"] = "measured (test fixture)"
+            path.write_text(json.dumps(data), encoding="utf-8")
+        else:
+            path.write_text("not json at all {{{", encoding="utf-8")
+        return path
+
+    def _run(self, path):
+        import pathlib
+        import random
+        import tempfile
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        rng = random.Random(9)
+        sequence = "".join(rng.choice("ACGU") for _ in range(200))
+        with tempfile.TemporaryDirectory() as directory:
+            fasta = pathlib.Path(directory) / "t.fa"
+            fasta.write_text(">t1" + chr(10) + sequence + chr(10), encoding="utf-8")
+            return run_request(
+                DesignRequest(fasta_path=str(fasta), task="detection",
+                              assay="in_vitro_detection", effector="LwaCas13a",
+                              use_structure=False, use_signal=False,
+                              kinetics_json=str(path))
+            )
+
+    def test_a_malformed_file_is_refused_even_though_it_would_go_unused(self):
+        from cas13guide.services.workflow import DesignRequestError
+
+        with self.assertRaises(DesignRequestError) as caught:
+            self._run(self._constants_file(valid=False))
+        self.assertIn("--kinetics-constants", str(caught.exception))
+
+    def test_a_valid_file_is_reported_as_unused_rather_than_ignored(self):
+        outcome = self._run(self._constants_file(valid=True))
+        unused = [n for n in outcome.notes if "NOT used" in n]
+        self.assertTrue(unused, f"nothing said the constants went unused: {outcome.notes}")
+        self.assertIn("--no-signal", unused[0])
+
+    def test_no_signal_is_predicted_either_way(self):
+        """The note must describe what happened, not paper over it."""
+        outcome = self._run(self._constants_file(valid=True))
+        rows = outcome.report["ranked"]
+        self.assertTrue(rows)
+        for row in rows:
+            with self.subTest(guide=row["guide_id"]):
+                self.assertIsNone(row["predicted_signal"])
+                self.assertIsNone(row["predicted_signal_nm"])
+
+
 class TestTheUnlockReachesASurfaceSomebodyReads(unittest.TestCase):
     """"Supply measured values and it unlocks" reached no output at all.
 

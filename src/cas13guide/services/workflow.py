@@ -283,6 +283,26 @@ def build_registry(request: DesignRequest, notes: list[str], spec=None, records=
                 f"Structural scoring is OFF ({exc}). Accessibility and duplex "
                 'energy will be blank. Install with: pip install "cas13guide[structure]"'
             )
+    if request.kinetics_json and not request.use_signal:
+        # Two flags that contradict each other. The file was not read at all,
+        # so a malformed one passed unnoticed -- a typo in a scripted pipeline
+        # would surface only when somebody removed --no-signal, on a run that
+        # had "worked" for weeks. Validate it either way, and say it went
+        # unused rather than ignoring it in silence.
+        from .kinetics import KineticConstants
+
+        try:
+            KineticConstants.from_json(request.kinetics_json)
+        except (OSError, ValueError, TypeError) as exc:
+            raise DesignRequestError(
+                f"--kinetics-constants {request.kinetics_json}: {exc}"
+            ) from exc
+        notes.append(
+            f"Kinetic constants were supplied ({request.kinetics_json}) and "
+            "signal prediction is off, so they were NOT used and no signal "
+            "was predicted. Drop --no-signal to use them."
+        )
+
     if request.use_signal:
         from .kinetics import CollateralKineticsModel, KineticConstants
 
