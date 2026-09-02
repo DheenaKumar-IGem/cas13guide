@@ -982,6 +982,34 @@ The defects worth naming, because they were live rather than hypothetical:
 | `run_search` kept the *last* bound, not the weakest | A per-query heuristic bound would be overwritten by a later exhaustive one | `test_search.py` |
 | `profile_duplex("", "")` died in the CIGAR builder | An `IndexError` that named neither the caller nor the cause | `test_duplex.py` |
 
+### What came after the passes
+
+The nine passes read the code and ran it. A later round asked a different
+question — *what does this package compute, or promise, that nothing ever
+reads?* — and that turned up five more live defects. Each is the same shape:
+the work was done correctly and the result went nowhere.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| The gate composed a numeric explanation for every verdict and nothing read it | `GateResult.detail` is built in eight places — "forbidden hit UCB(activity) 0.412 > 0.200" — and a grep for a *read* of it across `src/` returned nothing at all. A run reported **`FAIL: 41` and offered no way to learn what was wrong with any of the 41**: `ranked` holds no FAIL rows by design, so that was the only place a reason could have surfaced | `test_rejection_reporting.py` |
+| A threshold the user set could not be applied, and the run did not say so | `--min-accessibility 0.9` without ViennaRNA asks for a gate that cannot fire — the metric is `None`, so the check is skipped, correctly. The run then emitted the **same generic warning it gives a user who never mentioned accessibility**, so the one reader who needed to know their floor went unused got the sentence written for the reader who did not | `test_inert_thresholds_are_reported.py` |
+| No export said where a guide binds | `source_target_id` was added to the report dict when the accessibility track was found drawing guides from one record at another's coordinates — and it reached the track and nothing else. On a multi-record design the CSV, the FASTA and the HTML table each named the guide, its score and its verdict, and **never which target it was for**; two guides at the same coordinate can be on different records | `test_exports_place_the_guide.py` |
+| A display flag decided the exit status | The status came from the list the terminal table prints, after the distinct-site filter and `--top`. So `--top 0` **exited 1 and printed "no guide cleared the gate" beside a CSV holding 322 of them** — and 1 is the code a wrapper script reads as "the run refused everything" | `test_exit_codes_are_a_contract.py` |
+| The demo was never run, only `demo --help` | `demo.py` sat at 20% *with* subprocess tracing on, so the first command a new user types could have raised on line one with the suite green. The README quotes its transcript, and two of the quoted lines had drifted from what it prints | `test_demo_runs_and_matches_the_readme.py` |
+
+Five more were coverage gaps rather than defects: three gate verdicts and two
+limitations that no test had ever produced, found by the vocabulary check
+described above. All five were correct, which is the usual outcome and the
+reason to run the check anyway.
+
+Four further instruments found nothing, which is worth recording alongside what
+they did not find: the three input doors (`--fasta`, a paste, a browser upload)
+produce byte-identical reports down to the provenance ledger; every design flag
+that changes no exported artefact turned out to have a documented reason;
+sixteen full runs across four `PYTHONHASHSEED` values produced identical files;
+and every report key the HTML and CSV read is one the report produces.
+
+
 The vectorized scanner is held to the original per-character implementation as
 an oracle: randomized differential tests over ambiguity codes, loci shorter than
 the spacer, and spacers drawn across locus junctions, plus a test that every
