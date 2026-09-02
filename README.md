@@ -781,7 +781,7 @@ worth.
 ```bash
 pytest                                                   # 1017 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
-python examples/verify_vocabulary_coverage.py            # 18 verdicts, 21 limitations
+python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python -m mypy                                           # py.typed, checked
 ```
@@ -802,27 +802,32 @@ budget, the out-of-domain substitution, the conformal quantile, the search-bound
 algebra, the FR6.3 posterior, the kinetics stability guard, and the wobble rule.
 
 **Everything the tool can say to a user is said by a test.**
-`verify_vocabulary_coverage.py` records which `ReasonCode` values and which
-`Limitation` ids the suite actually produces — at the gate, in the
-orchestrator's budget shortfalls, and in `limitations_for_run` — and reports any
-that never come out. A value nothing produces is a sentence a user can receive
-that nobody has watched it say: either dead code, or a live path with no
-coverage. It found five of the second kind. Two were reachable only once the spec sets a floor or a window, and
-`--min-accessibility` is a shipped flag, so turning it on ran code no test had
-executed; the third needed no flag at all and sat in the narrow band just under
-the hazard budget. All three were correct — which is the usual outcome, and not
-a reason to skip the check, because nobody knew.
+This package has four vocabularies for talking to a user: `ReasonCode`, what the
+gate says and what a caller switches on; `Limitation`, what the run admits it
+could not establish; `QCFlag`, what is wrong with a spacer; and `ReviewTier`,
+how much of a human a REVIEW needs. `verify_vocabulary_coverage.py` records
+which values of each the suite actually produces — at the gate, in the
+orchestrator's budget shortfalls, in `limitations_for_run` and in
+`qc_candidate` — and reports any that never come out. A value nothing produces
+is a sentence a user can receive that nobody has watched it say: either dead
+code, or a live path with no coverage.
 
-Asking the same question of the limitations found two more. The FR6.3
-thin-calibration warning — the one that tells a reader an interval is wide from
-missing data rather than from a doubtful guide, which is the distinction that
-feature exists to draw — needed a confidence model no fixture supplied. The
-unverified-preset warning cannot fire at all while `PRESETS_VERIFIED` is `True`,
-and is exactly what a contributor meets the moment they add a preset they have
-not checked. It measures whether a verdict
-is *produced*, not whether anything asserts it: a floor, in the way line
-coverage is a floor. The mutation check above is what asks whether behaviour is
-pinned.
+It found five of the second kind. Three were verdicts: two reachable only once
+the spec sets a floor or a window — and `--min-accessibility` is a shipped flag,
+so turning it on ran code no test had executed — and one needing no flag at all,
+sitting in the narrow band just under the hazard budget. Two were limitations.
+The FR6.3 thin-calibration warning, which tells a reader an interval is wide
+from missing data rather than from a doubtful guide, needed a confidence model
+no fixture supplied; the unverified-preset warning cannot fire at all while
+`PRESETS_VERIFIED` is `True`, and is exactly what a contributor meets the moment
+they add a preset they have not checked. All five were correct — which is the
+usual outcome, and not a reason to skip the check, because nobody knew. The QC
+flags and the review tiers came back clean, all thirteen, which is a result
+worth having rather than a wasted question.
+
+It measures whether a value is *produced*, not whether anything asserts it: a
+floor, in the way line coverage is a floor. The mutation check above is what
+asks whether behaviour is pinned.
 
 **`py.typed` means what it says.** The marker has shipped in the wheel since the
 first commit, telling every consumer's type checker to trust these annotations,
