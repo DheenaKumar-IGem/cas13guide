@@ -50,8 +50,14 @@ class TestOnlyOnePlaceAssignsIntentToAHit(unittest.TestCase):
 
     #: Modules that construct contract objects. Declaring intent when you build
     #: the spec is the point of the spec.
+    #:
+    #: ``services/fasta.py`` was on this list and has left it. It held a second
+    #: record-to-target builder, called by nothing, which made *every* record
+    #: REQUIRED where the live path makes records 1+ DESIRED -- a difference
+    #: that changes verdicts. Removing it shortened this list, which is the
+    #: direction an exclusion list should move.
     CONTRACT_BUILDERS = {
-        "contract/presets.py", "services/fasta.py", "services/workflow.py", "demo.py",
+        "contract/presets.py", "services/workflow.py", "demo.py",
     }
 
     def test_annotate_hit_is_the_only_stage_that_labels_a_hit(self):

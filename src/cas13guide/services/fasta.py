@@ -25,7 +25,7 @@ import csv
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
+from typing import Iterable, Sequence
 
 from ..util.seq import VALID_RNA
 
@@ -566,23 +566,3 @@ def write_exports(
         written[label] = path
     return written
 
-
-def records_to_target_specs(
-    records: Sequence[SequenceRecord], target_class=None
-) -> Iterator:
-    """Turn parsed records into contract targets.
-
-    Imported lazily to keep this module usable for plain sequence handling
-    without pulling in pydantic and the whole contract layer.
-    """
-    from ..contract.enums import TargetClass
-    from ..contract.spec import TargetSpec
-
-    chosen = target_class or TargetClass.REQUIRED
-    for record in records:
-        yield TargetSpec(
-            target_id=record.name,
-            sequence=record.sequence,
-            target_class=chosen,
-            gene=record.name,
-        )
