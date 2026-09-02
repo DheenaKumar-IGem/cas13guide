@@ -773,7 +773,7 @@ thermodynamic fold the model already used as a feature.
 
 1063 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
-Seven claims this section makes are **measured rather than asserted**, each by a
+Eight claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
 reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
@@ -784,6 +784,7 @@ python examples/verify_mutation_coverage.py              # 32 mutations, 32 caug
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
+python examples/verify_output_against_input.py           # the guides are right
 python -m mypy                                           # py.typed, checked
 ```
 
@@ -829,6 +830,27 @@ worth having rather than a wasted question.
 It measures whether a value is *produced*, not whether anything asserts it: a
 floor, in the way line coverage is a floor. The mutation check above is what
 asks whether behaviour is pinned.
+
+**The guides that come out are right.** Every other instrument here checks the
+*process* — are the invariants pinned, is every verdict reached, is anything
+computed for nobody, what fraction of lines ran. None asks the question a user
+actually has. `verify_output_against_input.py` runs a design and then
+recomputes each claim from the input in plain Python, without asking the
+package how it got there: `revcomp` is written out again in that file, because
+a check that calls `util.seq.revcomp` proves the exporter and the sequence
+layer agree, not that either is correct.
+
+The load-bearing check is the first. A designed guide is a claim — *this 22-mer
+binds that transcript at position 154* — and the claim is checkable by slicing
+the input at the stated position and reverse-complementing it. Everything else
+is downstream of that. The rest close the same loop: GC and the homopolymer run
+must describe the spacer printed beside them, every survivor must satisfy the
+gate rules that let it through, the CSV and the FASTA must agree guide for
+guide, an off-target planted in the background must be found, and every
+off-target reported must really occur in the background supplied. Currently 237
+guides, every claim reproduced. Verified to detect a wrong answer by shifting
+the reported position by one, by exporting a constant GC, and by skipping the
+reverse-complement — all three caught.
 
 **Nothing is computed for nobody.** `verify_nothing_is_computed_for_nobody.py`
 sweeps every dataclass field and reports any the package constructs and then
