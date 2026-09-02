@@ -771,17 +771,18 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1008 tests, run under `unittest` or `pytest`, and 90% line coverage.
+1010 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
-Five claims this section makes are **measured rather than asserted**, each by a
+Six claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
 reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1008 tests
+pytest                                                   # 1010 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_gate_coverage.py                  # 18 of 18 verdicts reached
+python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python -m mypy                                           # py.typed, checked
 ```
 
@@ -869,12 +870,24 @@ by injecting its own defect into the source and watching the property go red —
 which found two of the properties wanting rather than any defect in the
 package, both since restated.
 
-**Coverage is 90%, and the instrument needs checking before the number does.**
-Several tests drive the CLI through `subprocess`, which `coverage` does not
-follow unless told to, so a plain run reports `cli.py` at 7%; with subprocess
-tracing it is 86%. `_contrafold_kernel.py` reports 2% because it is `@njit` and
-numba-compiled code is not traced at all. Both are artefacts, and acting on
-either would have meant writing tests for code that is already tested.
+**Coverage is 91%, and the instrument needs checking before the number does.**
+`measure_coverage.py` runs it, because the recipe is not the obvious one and
+each way of getting it wrong understates precisely the modules the tracing was
+turned on for. Several tests drive the CLI through `subprocess`, which
+`coverage` does not follow unless the child is told to trace itself, so a plain
+run reports `cli.py` at 6%; traced, it is 90%. In parallel mode each process
+writes its data file beside the *working directory*, and several of those tests
+run the CLI inside a temporary directory that is deleted straight after — their
+coverage goes with it, and the total reads 88%. And `source` must be a package
+name: as a relative path it means nothing in a child running elsewhere, and as
+an absolute one it matches no module and collects nothing at all.
+
+`_contrafold_kernel.py` reports 2% because it is `@njit` and numba-compiled
+code is not traced at all. That one is a real artefact, and acting on it would
+mean writing tests for code that is already tested. `demo.py` sat in the same
+list at 20% and was **not** an artefact: nothing ran the demo, only
+`demo --help`. It is 98% now, and the run is checked against the transcript
+this README quotes.
 
 ### What nine review passes found
 
