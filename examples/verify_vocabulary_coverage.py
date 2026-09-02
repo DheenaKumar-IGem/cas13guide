@@ -1,10 +1,11 @@
 """Check that everything this package can say to a user is said in some test.
 
-This package has two vocabularies for talking to a user: ``ReasonCode``, which
-is what the gate says and what a caller switches on, and ``Limitation``, which
-is what the run admits it could not establish. A value in either that no test
-ever produces is a sentence a user can receive that nobody has watched come
-out -- either dead code, or a live path with no coverage at all.
+This package has four vocabularies for talking to a user: ``ReasonCode``, what
+the gate says and what a caller switches on; ``Limitation``, what the run
+admits it could not establish; ``QCFlag``, what is wrong with a spacer; and
+``ReviewTier``, how much of a human a REVIEW needs. A value in any of them
+that no test ever produces is a sentence a user can receive that nobody has
+watched come out -- either dead code, or a live path with no coverage at all.
 
 This found three of the latter. ``TARGET_INACCESSIBLE`` and
 ``DUPLEX_ENERGY_OUT_OF_RANGE`` are only reachable once the spec sets a floor or
@@ -23,18 +24,22 @@ guarantee -- the same relationship line coverage has to correctness. The
 mutation check next door is the instrument that asks whether behaviour is
 pinned.
 
-Three places are recorded:
+Every place a value can come from is recorded:
 
-* the gate, where a code lands in ``GateResult.reasons``;
+* the gate, where a reason code lands in ``GateResult.reasons`` and a tier in
+  ``GateResult.review_tier``;
 * the orchestrator, where budget shortfalls are appended to
   ``RunTelemetry.reason_codes`` and exported in the provenance ledger;
-* ``limitations_for_run``, which constructs every ``Limitation``.
+* ``limitations_for_run``, which constructs every ``Limitation``;
+* ``qc_candidate``, whose flags and warnings are what is wrong with a spacer.
 
-Asking the second question found two more: the FR6.3 thin-calibration warning,
-which needs a confidence model no fixture supplied, and the unverified-preset
-warning, which cannot fire while ``PRESETS_VERIFIED`` is ``True`` and is
-exactly what a contributor meets the moment they add a preset they have not
-checked.
+Asking the question of the limitations found two more: the FR6.3
+thin-calibration warning, which needs a confidence model no fixture supplied,
+and the unverified-preset warning, which cannot fire while ``PRESETS_VERIFIED``
+is ``True`` and is exactly what a contributor meets the moment they add a
+preset they have not checked. The QC flags and the review tiers came back
+clean, all thirteen of them, which is a result worth having rather than a
+wasted question.
 
 The first version of this probe watched only the gate, and duly reported three
 orchestrator codes as never produced when all three were exercised -- an
@@ -46,7 +51,7 @@ Usage::
     python examples/verify_vocabulary_coverage.py           # the whole suite
     python examples/verify_vocabulary_coverage.py -k gate   # narrow it
 
-Exits non-zero when some code or limitation is never produced.
+Exits non-zero when anything in any of the four is never produced.
 """
 
 from __future__ import annotations
@@ -59,8 +64,8 @@ ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = "_vocabulary_coverage_plugin"
 
 PLUGIN_SOURCE = '''
-"""Records every ReasonCode the suite actually produces. Written by
-``verify_gate_coverage.py``; not part of the package."""
+"""Records everything the suite makes the package say. Written by
+``verify_vocabulary_coverage.py``; not part of the package."""
 
 import json
 import os
@@ -84,9 +89,24 @@ def pytest_configure(config):
     def recording_gate(*args, **kwargs):
         result = RealGate(*args, **kwargs)
         SEEN.update(code.value for code in result.reasons)
+        if result.review_tier is not None:
+            SEEN.add("tier:" + result.review_tier.value)
         return result
 
     f_decide.GateResult = recording_gate
+
+    import cas13guide.pipeline.b_qc as b_qc
+    from cas13guide.models.evidence import QCResult as RealQC
+
+    def recording_qc(*args, **kwargs):
+        qc = RealQC(*args, **kwargs)
+        # Warnings count: a flag that only ever deprioritises is still a thing
+        # the package says about a guide.
+        SEEN.update("qc:" + flag.value for flag in qc.flags)
+        SEEN.update("qc:" + flag.value for flag in qc.warnings)
+        return qc
+
+    b_qc.QCResult = recording_qc
 
     import cas13guide.services.limitations as limitations
     real_limitation = limitations.Limitation
@@ -109,21 +129,21 @@ def pytest_configure(config):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    with open(os.environ["GATE_COVERAGE_OUT"], "w", encoding="utf-8") as handle:
+    with open(os.environ["VOCABULARY_COVERAGE_OUT"], "w", encoding="utf-8") as handle:
         json.dump(sorted(SEEN), handle)
 '''
 
 
 def main(argv: list[str]) -> int:
     plugin_path = ROOT / f"{PLUGIN}.py"
-    out_path = ROOT / ".gate_coverage.json"
+    out_path = ROOT / ".vocabulary_coverage.json"
     plugin_path.write_text(PLUGIN_SOURCE, encoding="utf-8")
 
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", "-p", PLUGIN, *argv],
             cwd=ROOT,
-            env={**__import__("os").environ, "GATE_COVERAGE_OUT": str(out_path)},
+            env={**__import__("os").environ, "VOCABULARY_COVERAGE_OUT": str(out_path)},
         )
         if not out_path.exists():
             print("the suite did not run to completion; nothing to report")
@@ -134,7 +154,7 @@ def main(argv: list[str]) -> int:
         out_path.unlink(missing_ok=True)
 
     sys.path.insert(0, str(ROOT / "src"))
-    from cas13guide.contract.enums import ReasonCode
+    from cas13guide.contract.enums import QCFlag, ReasonCode, ReviewTier
 
     # Limitation ids are constructed inline rather than declared in an enum, so
     # the list of them is the source itself. Read rather than imported, because
@@ -157,6 +177,8 @@ def main(argv: list[str]) -> int:
     vocabularies = {
         "reason code": [code.value for code in ReasonCode],
         "limitation": [f"limitation:{name}" for name in limitation_ids],
+        "QC flag": [f"qc:{flag.value}" for flag in QCFlag],
+        "review tier": [f"tier:{tier.value}" for tier in ReviewTier],
     }
 
     print()
@@ -166,7 +188,7 @@ def main(argv: list[str]) -> int:
         seen = len(every) - len(missing)
         print(f"{seen}/{len(every)} {label}s produced by the suite")
         for name in missing:
-            print(f"    {name.removeprefix('limitation:')}")
+            print(f"    {name.split(':', 1)[-1]}")
         missing_any = missing_any or bool(missing)
 
     print()

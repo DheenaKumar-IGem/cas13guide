@@ -13,6 +13,9 @@ dist/
 .coverage.*
 # subprocess tracing needs this on sys.path while measuring, and never after
 sitecustomize.py
+# the vocabulary probe writes these beside the tree while it runs
+_vocabulary_coverage_plugin.py
+.vocabulary_coverage.json
 
 # stray logs from tooling
 *.log
