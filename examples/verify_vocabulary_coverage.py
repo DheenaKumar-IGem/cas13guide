@@ -1,9 +1,10 @@
-"""Check that every verdict this package can reach is reached by some test.
+"""Check that everything this package can say to a user is said in some test.
 
-A ``ReasonCode`` is the vocabulary of the whole tool: it is what the gate says,
-what the report prints, and what a caller switches on. A code no test ever
-produces is a verdict a user can receive that nobody has ever seen come out --
-either dead code, or a live path with no coverage at all.
+This package has two vocabularies for talking to a user: ``ReasonCode``, which
+is what the gate says and what a caller switches on, and ``Limitation``, which
+is what the run admits it could not establish. A value in either that no test
+ever produces is a sentence a user can receive that nobody has watched come
+out -- either dead code, or a live path with no coverage at all.
 
 This found three of the latter. ``TARGET_INACCESSIBLE`` and
 ``DUPLEX_ENERGY_OUT_OF_RANGE`` are only reachable once the spec sets a floor or
@@ -22,11 +23,18 @@ guarantee -- the same relationship line coverage has to correctness. The
 mutation check next door is the instrument that asks whether behaviour is
 pinned.
 
-Both places a code can come from are recorded:
+Three places are recorded:
 
-* the gate, where it lands in ``GateResult.reasons``;
+* the gate, where a code lands in ``GateResult.reasons``;
 * the orchestrator, where budget shortfalls are appended to
-  ``RunTelemetry.reason_codes`` and exported in the provenance ledger.
+  ``RunTelemetry.reason_codes`` and exported in the provenance ledger;
+* ``limitations_for_run``, which constructs every ``Limitation``.
+
+Asking the second question found two more: the FR6.3 thin-calibration warning,
+which needs a confidence model no fixture supplied, and the unverified-preset
+warning, which cannot fire while ``PRESETS_VERIFIED`` is ``True`` and is
+exactly what a contributor meets the moment they add a preset they have not
+checked.
 
 The first version of this probe watched only the gate, and duly reported three
 orchestrator codes as never produced when all three were exercised -- an
@@ -35,10 +43,10 @@ saying which blind spot was closed and why.
 
 Usage::
 
-    python examples/verify_gate_coverage.py          # runs the whole suite
-    python examples/verify_gate_coverage.py -k gate  # narrow it while iterating
+    python examples/verify_vocabulary_coverage.py           # the whole suite
+    python examples/verify_vocabulary_coverage.py -k gate   # narrow it
 
-Exits non-zero when some code is never produced.
+Exits non-zero when some code or limitation is never produced.
 """
 
 from __future__ import annotations
@@ -48,7 +56,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PLUGIN = "_gate_coverage_plugin"
+PLUGIN = "_vocabulary_coverage_plugin"
 
 PLUGIN_SOURCE = '''
 """Records every ReasonCode the suite actually produces. Written by
@@ -79,6 +87,16 @@ def pytest_configure(config):
         return result
 
     f_decide.GateResult = recording_gate
+
+    import cas13guide.services.limitations as limitations
+    real_limitation = limitations.Limitation
+
+    def recording_limitation(*args, **kwargs):
+        made = real_limitation(*args, **kwargs)
+        SEEN.add("limitation:" + made.id)
+        return made
+
+    limitations.Limitation = recording_limitation
 
     real_telemetry = orchestrator.RunTelemetry
 
@@ -118,21 +136,47 @@ def main(argv: list[str]) -> int:
     sys.path.insert(0, str(ROOT / "src"))
     from cas13guide.contract.enums import ReasonCode
 
-    every = [code.value for code in ReasonCode]
-    missing = [code for code in every if code not in produced]
+    # Limitation ids are constructed inline rather than declared in an enum, so
+    # the list of them is the source itself. Read rather than imported, because
+    # importing tells you which ids exist and not which lines can make one.
+    import ast
+
+    tree = ast.parse(
+        (ROOT / "src/cas13guide/services/limitations.py").read_text(encoding="utf-8")
+    )
+    limitation_ids = sorted({
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "Limitation"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    })
+
+    vocabularies = {
+        "reason code": [code.value for code in ReasonCode],
+        "limitation": [f"limitation:{name}" for name in limitation_ids],
+    }
 
     print()
-    print(f"{len(produced)}/{len(every)} reason codes produced by the suite")
-    if missing:
-        print()
-        print("never produced -- dead code, or a live path with no coverage:")
-        for code in missing:
-            print(f"    {code}")
-        print()
-        print("Each one is a verdict a user can receive that no test has seen.")
+    missing_any = False
+    for label, every in vocabularies.items():
+        missing = [name for name in every if name not in produced]
+        seen = len(every) - len(missing)
+        print(f"{seen}/{len(every)} {label}s produced by the suite")
+        for name in missing:
+            print(f"    {name.removeprefix('limitation:')}")
+        missing_any = missing_any or bool(missing)
+
+    print()
+    if missing_any:
+        print("Each one above is something this package can say to a user that")
+        print("no test has ever watched it say: dead code, or a live path with")
+        print("no coverage at all.")
         return 1
 
-    print("Every verdict this package can reach is reached by some test.")
+    print("Everything this package can say to a user is said in some test.")
     print("That is a floor, not a guarantee: produced is not the same as")
     print("asserted. verify_mutation_coverage.py is the one that asks whether")
     print("the behaviour is pinned.")
