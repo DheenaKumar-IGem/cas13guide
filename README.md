@@ -773,7 +773,7 @@ thermodynamic fold the model already used as a feature.
 
 1047 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
-Six claims this section makes are **measured rather than asserted**, each by a
+Seven claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
 reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
@@ -783,6 +783,7 @@ pytest                                                   # 1047 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
+python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
 python -m mypy                                           # py.typed, checked
 ```
 
@@ -828,6 +829,23 @@ worth having rather than a wasted question.
 It measures whether a value is *produced*, not whether anything asserts it: a
 floor, in the way line coverage is a floor. The mutation check above is what
 asks whether behaviour is pinned.
+
+**Nothing is computed for nobody.** `verify_nothing_is_computed_for_nobody.py`
+sweeps every dataclass field and reports any the package constructs and then
+reads nowhere. `GateResult.detail` was the first: eight places in the gate
+compose a numeric explanation for every verdict and nothing read one. Five more
+came out of the sweep, including the three things QC measures about every
+spacer, the limitations that never reached the machine-readable report, and the
+absolute signal figure `--kinetics-constants` was advertised as unlocking.
+
+The rule is stricter than it first looks. An earlier cut excluded each field's
+home module and returned 138 candidates, nearly all read a few lines below
+their own declaration; the rule that describes the defect is that the value is
+read by *nothing, anywhere*. It errs in both directions and the file says how —
+a field consumed through `asdict` reads as unused, and a field exported under
+its own name keeps a matching string constant after its last reader goes. It is
+worth running because five real defects came out of it, not because a clean run
+proves anything.
 
 **`py.typed` means what it says.** The marker has shipped in the wheel since the
 first commit, telling every consumer's type checker to trust these annotations,
