@@ -140,6 +140,21 @@ class MetricVector:
     #: assay collateral is a hazard, and ranking guides by how much of it they
     #: produce would be exactly backwards.
     predicted_signal: float | None = None
+    #: Cleaved reporter in nM at the best intended site, and only when the
+    #: kinetic constants were *measured* rather than shipped.
+    #:
+    #: ``kinetics.predict`` computes it on the same call the relative score
+    #: comes from, and it was thrown away: ``absolute_signal()`` is a library
+    #: method nothing in the pipeline called, so ``--kinetics-constants``,
+    #: advertised as unlocking an absolute figure, reached no surface a user
+    #: reads. It stays ``None`` on provisional constants for the reason
+    #: ``absolute_signal`` refuses there -- real units derived from placeholder
+    #: rates are a fabricated measurement wearing a unit label, and downstream
+    #: nothing tells it from a measured one.
+    #:
+    #: Reported, never ranked on: it is ``predicted_signal`` rescaled, and an
+    #: axis that is a rescaling of another axis does not earn a vote.
+    predicted_signal_nm: float | None = None
     #: Whether :attr:`predicted_signal` earns a place among the objectives.
     #:
     #: The signal model is driven by ``activity_lower * accessibility``, and

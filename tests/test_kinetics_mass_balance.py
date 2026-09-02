@@ -202,3 +202,116 @@ class TestConstantsCanActuallyBeSupplied(unittest.TestCase):
         model = CollateralKineticsModel(KineticConstants.from_json(path))
         with self.assertRaises(ProvisionalConstantsError):
             model.absolute_signal(0.9)
+
+
+class TestTheUnlockReachesASurfaceSomebodyReads(unittest.TestCase):
+    """"Supply measured values and it unlocks" reached no output at all.
+
+    ``absolute_signal()`` is a library method, and a grep for a call to it
+    across ``src/`` returns nothing: the pipeline called ``predict()``, kept
+    ``relative_signal`` and discarded ``cleaved_reporter_nm`` from the same
+    object. So a user who did the work of measuring constants and passed
+    ``--kinetics-constants`` got a ranking that looked identical and no figure
+    in real units anywhere.
+
+    It is reported and never ranked on: an axis that is a rescaling of another
+    axis does not earn a vote, and ``predicted_signal`` is already there.
+    """
+
+    @staticmethod
+    def _measured_constants_file():
+        import dataclasses
+        import json
+        import pathlib
+        import tempfile
+
+        from cas13guide.services.kinetics import PROVISIONAL_CONSTANTS
+
+        data = dataclasses.asdict(PROVISIONAL_CONSTANTS)
+        data["source"] = "measured on this instrument (test fixture)"
+        data["provisional"] = False
+        path = pathlib.Path(tempfile.mkdtemp()) / "kinetics.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return path
+
+    def _report(self, **extra):
+        import pathlib
+        import random
+        import tempfile
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        rng = random.Random(9)
+        sequence = "".join(rng.choice("ACGU") for _ in range(300))
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "t.fa"
+            path.write_text(">t1" + chr(10) + sequence + chr(10), encoding="utf-8")
+            return run_request(
+                DesignRequest(fasta_path=str(path), task="detection",
+                              assay="in_vitro_detection", effector="LwaCas13a",
+                              use_structure=False, use_signal=True, **extra)
+            ).report
+
+    def test_measured_constants_put_a_figure_in_real_units_on_the_row(self):
+        rows = self._report(kinetics_json=str(self._measured_constants_file()))["ranked"]
+        self.assertTrue(rows)
+        values = [row["predicted_signal_nm"] for row in rows]
+        self.assertTrue(all(value is not None for value in values))
+        self.assertTrue(any(value > 0 for value in values))
+
+    def test_placeholder_constants_leave_it_absent(self):
+        """The refusal ``absolute_signal`` makes, kept on the reporting path:
+        real units from placeholder rates are a fabricated measurement wearing
+        a unit label."""
+        rows = self._report()["ranked"]
+        self.assertTrue(rows)
+        for row in rows:
+            with self.subTest(guide=row["guide_id"]):
+                self.assertIsNone(row["predicted_signal_nm"])
+
+    def test_the_unlock_adds_a_number_without_moving_the_ranking(self):
+        """The fixture's constants are the shipped values with ``provisional``
+        cleared, so nothing about the physics changed -- only whether the
+        figure may be shown. The order must not move."""
+        placeholders = self._report()["ranked"]
+        measured = self._report(
+            kinetics_json=str(self._measured_constants_file()))["ranked"]
+
+        self.assertEqual(
+            [row["guide_id"] for row in placeholders],
+            [row["guide_id"] for row in measured],
+        )
+        self.assertEqual(
+            [row["predicted_signal"] for row in placeholders],
+            [row["predicted_signal"] for row in measured],
+        )
+
+    def test_it_is_not_an_objective(self):
+        """Reported, never ranked on. If it entered the objective set it would
+        re-weight ``predicted_signal`` under another name."""
+        from cas13guide.models.evidence import MetricVector
+
+        vector = MetricVector(0.5, 0.5, 0.1, 0.1, 0.5, 1.0,
+                              predicted_signal=0.4, predicted_signal_nm=12.5)
+        self.assertNotIn("predicted_signal_nm", vector.objectives())
+
+    def test_the_csv_carries_the_column_either_way(self):
+        """Blank when the figure was not earned, which is the point: an empty
+        column says so, where a missing column says nothing."""
+        import csv
+        import io
+
+        from cas13guide.services.fasta import RANKED_COLUMNS, ranked_to_csv
+
+        self.assertIn("predicted_signal_nm", RANKED_COLUMNS)
+        for extra, expect_value in (
+            ({}, False),
+            ({"kinetics_json": str(self._measured_constants_file())}, True),
+        ):
+            with self.subTest(measured=expect_value):
+                text = ranked_to_csv(self._report(**extra))
+                body = chr(10).join(
+                    line for line in text.splitlines() if not line.startswith("#")
+                )
+                first = next(iter(csv.DictReader(io.StringIO(body))))
+                self.assertEqual(bool(first["predicted_signal_nm"]), expect_value)

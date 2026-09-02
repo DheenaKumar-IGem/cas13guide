@@ -217,6 +217,44 @@ def predicted_signal(
     return None if prediction is None else prediction.relative_signal
 
 
+def predicted_signal_nm(
+    evidence: tuple[PairEvidence, ...],
+    spec: ResolvedDesignSpec,
+    kinetics=None,
+) -> float | None:
+    """Cleaved reporter in nM at the best intended site -- measured constants only.
+
+    ``kinetics.predict`` already computes this, on the same call the relative
+    score comes from, and it was discarded. The README advertises
+    ``--kinetics-constants`` as unlocking an absolute figure, and until now the
+    unlock reached no surface a user reads: ``absolute_signal()`` is a library
+    method that nothing in the pipeline called.
+
+    ``None`` while the constants are provisional, for the reason
+    ``absolute_signal`` refuses there -- a fluorescence figure in real units
+    derived from placeholder rate constants is a fabricated measurement wearing
+    a unit label, and downstream it is indistinguishable from a measured one.
+    """
+    if kinetics is None or spec.profile.collateral_is_hazard:
+        return None
+    constants = getattr(kinetics, "constants", None)
+    if constants is None or getattr(constants, "provisional", True):
+        return None
+
+    best: tuple[float, float | None] | None = None
+    for e in evidence:
+        if not e.is_intended:
+            continue
+        rank = benefit_lower(e.activity)
+        access = None if e.accessibility is None else e.accessibility.point
+        if best is None or rank > best[0]:
+            best = (rank, access)
+    if best is None:
+        return None
+    prediction = kinetics.predict(best[0], best[1])
+    return None if prediction is None else prediction.cleaved_reporter_nm
+
+
 def build_metric_vector(
     evidence_by_context: dict[str, tuple[PairEvidence, ...]],
     qc: QCResult,
@@ -260,6 +298,7 @@ def build_metric_vector(
         accessibility=intended_accessibility(reference),
         duplex_dg_per_nt=intended_duplex_energy(reference),
         predicted_signal=predicted_signal(reference, spec, kinetics),
+        predicted_signal_nm=predicted_signal_nm(reference, spec, kinetics),
         # An axis that is a rescaled copy of two other axes is reported, not
         # ranked on. Probed, not assumed -- see the field's own docstring.
         predicted_signal_ranks=bool(

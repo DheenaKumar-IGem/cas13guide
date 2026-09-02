@@ -281,6 +281,13 @@ class DesignReport:
                         None if r.assessment.metrics.predicted_signal is None
                         else round(r.assessment.metrics.predicted_signal, 4)
                     ),
+                    # Present only when the constants were measured. This is
+                    # what --kinetics-constants was advertised as unlocking,
+                    # and it reached no surface a user reads.
+                    "predicted_signal_nm": (
+                        None if r.assessment.metrics.predicted_signal_nm is None
+                        else round(r.assessment.metrics.predicted_signal_nm, 4)
+                    ),
                     "score": round(r.score, 4),
                     "verdict": r.assessment.gate.verdict.value,
                     "review_tier": (

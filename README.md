@@ -337,7 +337,7 @@ now makes the second one out loud.
 | ✅ | FR3.1–3.4 accessibility | `services/accessibility.py` |
 | ✅ | FR4.1–4.3 BLAST off-target | `services/blast.py` — `--blast-db`, refusing legibly without BLAST+. `--background` is the exhaustive, wobble-aware alternative that needs no database |
 | ✅ | FR5.1–5.2 duplex free energy | `services/thermodynamics.py` |
-| ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works, `absolute_signal()` refuses. Supply measured values with `--kinetics-constants FILE.json` and it unlocks |
+| ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works and the absolute figure is withheld. Supply measured values with `--kinetics-constants FILE.json` and `predicted_signal_nm` appears on every ranked row and in the CSV, blank until then |
 | ✅ | FR6.3 Bayesian panel confidence | `services/panel_confidence.py` — Beta-Binomial success posterior per member from the calibration counts, combined under Fréchet bounds. Reported as an interval; a point estimate needs a measured common-cause fraction (`--panel-dependence`) and is refused without one |
 | ✅ | FR7.1–7.2 conserved regions, variant robustness | `services/conservation.py` |
 | ✅ | Trained activity model | `services/arc_model.py` + `services/contrafold.py` — Arc CNN on real CONTRAfold energies, 399/399 reference folds exact. `--arc` |
@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1042 tests, run under `unittest` or `pytest`, and 91% line coverage.
+1047 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
 Six claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1042 tests
+pytest                                                   # 1047 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
@@ -995,6 +995,7 @@ the work was done correctly and the result went nowhere.
 | A threshold the user set could not be applied, and the run did not say so | `--min-accessibility 0.9` without ViennaRNA asks for a gate that cannot fire — the metric is `None`, so the check is skipped, correctly. The run then emitted the **same generic warning it gives a user who never mentioned accessibility**, so the one reader who needed to know their floor went unused got the sentence written for the reader who did not | `test_inert_thresholds_are_reported.py` |
 | No export said where a guide binds | `source_target_id` was added to the report dict when the accessibility track was found drawing guides from one record at another's coordinates — and it reached the track and nothing else. On a multi-record design the CSV, the FASTA and the HTML table each named the guide, its score and its verdict, and **never which target it was for**; two guides at the same coordinate can be on different records | `test_exports_place_the_guide.py` |
 | A display flag decided the exit status | The status came from the list the terminal table prints, after the distinct-site filter and `--top`. So `--top 0` **exited 1 and printed "no guide cleared the gate" beside a CSV holding 322 of them** — and 1 is the code a wrapper script reads as "the run refused everything" | `test_exit_codes_are_a_contract.py` |
+| The advertised kinetics unlock reached no surface a user reads | `absolute_signal()` is a library method and **nothing in `src/` called it**: the pipeline asked `predict()` for a figure, kept the relative score and discarded the nM from the same object. So supplying measured constants — the work the README names as unlocking an absolute figure — changed a warning and produced no number anywhere | `test_kinetics_mass_balance.py` |
 | The caveats reached the reader and not the machine — and not the demo at all | Four CRITICAL limitations apply to an ordinary run, including that the calibration is synthetic so **every PASS is exercisable rather than earned**. `report.json` had no limitations key at all, so a pipeline saw PASS verdicts and calibrated-looking intervals with nothing to qualify either — the one surface where a caveat cannot be inferred from tone. And `cas13guide demo`, the first command anybody runs, printed none of them anywhere: a grep of its whole output for "critical", "warning" or "limitation" returned zero | `test_caveats_reach_every_surface.py` |
 | QC measured three things about every spacer and reported none of them | Of `QCResult`'s fields only the flags, `manufacturability` and `pfs_preference` were read anywhere. **`gc`, `max_homopolymer` and the self-fold proxy were computed per candidate and dropped** — and GC fraction is the first number anybody ordering an oligo writes down, with the gate FAILing outside [0.30, 0.70], so where a surviving guide sits inside that band was exactly what a reader wanted and could not get | `test_qc_measurements_reach_the_user.py` |
 | The demo was never run, only `demo --help` | `demo.py` sat at 20% *with* subprocess tracing on, so the first command a new user types could have raised on line one with the suite green. The README quotes its transcript, and two of the quoted lines had drifted from what it prints | `test_demo_runs_and_matches_the_readme.py` |

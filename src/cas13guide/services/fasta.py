@@ -320,6 +320,9 @@ RANKED_COLUMNS: tuple[str, ...] = (
     "gc",
     "max_homopolymer",
     "self_fold_stem",
+    # Blank unless measured kinetic constants were supplied, which is the
+    # point: a column that is empty says the figure was not earned.
+    "predicted_signal_nm",
 )
 
 
