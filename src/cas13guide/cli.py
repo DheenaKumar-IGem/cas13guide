@@ -232,6 +232,14 @@ def _design(args: argparse.Namespace) -> int:
                   f"{str(row['accessibility']):>7} {str(row['duplex_dg_per_nt']):>7} "
                   f"{str(row['predicted_signal']):>7} {str(row['pfs_3prime']):>4} "
                   f"{worst:>7}")
+    elif all_rows:
+        # `rows` is the *display* list -- it has been through the distinct-site
+        # filter and `--top`. Reporting "no guide cleared the gate" because a
+        # display limit emptied it says something false about the run, next to
+        # exports that carry every one of those guides.
+        print()
+        print(f"{len(shown)} guide(s) ranked, none displayed (--top "
+              f"{args.top}). The exports carry them all.")
     else:
         print()
         print("no guide cleared the gate.")
@@ -342,7 +350,11 @@ def _design(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-    return 0 if rows else 1
+    # The exit status reports what the *run* did, not how much of it was
+    # printed. It used to be `0 if rows else 1`, so `--top 0` exited 1 --
+    # "nothing cleared the gate" -- beside a CSV holding 322 guides. A display
+    # flag must not decide a machine-readable outcome.
+    return 0 if all_rows else 1
 
 
 def _serve(args: argparse.Namespace) -> int:
@@ -379,8 +391,22 @@ def main(argv: list[str] | None = None) -> int:
     train.add_argument("--seed", type=int, default=0)
     train.set_defaults(func=_train)
 
+    # The exit codes are a contract, and they were written down only in a
+    # source comment: a wrapper script had no way to learn that 1 means "the
+    # run worked and refused everything" rather than "the run broke". That
+    # distinction is the whole point of having two of them.
     design = sub.add_parser(
-        "design", help="design guides against a sequence, FASTA file or preset"
+        "design", help="design guides against a sequence, FASTA file or preset",
+        epilog=(
+            """exit codes:
+  0  at least one guide survived the gate and was ranked
+  1  the run completed and nothing survived the gate -- a result, not an
+     error, and the shortfalls printed above say why
+  2  the run could not be completed: bad input, an unreadable file, or an
+     output path that could not be written
+"""
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     source = design.add_argument_group("input (FR1.1-FR1.3)")
     source.add_argument("--sequence", help="pasted raw or FASTA sequence text")

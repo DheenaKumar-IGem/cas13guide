@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 995 tests
+pytest                                                   # 1002 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_gate_coverage.py                  # 18 of 18 verdicts reached
 python -m mypy                                           # py.typed, checked
