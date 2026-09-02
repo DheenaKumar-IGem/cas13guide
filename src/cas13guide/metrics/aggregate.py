@@ -189,17 +189,13 @@ def manufacturability(qc: QCResult) -> float:
     return min(max(score, 0.0), 1.0)
 
 
-def predicted_signal(
-    evidence: tuple[PairEvidence, ...],
-    spec: ResolvedDesignSpec,
-    kinetics=None,
-) -> float | None:
-    """Relative predicted fluorescence at the best intended site (FR6.2).
+def _intended_prediction(evidence, spec, kinetics):
+    """The signal model's output at the best intended site, computed once.
 
-    ``None`` unless the assay treats collateral cleavage as its **readout**.
-    In a knockdown assay collateral is a hazard -- ``EffectorAssayProfile``
-    already records which it is -- and ranking guides by how much collateral
-    they produce would be precisely inverted there.
+    Both ``predicted_signal`` and ``predicted_signal_nm`` want it, and calling
+    the model twice runs the collateral ODE twice -- on exactly the path a user
+    unlocks by supplying measured constants, which is the path that can least
+    afford to be paid for twice.
     """
     if kinetics is None or spec.profile.collateral_is_hazard:
         return None
@@ -213,7 +209,22 @@ def predicted_signal(
             best = (rank, access)
     if best is None:
         return None
-    prediction = kinetics.predict(best[0], best[1])
+    return kinetics.predict(best[0], best[1])
+
+
+def predicted_signal(
+    evidence: tuple[PairEvidence, ...],
+    spec: ResolvedDesignSpec,
+    kinetics=None,
+) -> float | None:
+    """Relative predicted fluorescence at the best intended site (FR6.2).
+
+    ``None`` unless the assay treats collateral cleavage as its **readout**.
+    In a knockdown assay collateral is a hazard -- ``EffectorAssayProfile``
+    already records which it is -- and ranking guides by how much collateral
+    they produce would be precisely inverted there.
+    """
+    prediction = _intended_prediction(evidence, spec, kinetics)
     return None if prediction is None else prediction.relative_signal
 
 
@@ -235,23 +246,10 @@ def predicted_signal_nm(
     derived from placeholder rate constants is a fabricated measurement wearing
     a unit label, and downstream it is indistinguishable from a measured one.
     """
-    if kinetics is None or spec.profile.collateral_is_hazard:
-        return None
     constants = getattr(kinetics, "constants", None)
     if constants is None or getattr(constants, "provisional", True):
         return None
-
-    best: tuple[float, float | None] | None = None
-    for e in evidence:
-        if not e.is_intended:
-            continue
-        rank = benefit_lower(e.activity)
-        access = None if e.accessibility is None else e.accessibility.point
-        if best is None or rank > best[0]:
-            best = (rank, access)
-    if best is None:
-        return None
-    prediction = kinetics.predict(best[0], best[1])
+    prediction = _intended_prediction(evidence, spec, kinetics)
     return None if prediction is None else prediction.cleaved_reporter_nm
 
 
@@ -286,6 +284,12 @@ def build_metric_vector(
         if m is not None
     ]
 
+    _signal = _intended_prediction(reference, spec, kinetics)
+    _constants = getattr(kinetics, "constants", None)
+    _signal_is_provisional = (
+        _constants is None or getattr(_constants, "provisional", True)
+    )
+
     return MetricVector(
         required_coverage=required_coverage(reference, spec),
         desired_utility=desired_utility(reference, spec),
@@ -297,8 +301,13 @@ def build_metric_vector(
         pfs_preference=qc.pfs_preference,
         accessibility=intended_accessibility(reference),
         duplex_dg_per_nt=intended_duplex_energy(reference),
-        predicted_signal=predicted_signal(reference, spec, kinetics),
-        predicted_signal_nm=predicted_signal_nm(reference, spec, kinetics),
+        # One call, two readings: the model is asked once and both the
+        # relative score and the absolute figure come off the same prediction.
+        predicted_signal=None if _signal is None else _signal.relative_signal,
+        predicted_signal_nm=(
+            None if _signal is None or _signal_is_provisional
+            else _signal.cleaved_reporter_nm
+        ),
         # An axis that is a rescaled copy of two other axes is reported, not
         # ranked on. Probed, not assumed -- see the field's own docstring.
         predicted_signal_ranks=bool(

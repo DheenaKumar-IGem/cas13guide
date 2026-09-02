@@ -493,8 +493,14 @@ class TestTheSensitivityReportIsWhatItSaysAndReachesSomebody(unittest.TestCase):
     cannot drift apart again.
     """
 
-    @staticmethod
-    def _report():
+    _ranked_cache: list = []
+
+    @classmethod
+    def _report(cls):
+        """One design, shared. It was one per test method."""
+        if cls._ranked_cache:
+            return cls._ranked_cache
+
         import random
         import tempfile
         from pathlib import Path
@@ -506,12 +512,13 @@ class TestTheSensitivityReportIsWhatItSaysAndReachesSomebody(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "t.fa"
             path.write_text(">t1" + chr(10) + sequence + chr(10), encoding="utf-8")
-            return run_request(
+            cls._ranked_cache = run_request(
                 DesignRequest(fasta_path=str(path), task="knockdown",
                               assay="cell_culture_knockdown",
                               effector="RfxCas13d", use_structure=False,
                               use_signal=False)
             ).report["ranked"]
+        return cls._ranked_cache
 
     def test_every_ranked_row_carries_it(self):
         rows = self._report()

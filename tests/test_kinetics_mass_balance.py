@@ -234,6 +234,10 @@ class TestTheUnlockReachesASurfaceSomebodyReads(unittest.TestCase):
         path.write_text(json.dumps(data), encoding="utf-8")
         return path
 
+    #: Two full designs with the signal ODE running, shared by every test
+    #: below. Each was costing a run per test method and the suite noticed.
+    _cache: dict = {}
+
     def _report(self, **extra):
         import pathlib
         import random
@@ -241,16 +245,22 @@ class TestTheUnlockReachesASurfaceSomebodyReads(unittest.TestCase):
 
         from cas13guide.services.workflow import DesignRequest, run_request
 
+        key = tuple(sorted(extra))
+        if key in self._cache:
+            return self._cache[key]
+
         rng = random.Random(9)
         sequence = "".join(rng.choice("ACGU") for _ in range(300))
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "t.fa"
             path.write_text(">t1" + chr(10) + sequence + chr(10), encoding="utf-8")
-            return run_request(
+            report = run_request(
                 DesignRequest(fasta_path=str(path), task="detection",
                               assay="in_vitro_detection", effector="LwaCas13a",
                               use_structure=False, use_signal=True, **extra)
             ).report
+        self._cache[key] = report
+        return report
 
     def test_measured_constants_put_a_figure_in_real_units_on_the_row(self):
         rows = self._report(kinetics_json=str(self._measured_constants_file()))["ranked"]
