@@ -11,6 +11,8 @@ dist/
 # coverage data: a binary database rewritten by every run
 .coverage
 .coverage.*
+# subprocess tracing needs this on sys.path while measuring, and never after
+sitecustomize.py
 
 # stray logs from tooling
 *.log
