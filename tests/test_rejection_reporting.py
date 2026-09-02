@@ -226,6 +226,30 @@ class TestTheExportCarriesItToo(unittest.TestCase):
         rows = ranked_rows({"ranked": [{"guide_id": "old", "rank": 1}]})
         self.assertIsNone(rows[0]["detail"])
 
+    def test_a_detail_containing_a_comma_does_not_break_the_row(self):
+        """The gate composes at least one detail with commas in it -- the
+        universe-gap message joins universe names with them -- and this is a
+        comma-separated file. ``csv.DictWriter`` quotes, but the column was
+        added by hand and the failure mode is a row that silently parses into
+        the wrong fields rather than an error anyone would see.
+        """
+        import csv
+        import io
+
+        from cas13guide.services.fasta import ranked_to_csv
+
+        detail = "unsearched universes required by assay: circrna,coding,mito"
+        text = ranked_to_csv({"verdict_counts": {}, "ranked": [{
+            "rank": 1, "guide_id": "g1", "spacer": "ACGU", "verdict": "REVIEW",
+            "reasons": ["universe_inadequate"], "detail": [detail],
+        }]})
+        body = "\n".join(l for l in text.splitlines() if not l.startswith("#"))
+        rows = list(csv.DictReader(io.StringIO(body)))
+
+        self.assertEqual(rows[0]["detail"], detail)
+        self.assertEqual(rows[0]["guide_id"], "g1", "the row shifted a field")
+        self.assertIsNone(rows[0].get(None), "the row parsed into extra fields")
+
     def test_a_real_run_writes_something_into_it(self):
         report = _run_with_failures()
         from cas13guide.services.fasta import ranked_rows
