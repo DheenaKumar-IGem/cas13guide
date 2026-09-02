@@ -189,5 +189,54 @@ class TestTheReportRendersIt(unittest.TestCase):
         self.assertIn("a &gt; b &amp; c", html)
 
 
+class TestTheExportCarriesItToo(unittest.TestCase):
+    """The CSV is the surface that outlives the session.
+
+    ``RANKED_COLUMNS`` already carried ``reasons``, so a row opened next month
+    said which rule spoke without saying by how much -- the same half of the
+    explanation the report dict was missing, in the file most likely to be the
+    only thing left.
+    """
+
+    def test_detail_is_a_column_and_is_the_last_one(self):
+        """Appended, never inserted: that rule is written above the column list
+        because a positional parser of an existing export must not shift."""
+        from cas13guide.services.fasta import RANKED_COLUMNS
+
+        self.assertIn("detail", RANKED_COLUMNS)
+        self.assertEqual(RANKED_COLUMNS[-1], "detail")
+
+    def test_it_is_flattened_the_same_way_reasons_are(self):
+        """One cell, semicolon-separated -- not a Python list repr, which is
+        what an unflattened tuple would write into the file."""
+        from cas13guide.services.fasta import ranked_rows
+
+        rows = ranked_rows({"ranked": [
+            {"guide_id": "g1", "reasons": ["a", "b"], "detail": ["x > y", "p < q"]},
+            {"guide_id": "g2", "reasons": [], "detail": []},
+        ]})
+        self.assertEqual(rows[0]["detail"], "x > y;p < q")
+        self.assertEqual(rows[1]["detail"], "")
+
+    def test_a_row_without_the_field_still_exports(self):
+        """An older report dict has no detail key, and an export that raises is
+        worse than one with a blank cell."""
+        from cas13guide.services.fasta import ranked_rows
+
+        rows = ranked_rows({"ranked": [{"guide_id": "old", "rank": 1}]})
+        self.assertIsNone(rows[0]["detail"])
+
+    def test_a_real_run_writes_something_into_it(self):
+        report = _run_with_failures()
+        from cas13guide.services.fasta import ranked_rows
+
+        rows = ranked_rows(report)
+        self.assertTrue(rows)
+        self.assertTrue(
+            any(row["detail"] for row in rows),
+            "no exported row carried any detail, so the column proves nothing",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

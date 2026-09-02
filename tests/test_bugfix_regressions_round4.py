@@ -251,10 +251,23 @@ class TestTheExportsCarryTheDistinctSiteFlag(unittest.TestCase):
             [row.split(",")[column] for row in rows[1:]], ["True", "False"]
         )
 
-    def test_the_column_is_appended_so_positional_parsers_do_not_shift(self):
+    def test_columns_are_only_ever_appended_so_positional_parsers_do_not_shift(self):
+        """The rule is that no established column moves, which is not the same
+        as "distinct_site is last" -- that phrasing forbade ever appending
+        another column, and a later one (``detail``) had to. Pinning the whole
+        established prefix is strictly stronger: it catches an insertion or a
+        reorder anywhere in it, which is what actually shifts a parser, while
+        leaving the append that the comment above the list explicitly allows.
+        """
         from cas13guide.services.fasta import RANKED_COLUMNS
 
-        self.assertEqual(RANKED_COLUMNS[-1], "distinct_site")
+        established = (
+            "rank", "guide_id", "spacer", "score", "verdict", "review_tier",
+            "spans_junction", "pfs_3prime", "pfs_preferred", "accessibility",
+            "duplex_dg_per_nt", "predicted_signal", "reasons", "qc_warnings",
+            "distinct_site",
+        )
+        self.assertEqual(RANKED_COLUMNS[: len(established)], established)
 
     def test_the_fasta_defline_carries_it(self):
         from cas13guide.services.fasta import parse_fasta, ranked_to_fasta

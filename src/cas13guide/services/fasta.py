@@ -304,6 +304,11 @@ RANKED_COLUMNS: tuple[str, ...] = (
     # it saying so. That is the precise failure the distinct-site marking
     # exists to prevent, surviving in the file that outlives the session.
     "distinct_site",
+    # Appended for the same reason, and under the same rule. The gate composes
+    # a number for every verdict it reaches and the export carried only the
+    # reason code, so a REVIEW row in a file somebody opens next month said
+    # which rule spoke without saying by how much.
+    "detail",
 )
 
 
@@ -316,7 +321,7 @@ def ranked_rows(report_dict: dict) -> list[dict]:
         row["required_coverage"] = metrics.get("required_coverage")
         row["worst_off_target"] = metrics.get("worst_off_target")
         row["cumulative_burden"] = metrics.get("cumulative_burden")
-        for key in ("reasons", "qc_warnings"):
+        for key in ("reasons", "qc_warnings", "detail"):
             value = row.get(key)
             if isinstance(value, (list, tuple)):
                 row[key] = ";".join(str(item) for item in value)
