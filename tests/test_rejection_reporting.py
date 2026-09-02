@@ -198,13 +198,21 @@ class TestTheExportCarriesItToo(unittest.TestCase):
     only thing left.
     """
 
-    def test_detail_is_a_column_and_is_the_last_one(self):
-        """Appended, never inserted: that rule is written above the column list
-        because a positional parser of an existing export must not shift."""
+    def test_detail_is_a_column_and_came_after_the_established_ones(self):
+        """Appended, never inserted: the rule written above the column list,
+        because a positional parser of an existing export must not shift.
+
+        Stated as "is it after everything that existed before it" rather than
+        "is it last", which was this test's first phrasing and forbade the very
+        next append -- the same over-specific proxy a round-4 test used, for
+        the same reason, and it took one more column to expose it here too.
+        """
         from cas13guide.services.fasta import RANKED_COLUMNS
 
         self.assertIn("detail", RANKED_COLUMNS)
-        self.assertEqual(RANKED_COLUMNS[-1], "detail")
+        self.assertGreater(
+            RANKED_COLUMNS.index("detail"), RANKED_COLUMNS.index("distinct_site")
+        )
 
     def test_it_is_flattened_the_same_way_reasons_are(self):
         """One cell, semicolon-separated -- not a Python list repr, which is

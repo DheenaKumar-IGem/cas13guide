@@ -43,12 +43,13 @@ SCORE_GLOSSARY: dict[str, tuple[str, str]] = {
     "predicted_signal": ("Signal", "Relative predicted fluorescence from the collateral-cleavage model. Comparable only within this run — the kinetic constants shipped by default are placeholders, so no absolute figure is offered."),
     "pfs_3prime": ("PFS", "The base immediately 3' of the target site. LwaCas13a prefers a non-G here; a G is a deprioritisation, not an exclusion."),
     "robustness": ("Robustness", "Worst coverage across every evaluated context — variants, isoforms, haplotypes. A guide that works on the reference and loses one variant shows it here."),
+    "site": ("Site", "Which target record the guide binds, and the 0-based start of its site on that record. A rank alone does not place a guide, and on a multi-record design two guides at the same coordinate may be on different targets."),
     "spans_junction": ("EEJ", "Whether the guide spans an exon-exon junction, which can be used to target a spliced isoform specifically."),
 }
 
 #: Ordered columns of the results table.
 TABLE_COLUMNS: tuple[str, ...] = (
-    "rank", "spacer", "score", "verdict", "review_tier",
+    "rank", "spacer", "site", "score", "verdict", "review_tier",
     "required_coverage", "worst_off_target", "accessibility",
     "duplex_dg_per_nt", "predicted_signal", "pfs_3prime", "robustness",
 )
@@ -310,7 +311,17 @@ def render_report(
         cells = []
         for column in TABLE_COLUMNS:
             value = entry.get(column, metrics.get(column))
+            sort_value: Any = value
             attrs = ' class="seq"' if column == "spacer" else ""
+            if column == "site":
+                target, start = entry.get("source_target_id"), entry.get("start")
+                value = None if start is None else (
+                    f"{target}:{start}" if target else start
+                )
+                # Sorted on the coordinate, not the rendered string: "t1:1000"
+                # sorts before "t1:99" as text, which is the wrong order for
+                # the one thing anybody sorts this column for.
+                sort_value = start
             if column == "verdict":
                 rendered = (
                     f'<span class="tag {html.escape(str(value))}">'
@@ -319,7 +330,8 @@ def render_report(
             else:
                 rendered = html.escape(_fmt(value))
             cells.append(
-                f'<td{attrs} data-sort="{html.escape(_sort_key(value))}">{rendered}</td>'
+                f'<td{attrs} data-sort="{html.escape(_sort_key(sort_value))}">'
+                f"{rendered}</td>"
             )
         # The filter promises "sequence, id, reason" and matches the row's
         # textContent, which contains neither of the last two: guide_id,

@@ -194,8 +194,8 @@ whole time; the surface a person actually reads did not.
 
 ```
   ! no panel: guides ranked but none PASSed the gate, and the panel is
-    PASS-only. The rows above are candidates to triage, not a recommendation.
-  ! no feasible panel covers required target(s): demo
+    PASS-only. The rows below are candidates to triage, not a recommendation.
+  ! no feasible panel covers required target(s): t_tgt
 ```
 
 ## What a panel is worth (FR6.3)
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 976 tests
+pytest                                                   # 995 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_gate_coverage.py                  # 18 of 18 verdicts reached
 python -m mypy                                           # py.typed, checked
@@ -850,7 +850,7 @@ the 4.9% of DR-interaction verdicts the superseded RfxCas13d direct repeat
 flipped — recovered from the first commit and re-measured at 4.64%, well inside
 sampling noise at that sample size.
 
-**The invariants hold on generated input.** `tests/test_properties.py` states 33
+**The invariants hold on generated input.** `tests/test_properties.py` states 40
 of them for `hypothesis`, which was a declared dev dependency that nothing
 imported and that was not even installed. `revcomp` is its own inverse, a spacer
 against its own target is a perfect duplex, hazard is monotone in every factor,
@@ -858,6 +858,16 @@ a smaller alpha never buys a narrower interval, the FR6.3 point estimate never
 leaves the interval it is printed beside, the scanner and the FM index return
 the same hit set on any generated world, and — the rule seven passes kept
 finding new ways to break — an accepted sequence comes back unchanged.
+
+The last seven are the claims the decision layer rests on, which need a
+generator because each has to hold for *every* weighting a user might supply
+rather than for the handful somebody wrote down: no weighting resurrects a
+failed guide or changes a verdict, hazard is the worst context and never the
+mean, robustness is the lowest coverage and not the reference one, and
+evaluating one more context can only make a guide look worse. Each was checked
+by injecting its own defect into the source and watching the property go red —
+which found two of the properties wanting rather than any defect in the
+package, both since restated.
 
 **Coverage is 90%, and the instrument needs checking before the number does.**
 Several tests drive the CLI through `subprocess`, which `coverage` does not

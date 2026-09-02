@@ -8,5 +8,9 @@ demo_report/
 build/
 dist/
 
+# coverage data: a binary database rewritten by every run
+.coverage
+.coverage.*
+
 # stray logs from tooling
 *.log

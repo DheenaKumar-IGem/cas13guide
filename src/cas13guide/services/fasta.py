@@ -309,6 +309,13 @@ RANKED_COLUMNS: tuple[str, ...] = (
     # reason code, so a REVIEW row in a file somebody opens next month said
     # which rule spoke without saying by how much.
     "detail",
+    # Where the guide binds, and on which record. Both were added to the report
+    # dict when the accessibility track turned out to be drawing guides from
+    # one record at another record's coordinates -- "start alone cannot place a
+    # guide" -- and then reached no export at all. So a CSV of sixty spacers
+    # from a multi-record design said which guide, and never which target.
+    "source_target_id",
+    "start",
 )
 
 
@@ -464,6 +471,13 @@ def ranked_to_fasta(
         # two sites and fifty-eight single-base shifts of them.
         if "distinct_site" in entry:
             parts.append(f"distinct_site={entry['distinct_site']}")
+        # This file's whole claim is that it is "useful on its own rather than
+        # only as a companion to the CSV", and a spacer with no target and no
+        # coordinate is not: recovering either means searching the sequence
+        # back against the input by hand.
+        for key, label in (("source_target_id", "target"), ("start", "start")):
+            if entry.get(key) is not None:
+                parts.append(f"{label}={entry[key]}")
         records.append(
             SequenceRecord(
                 name=str(entry.get("guide_id")),
