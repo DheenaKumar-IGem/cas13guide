@@ -327,8 +327,16 @@ class RankedGuide:
     rank: int
     score: float
     rationale: tuple[str, ...]
-    #: d(score)/d(weight) per objective -- how much the rank depends on the
-    #: user's weighting rather than on the evidence.
+    #: What each objective contributed to ``score``: ``weight x normalised
+    #: value``, so the values sum to ``score`` exactly. That is what answers
+    #: "is this guide here because of the evidence or because of how I weighted
+    #: it" -- an axis contributing most of the total is a ranking resting on a
+    #: preference.
+    #:
+    #: Described until now as ``d(score)/d(weight)``, which is a different
+    #: number: the derivative in the weight is the *normalised value* alone,
+    #: i.e. this divided by the weight. Anyone wanting the derivative can take
+    #: it; the comment simply did not describe what the field holds.
     sensitivity: dict[str, float]
 
 

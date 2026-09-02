@@ -295,6 +295,16 @@ class DesignReport:
                     "detail": list(r.assessment.gate.detail),
                     "metrics": asdict(r.assessment.metrics),
                     "rationale": list(r.rationale),
+                    # The same breakdown the rationale strings render, in the
+                    # form a caller can use. It was computed for every guide
+                    # and reached no output at all, so the one question a
+                    # weighted ranking raises -- how much of this rank is my
+                    # preference rather than the evidence -- could only be
+                    # answered by parsing prose.
+                    "sensitivity": {
+                        key: round(value, 6)
+                        for key, value in sorted(r.sensitivity.items())
+                    },
                 }
                 for r in self.ranked
             ],

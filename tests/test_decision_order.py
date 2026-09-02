@@ -478,6 +478,108 @@ class TestDistinctSitesReachTheReport(unittest.TestCase):
         self.assertTrue(data["ranked"][0]["distinct_site"])
 
 
+class TestTheSensitivityReportIsWhatItSaysAndReachesSomebody(unittest.TestCase):
+    """It was computed for every guide and exported nowhere.
+
+    The one question a weighted ranking raises is whether a guide is first
+    because of the evidence or because of how the reader weighted it. This is
+    the number that answers it, and until now answering meant parsing the
+    rationale prose.
+
+    Its own comment also described it as ``d(score)/d(weight)``, which is a
+    different quantity: the stored value is ``weight x normalised value``, and
+    the derivative in the weight is the normalised value alone. The tests below
+    pin the semantics the field actually has, so the description and the code
+    cannot drift apart again.
+    """
+
+    @staticmethod
+    def _report():
+        import random
+        import tempfile
+        from pathlib import Path
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        rng = random.Random(9)
+        sequence = "".join(rng.choice("ACGU") for _ in range(300))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "t.fa"
+            path.write_text(">t1" + chr(10) + sequence + chr(10), encoding="utf-8")
+            return run_request(
+                DesignRequest(fasta_path=str(path), task="knockdown",
+                              assay="cell_culture_knockdown",
+                              effector="RfxCas13d", use_structure=False,
+                              use_signal=False)
+            ).report["ranked"]
+
+    def test_every_ranked_row_carries_it(self):
+        rows = self._report()
+        self.assertTrue(rows)
+        for row in rows:
+            with self.subTest(guide=row["guide_id"]):
+                self.assertIn("sensitivity", row)
+                self.assertTrue(row["sensitivity"])
+
+    def test_the_contributions_add_up_to_the_score(self):
+        """A breakdown that does not sum to the thing it breaks down is worse
+        than no breakdown."""
+        for row in self._report():
+            with self.subTest(guide=row["guide_id"]):
+                self.assertAlmostEqual(
+                    sum(row["sensitivity"].values()), row["score"], places=3
+                )
+
+    def test_it_names_the_same_objectives_the_rationale_does(self):
+        """Two renderings of one calculation; they must not disagree."""
+        for row in self._report():
+            with self.subTest(guide=row["guide_id"]):
+                from_prose = {line.split("=", 1)[0] for line in row["rationale"]}
+                self.assertEqual(set(row["sensitivity"]), from_prose)
+
+    def test_it_is_a_contribution_and_not_a_derivative(self):
+        """Doubling a weight doubles that objective's contribution, while the
+        derivative in that weight would not move at all. That is how the
+        description and the value can be told apart.
+
+        Driven through ``rank_by_preference`` because no shipped door lets a
+        user set weights -- ``run_design`` takes them and neither the CLI nor
+        ``DesignRequest`` passes them on.
+        """
+        pool = [
+            _assessment_with_coverage(f"g{i}", coverage)
+            for i, coverage in enumerate((0.2, 0.5, 0.9))
+        ]
+        single = rank_by_preference(pool, {"required_coverage": 3.0})
+        double = rank_by_preference(pool, {"required_coverage": 6.0})
+
+        before = {r.assessment.guide_id: r.sensitivity for r in single}
+        after = {r.assessment.guide_id: r.sensitivity for r in double}
+        moved = 0
+        for guide_id, contributions in before.items():
+            baseline = contributions.get("required_coverage", 0.0)
+            if not baseline:
+                continue
+            moved += 1
+            self.assertAlmostEqual(
+                after[guide_id]["required_coverage"], baseline * 2.0, places=6
+            )
+        self.assertGreater(moved, 0, "no guide had a coverage contribution to move")
+
+
+def _assessment_with_coverage(guide_id: str, coverage: float) -> GuideAssessment:
+    from cas13guide.contract.enums import ReasonCode
+    from cas13guide.models.evidence import Candidate, GateResult
+
+    return GuideAssessment(
+        guide_id=guide_id,
+        candidate=Candidate(guide_id=guide_id, spacer="A" * 22,
+                            source_target_id="t1", start=0),
+        qc=clean_qc(guide_id),
+        metrics=MetricVector(coverage, 0.0, 0.0, 0.0, coverage, 1.0),
+        gate=GateResult(Verdict.PASS, (ReasonCode.CONSTRAINTS_SATISFIED,)),
+    )
+
 
 if __name__ == "__main__":
     unittest.main()
