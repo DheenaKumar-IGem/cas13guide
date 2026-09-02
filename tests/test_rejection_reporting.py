@@ -167,6 +167,39 @@ class TestTheReportRendersIt(unittest.TestCase):
         self.assertIn("<h2>Why guides were rejected</h2>", html)
         self.assertIn("gc_out_of_range", html)
 
+    def test_the_verdict_cell_says_why_this_guide_got_it(self):
+        """The glossary explains what REVIEW and R2 mean in general. A reader
+        looking at one row wants the reason for *that* guide, and it was in the
+        report and rendered nowhere -- the reason codes sat in the row's search
+        attribute, which no eye reads."""
+        from cas13guide.services.report_html import render_report
+
+        html = render_report({"verdict_counts": {}, "ranked": [{
+            "rank": 1, "guide_id": "g1", "spacer": "ACGU", "verdict": "REVIEW",
+            "review_tier": "R2", "reasons": ["expression_unknown"],
+            "detail": ["1 locus/loci with no expression evidence"],
+        }]})
+        self.assertIn("expression_unknown", html)
+        self.assertRegex(html, r'<td title="[^"]*no expression evidence[^"]*"')
+
+    def test_a_row_with_nothing_to_explain_gets_no_tooltip(self):
+        """A PASS with no reasons should not carry an empty title attribute."""
+        from cas13guide.services.report_html import render_report
+
+        html = render_report({"verdict_counts": {}, "ranked": [{
+            "rank": 1, "guide_id": "g1", "spacer": "ACGU", "verdict": "PASS",
+        }]})
+        self.assertNotIn('title=""', html)
+
+    def test_the_tooltip_is_escaped(self):
+        from cas13guide.services.report_html import render_report
+
+        html = render_report({"verdict_counts": {}, "ranked": [{
+            "rank": 1, "guide_id": "g1", "spacer": "ACGU", "verdict": "REVIEW",
+            "reasons": ['x" onmouseover="alert(1)'], "detail": [],
+        }]})
+        self.assertNotIn('onmouseover="alert(1)"', html)
+
     def test_a_report_without_the_section_still_renders(self):
         """Older report dicts have no ``rejected`` key at all."""
         from cas13guide.services.report_html import render_report

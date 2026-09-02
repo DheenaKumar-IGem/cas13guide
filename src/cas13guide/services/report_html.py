@@ -32,7 +32,7 @@ from typing import Any, Sequence
 #: Column key -> (heading, plain-English explanation). NFR6.
 SCORE_GLOSSARY: dict[str, tuple[str, str]] = {
     "rank": ("Rank", "Position after the composite weighted score. Rank 1 is the best overall trade-off, not the best on any single axis."),
-    "verdict": ("Verdict", "PASS cleared every gate. REVIEW cleared the hard gates but something needs a human — see the tier. FAIL never reaches this table — when anything did fail, “Why guides were rejected” below says what the gate measured."),
+    "verdict": ("Verdict", "Hover a verdict for the reason this particular guide got it, and the number behind it. PASS cleared every gate. REVIEW cleared the hard gates but something needs a human — see the tier. FAIL never reaches this table — when anything did fail, “Why guides were rejected” below says what the gate measured."),
     "review_tier": ("Tier", "R1 a borderline number. R2 a gap in the evidence, such as an off-target whose expression is unknown. R3 nobody validated this case — the model was asked outside its domain."),
     "spacer": ("Spacer", "The guide RNA sequence to order, 5'→3'. It is the reverse complement of the target site, because Cas13 binds its target as an antiparallel RNA:RNA duplex."),
     "score": ("Score", "Weighted sum of the normalised objectives. Useful for ordering, meaningless as an absolute number — the weights are a preference, not a measurement."),
@@ -323,6 +323,20 @@ def render_report(
                 # the one thing anybody sorts this column for.
                 sort_value = start
             if column == "verdict":
+                # Why *this* guide got *this* verdict. The glossary explains
+                # what REVIEW and R2 mean in general; a reader looking at one
+                # row wants the reason and the number behind it, and both were
+                # in the report and rendered nowhere -- the reason codes sat in
+                # the row's search attribute, which no eye reads.
+                because = "; ".join(
+                    str(item) for item in (entry.get("reasons") or ())
+                )
+                numbers = "; ".join(
+                    str(item) for item in (entry.get("detail") or ())
+                )
+                explanation = " -- ".join(part for part in (because, numbers) if part)
+                if explanation:
+                    attrs += f' title="{html.escape(explanation)}"'
                 rendered = (
                     f'<span class="tag {html.escape(str(value))}">'
                     f"{html.escape(_fmt(value))}</span>"
