@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-976 tests, run under `unittest` or `pytest`, and 90% line coverage.
+1008 tests, run under `unittest` or `pytest`, and 90% line coverage.
 
 Five claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1002 tests
+pytest                                                   # 1008 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_gate_coverage.py                  # 18 of 18 verdicts reached
 python -m mypy                                           # py.typed, checked

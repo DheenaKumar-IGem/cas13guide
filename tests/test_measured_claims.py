@@ -19,7 +19,9 @@ all" implies precision near 50%, and it is 21%.
 """
 
 import math
+import pathlib
 import random
+import re
 import unittest
 
 from cas13guide.pipeline.b_qc import (
@@ -210,6 +212,67 @@ class TestTheDirectRepeatIsWorthGettingRight(unittest.TestCase):
             lost += before and not after
         self.assertGreater(gained, 0)
         self.assertGreater(lost, 0)
+
+
+class TestTheReadmeDoesNotContradictItself(unittest.TestCase):
+    """The Verification section states its test count twice, and the two drifted.
+
+    Three times in one session the prose line said one number and the code
+    block six lines below it said another -- 930 against 976, then 976 against
+    1002. Each time the fix was to update one and forget the other, which is
+    the signature of a figure with no guard.
+
+    The count *itself* is deliberately not pinned. Collection depends on which
+    optional dependencies are installed -- ``test_properties`` raises
+    ``SkipTest`` at import without ``hypothesis``, taking forty tests with it --
+    so a hard assertion would fail on a contributor's machine for a reason that
+    has nothing to do with their change. That is a worse defect than a stale
+    number.
+
+    What is checkable without that risk is internal consistency: whatever the
+    figure is, the document must state it once. So this compares the README to
+    itself, and says plainly that it does not verify the number is right.
+    """
+
+    @staticmethod
+    def _readme() -> str:
+        return (pathlib.Path(__file__).resolve().parent.parent
+                / "README.md").read_text(encoding="utf-8")
+
+    def test_the_two_stated_test_counts_agree(self):
+        text = self._readme()
+        prose = re.search(r"^(\d[\d,]*) tests, run under", text, re.MULTILINE)
+        block = re.search(r"^pytest\s+# (\d[\d,]*) tests$", text, re.MULTILINE)
+
+        self.assertIsNotNone(prose, "the Verification section states no test count")
+        self.assertIsNotNone(block, "the verification commands quote no test count")
+        self.assertEqual(
+            prose.group(1), block.group(1),
+            "the Verification section states its test count twice and the two "
+            "disagree; both should be the number `pytest` reports as passing",
+        )
+
+    def test_the_figure_is_not_wildly_out_of_date(self):
+        """A floor rather than an equality, for the reason in the docstring: it
+        catches a number left behind by a hundred tests, not by six."""
+        import subprocess
+        import sys
+
+        text = self._readme()
+        stated = int(re.search(r"^(\d+) tests, run under", text, re.MULTILINE).group(1))
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "--collect-only"],
+            capture_output=True, text=True,
+            cwd=pathlib.Path(__file__).resolve().parent.parent,
+        )
+        collected = re.search(r"(\d+) tests? collected", result.stdout)
+        if collected is None:
+            self.skipTest("could not collect the suite to compare against")
+        actual = int(collected.group(1))
+        self.assertLess(
+            abs(actual - stated), max(50, actual // 10),
+            f"the README says {stated} tests and the suite collects {actual}",
+        )
 
 
 if __name__ == "__main__":
