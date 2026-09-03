@@ -52,17 +52,37 @@ class StaticExpressionSource:
 def expression_interval(
     tpm: float | None,
     relative_uncertainty: float = 0.25,
-    max_plausible_tpm: float = 1000.0,
 ) -> Interval:
     """Bounded abundance factor for one locus.
 
-    ``tpm is None`` yields ``[0, abundance_factor(max_plausible)]`` flagged
-    ``imputed``, which the gate reads as an R2 evidence gap.
+    ``tpm is None`` yields ``[0, 1]`` flagged ``imputed``, which the gate reads
+    as an R2 evidence gap.
+
+    The unmeasured ceiling used to be ``abundance_factor(1000.0)`` = 0.952,
+    which is not a bound. ``abundance_factor`` is monotone and approaches 1, so
+    any locus measured above 800 TPM produced an upper bound *above* that
+    ceiling -- 0.9955 at 9,000 TPM. The "unknown" interval therefore failed to
+    contain the very values a measurement could return.
+
+    Hazard reads expression at ``.upper``, so the consequence ran the one
+    direction a hazard bound must never move: **deleting a measurement made the
+    hazard smaller**. A guide with an off-target on a highly expressed rRNA
+    locus failed the hazard budget when the abundance was known and survived as
+    REVIEW when it was not, so less evidence bought a more permissive verdict --
+    on the metric the report describes as "read high on purpose; a low point
+    estimate is not evidence of safety". The shipped demo world alone carries
+    rRNA at 9,000 TPM and mito at 2,500, the two biotypes with the highest
+    hazard weights.
+
+    1.0 is the supremum of ``abundance_factor``, so it is the only ceiling that
+    contains every measurement. That makes an unmeasured off-target read at the
+    top of the range, which is what "maximal ignorance" has to mean for a bound
+    that is read at its upper end. The R2 tier and the ``expression_unknown``
+    flag are what tell a user this is missing evidence rather than a measured
+    hazard.
     """
     if tpm is None:
-        return Interval.unknown(
-            lo=0.0, hi=abundance_factor(max_plausible_tpm), stratum="expression/unmeasured"
-        )
+        return Interval.unknown(lo=0.0, hi=1.0, stratum="expression/unmeasured")
     lo = abundance_factor(max(0.0, tpm * (1.0 - relative_uncertainty)))
     hi = abundance_factor(tpm * (1.0 + relative_uncertainty))
     return Interval(

@@ -11,7 +11,7 @@ from __future__ import annotations
 from ..contract.enums import QCFlag
 from ..contract.spec import ResolvedDesignSpec
 from ..models.evidence import Candidate, QCResult
-from ..util.seq import gc_fraction, has_polyu_terminator, max_homopolymer, revcomp
+from ..util.seq import gc_fraction, has_polyu_terminator, max_homopolymer
 
 GC_MIN, GC_MAX = 0.30, 0.70
 MAX_HOMOPOLYMER = 4
@@ -34,7 +34,43 @@ MAX_HOMOPOLYMER = 4
 #: threshold makes it one. Install ViennaRNA and the real fold is used instead;
 #: the run says which one it used.
 MAX_SELF_STEM = 6
-MAX_DR_STEM = 6
+
+#: Longest spacer:DR helix tolerated before :data:`QCFlag.DR_SPACER_INTERACTION`
+#: fires. Nine, not six, and the two numbers describe the same strictness under
+#: two different pairing rules.
+#:
+#: This threshold and :func:`longest_cross_complement` are one calibration, not
+#: two constants. Six was derived when the scan was Watson-Crick only, where it
+#: flagged 2.1-2.3% of random 22-mers against all three shipped repeats -- a
+#: rate low enough that a flag meant something specific about the spacer.
+#: Teaching the scan G-U wobbles (which it had to learn: a real 12 bp helix
+#: containing one wobble was being measured as 6, exactly at the old bar, so it
+#: passed) roughly doubles the helix a random spacer reaches by chance. Left at
+#: six, the same threshold flagged 14.7% of random spacers against the
+#: LwaCas13a repeat and 47.5% against PspCas13b.
+#:
+#: That would have been the worse bug of the two. DR_SPACER_INTERACTION is a
+#: *hard* flag -- the candidate is dropped, not ranked down -- so a rate like
+#: that deletes a third of every candidate set for no reason, and the number
+#: deleted depends mostly on which repeat the ortholog happens to have. It is
+#: the failure ``contract/effectors.py`` describes at length about hard-vs-soft
+#: PFS, arrived at from the other direction.
+#:
+#: Nine restores the original false-positive budget: 2.4% / 0.5% / 3.1% for
+#: RfxCas13d / LwaCas13a / PspCas13b over 20,000 random 22-mers, seed 12345,
+#: against 2.3% / 2.1% / 2.2% for the old rule at six. Detection is strictly
+#: better than before rather than merely preserved -- every constructed spacer
+#: carrying a 12 nt wobble-containing partner of its own repeat is still
+#: flagged (19/19, 21/21, 24/24 across the three), and those are exactly the
+#: ones the Watson-Crick scan could not see at any threshold.
+#:
+#: The spread across effectors is wider than it was (0.5% to 3.1%, against
+#: 2.1% to 2.3%) because a wobble scan is sensitive to the repeat's G/U content
+#: in a way a Watson-Crick scan is not. A per-effector threshold derived from
+#: each repeat's own null would close that; a single number is what is here,
+#: and this is where it is written down that the number is a rate, not a length
+#: anyone measured in a tube.
+MAX_DR_STEM = 9
 
 
 #: Pairs an RNA helix can actually form. G-U is included because this is an
@@ -82,17 +118,40 @@ def longest_self_complement(seq: str, min_len: int = 3) -> int:
 
 
 def longest_cross_complement(a: str, b: str, min_len: int = 3) -> int:
-    """Longest duplex the two sequences can form with each other."""
+    """Longest duplex the two sequences can form with each other.
+
+    Pairs by :data:`HELIX_PAIRS`, for the same reason
+    :func:`longest_self_complement` does. This scan used to test
+    ``revcomp(a[i:i+size]) in b`` -- a literal Watson-Crick substring match --
+    so the two functions in this file disagreed about what a base pair is, and
+    the one feeding the *hard* :data:`QCFlag.DR_SPACER_INTERACTION` flag was
+    the stricter of the two. A single G-U wobble inside a helix split it into
+    two shorter ones, and a spacer that really does sequester the direct repeat
+    was measured as not doing so.
+
+    That is the wrong direction for this particular check: the DR:spacer
+    interaction is a *hazard*, so under-detecting it means shipping a guide
+    whose scaffold is base-paired to its own spacer. The self-folding scan was
+    fixed for exactly this; the fix landed on one of the two callers.
+
+    No loop constraint here, unlike the hairpin scan: these are two separate
+    strands, so nothing has to turn.
+    """
+    x = a.upper().replace("T", "U")
+    y = b.upper().replace("T", "U")
     best = 0
-    for size in range(min_len, min(len(a), len(b)) + 1):
-        found = False
-        for i in range(len(a) - size + 1):
-            if revcomp(a[i : i + size]) in b:
-                best, found = size, True
-                break
-        if not found:
-            break
-    return best
+    # Antiparallel: x[i + k] pairs with y[j - k], so the duplex runs 5'->3'
+    # along x and 3'->5' along y.
+    for i in range(len(x)):
+        for j in range(len(y) - 1, -1, -1):
+            length = 0
+            while (i + length) < len(x) and (j - length) >= 0:
+                if (x[i + length] + y[j - length]) not in HELIX_PAIRS:
+                    break
+                length += 1
+            if length > best:
+                best = length
+    return best if best >= min_len else 0
 
 
 #: Free energy at which a spacer is judged too self-structured to work, when a

@@ -167,7 +167,7 @@ class TestTheSignalDegeneracyFigure(unittest.TestCase):
 
 
 class TestTheDirectRepeatIsWorthGettingRight(unittest.TestCase):
-    """"the old value changed that verdict for 4.9% of random 22 nt spacers".
+    """"the old value changed that verdict for 2.8% of random 22 nt spacers".
 
     The DR is data that looks like decoration, and a wrong one does not fail
     loudly -- it moves verdicts. This recomputes the figure that says how much,
@@ -178,7 +178,7 @@ class TestTheDirectRepeatIsWorthGettingRight(unittest.TestCase):
     #: weights showed it disagreed with the published CasRx mature repeat.
     SUPERSEDED = "CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU"
 
-    def test_the_verdict_flip_rate_is_about_five_percent(self):
+    def test_the_verdict_flip_rate_is_about_three_percent(self):
         from cas13guide.contract.effectors import EFFECTORS
         from cas13guide.contract.enums import Effector
         from cas13guide.pipeline.b_qc import MAX_DR_STEM, longest_cross_complement
@@ -193,7 +193,11 @@ class TestTheDirectRepeatIsWorthGettingRight(unittest.TestCase):
             before = longest_cross_complement(spacer, self.SUPERSEDED) > MAX_DR_STEM
             after = longest_cross_complement(spacer, current) > MAX_DR_STEM
             flips += before != after
-        self.assertAlmostEqual(flips / n, 0.049, delta=0.02)
+        # 2.77% +/- 0.18% over five seeds at n=20,000. The delta covers seed
+        # variation at this smaller sample, where the same five seeds span
+        # 2.6-3.5%; asserting three decimals of a Monte Carlo quantity is the
+        # flaky-test-dressed-as-a-precise-one this module was written about.
+        self.assertAlmostEqual(flips / n, 0.028, delta=0.015)
 
     def test_the_flip_goes_in_both_directions(self):
         """"in both directions" -- a DR error is not simply more or less strict."""

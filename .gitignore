@@ -25,3 +25,8 @@ _vocabulary_coverage_plugin.py
 /stray_*.csv
 /repro_*.csv
 /*.tmp.csv
+
+# probe scripts a review agent writes beside the tree to reproduce a finding.
+# Same class as the stray CSVs above: useful for one hunt, noise afterwards.
+/_probe*/
+/scratch_hunt/

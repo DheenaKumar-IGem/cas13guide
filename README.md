@@ -146,7 +146,7 @@ prediction off as an off-target risk estimate.
 > one (`CAAC*U*AAACCC*U*` against `CAAG*U*AAACCC*C*`) before diverging. It was
 > load-bearing: `b_qc.py` flags spacers that can base-pair with their own
 > repeat, and across 20,000 random 22 nt spacers the old value flipped that
-> verdict for **4.9%** of them. Fixed, with the structural invariant pinned in
+> verdict for **2.8%** of them. Fixed, with the structural invariant pinned in
 > `test_effector_constants.py` so the next bad value fails loudly.
 
 ## A ranked list is not a panel
@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1119 tests, run under `unittest` or `pytest`, and 91% line coverage.
+1135 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
 Nine claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1119 tests
+pytest                                                   # 1135 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
@@ -931,9 +931,12 @@ demanding three decimals of a Monte Carlo quantity is a flaky test dressed as a
 precise one. Two further figures recomputed clean and are now pinned rather
 than merely believed: the signal-degeneracy ratio that justifies reporting
 `predicted_signal` without ranking on it (0.161% against a stated 0.159%), and
-the 4.9% of DR-interaction verdicts the superseded RfxCas13d direct repeat
-flipped — recovered from the first commit and re-measured at 4.64%, well inside
-sampling noise at that sample size.
+the DR-interaction verdicts the superseded RfxCas13d direct repeat flipped —
+recovered from the first commit and re-measured at 4.64% against a stated 4.9%,
+well inside sampling noise at that sample size. (That pair later moved together
+to 2.8% when the spacer:DR scan learned G-U wobbles and its threshold was
+re-derived with it. The repeat did not change; the ruler did, and the pinned
+figure moving with it is the guard working rather than failing.)
 
 **The invariants hold on generated input.** `tests/test_properties.py` states 40
 of them for `hypothesis`, which was a declared dev dependency that nothing

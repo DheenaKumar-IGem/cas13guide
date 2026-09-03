@@ -41,6 +41,30 @@ from .enums import Effector
 #: another route.
 DISFAVOURED_PFS_FACTOR = 0.55
 
+#: Flanking values that carry no evidence about the base.
+#:
+#: ``None`` is a transcript end -- the window abuts the boundary, so there is no
+#: flanking base to read. ``"N"`` is an assembly gap or a masked base, which is
+#: the same situation spelled differently: the FASTA loader normalises every
+#: unreadable character to ``N`` rather than deleting it (deleting would splice
+#: the flanks together), and refuses any other ambiguity code outright. So
+#: ``N`` is the only such code that can reach a flank, and these two values are
+#: the complete set of "no evidence" -- not a special case bolted onto one.
+#:
+#: ``None`` was already exempt and ``N`` was not, so an unknown base scored
+#: exactly as a *known-bad* one: on the default effector a fully synthesisable
+#: spacer took a PFS_DISFAVOURED warning and a 0.55 factor because the base
+#: beyond its window had not been sequenced. That is the inversion this module
+#: guards against elsewhere -- absence of evidence is not evidence of a
+#: disfavoured base, and on the hard axis it is not evidence of an incompatible
+#: one either.
+UNREADABLE_FLANK: frozenset[str] = frozenset({"N"})
+
+
+def _readable(flank: str | None) -> str | None:
+    """The flank when it carries evidence, else ``None`` (the exempt value)."""
+    return None if flank is None or flank.upper() in UNREADABLE_FLANK else flank
+
 
 @dataclass(frozen=True, slots=True)
 class PFSPolicy:
@@ -59,6 +83,7 @@ class PFSPolicy:
 
     def check(self, five_prime: str | None, three_prime: str | None) -> bool:
         """Hard compatibility only. Preferences never fail this."""
+        five_prime, three_prime = _readable(five_prime), _readable(three_prime)
         if self.five_prime_allowed and five_prime and five_prime not in self.five_prime_allowed:
             return False
         if self.three_prime_allowed and three_prime and three_prime not in self.three_prime_allowed:
@@ -68,10 +93,13 @@ class PFSPolicy:
     def preference(self, five_prime: str | None, three_prime: str | None) -> float:
         """Soft PFS score in ``(0, 1]``. 1.0 means every preference is met.
 
-        A flank of ``None`` -- the target site sits at a transcript end, so
-        there is no flanking base to read -- is not counted against the
-        candidate. Absence of evidence is not a disfavoured base.
+        A flank that carries no evidence is not counted against the candidate:
+        ``None`` (the target site sits at a transcript end, so there is no
+        flanking base to read) and ``N`` (the base is there but unread) are
+        both exempt. Absence of evidence is not a disfavoured base. See
+        :data:`UNREADABLE_FLANK`.
         """
+        five_prime, three_prime = _readable(five_prime), _readable(three_prime)
         score = 1.0
         if self.five_prime_preferred and five_prime and five_prime not in self.five_prime_preferred:
             score *= DISFAVOURED_PFS_FACTOR
@@ -123,8 +151,12 @@ EFFECTORS: dict[Effector, EffectorParams] = {
         # CasRx mature repeat. It folds to -15.4 kcal/mol.
         #
         # This is load-bearing: b_qc.py checks the spacer for complementarity
-        # against it, and the old value changed that verdict for 4.9% of
-        # random 22 nt spacers. See test_effectors.py, which pins the fold.
+        # against it, and the old value changed that verdict for 2.8% of
+        # random 22 nt spacers -- almost always by failing to flag one the
+        # correct repeat does. (Measured at 4.9% while that check was
+        # Watson-Crick only. The scan now counts G-U wobbles and its threshold
+        # was re-derived with it; see b_qc.MAX_DR_STEM. The repeat did not
+        # change, the ruler did.) See test_effectors.py, which pins the fold.
         direct_repeat="CAAGUAAACCCCUACCAACUGGUCGGGGUUUGAAAC",
         spacer_lengths=(22, 23, 30),
         preferred_spacer_length=22,
