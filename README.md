@@ -771,7 +771,11 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1157 tests, run under `unittest` or `pytest`, and 91% line coverage.
+1160 tests, run under `unittest` or `pytest` — both discover the same set —
+and 91% line coverage. Three of them need a miRBase `mature.fa` and skip
+without it, so *collected* is the figure quoted here: the passing count moves
+with an environment variable, which makes it a number nobody else can
+reproduce from this page.
 
 Nine claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,15 +783,45 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1157 tests
+pytest                                                   # 1160 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
 python examples/verify_output_against_input.py           # the guides are right
 python examples/verify_the_maths_against_a_referent.py   # and so is the arithmetic
+python examples/verify_the_documented_numbers.py         # and so is this page
 python -m mypy                                           # py.typed, checked
 ```
+
+**The prose is checked too.** Every other instrument here checks the package
+against itself or against an external referent. `verify_the_documented_numbers.py`
+checks the *documents* — this README and the published landing page — because
+that is where this repository has drifted most often, and the drift is invisible
+from inside the code. It caught all three kinds on its first run.
+
+The test count had been stated in three places reading 1119, 1122 and 1135 at
+the same time; nothing failed, because no test compares two documents. The
+DR-interaction flip rate was stated in five places as 4.9%, and all five went
+stale together the moment the spacer:DR scan learned G-U wobbles. And the
+landing page quoted the four CRITICAL limitations as the tool's own words when
+all four had been abridged — what was dropped, each time, was the remedy and
+the sharpest consequence: *"Fit a real screen with `cas13guide train` before
+treating a bound as a guarantee"*, *"so no specificity score on this page bounds
+it"*, and the nine sequence universes actually searched. On a page whose whole
+premise is that the tool tells you what it does not know, the quotes had been
+softened in exactly the places that say how bad it is and what to do about it.
+
+That last one is why this is a script rather than a lint rule about digits. A
+published claim about what a tool says is checkable by running the tool, and
+until something ran it, the page and the package had disagreed since the day it
+was written. It also re-derives the page's worked example from the sequences the
+page itself prints — the spacer against its site, the hand-drawn duplex against
+both, and the GC against the spacer.
+
+The count it pins is *collected*, not passing: three tests need a miRBase
+`mature.fa` and skip without it, so the passing count moves with an environment
+variable and is not a number a reader could reproduce from this page.
 
 **The suite is mutation-checked.** `verify_mutation_coverage.py` copies the tree
 to a temporary directory, applies one small *semantic* change at a time — code

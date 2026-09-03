@@ -433,7 +433,8 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 4.5rem;margin-top:0}
           <span class="sev sev-crit">Critical</span>
         </div>
         <p>Conformal bounds were calibrated on SYNTHETIC data. Every interval, and therefore
-        every PASS, is exercisable rather than earned.</p>
+        every PASS, is exercisable rather than earned. Fit a real screen with
+        <code>cas13guide train</code> before treating a bound as a guarantee.</p>
       </li>
       <li class="lim">
         <div class="lim-head">
@@ -442,7 +443,9 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 4.5rem;margin-top:0}
         </div>
         <p>Activity came from the built-in heuristic, which is a shaped guess and not a
         trained model. It saturates: a perfect duplex scores about 0.93 regardless of
-        sequence.</p>
+        sequence, so the ranking among well-matched guides carries little information. Fit a
+        model on a real screen, or plug a published one into the <code>ActivityModel</code>
+        seam.</p>
       </li>
       <li class="lim">
         <div class="lim-head">
@@ -451,14 +454,16 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 4.5rem;margin-top:0}
         </div>
         <p>Collateral (trans) cleavage is not predicted for this assay. Once activated,
         Cas13 degrades bystander RNA, and that scales with target abundance rather than with
-        off-target homology.</p>
+        off-target homology &mdash; so no specificity score on this page bounds it. Assay it
+        directly.</p>
       </li>
       <li class="lim">
         <div class="lim-head">
           <span class="lim-num">04</span>
           <span class="sev sev-crit">Critical</span>
         </div>
-        <p>Off-targets were searched over the sequences supplied to this run. Anything not
+        <p>Off-targets were searched over circrna, coding, mito, ncrna, pre_mrna, repeat,
+        rrna, synthetic, viral in the sequences supplied to this run. Anything not
         loaded is invisible: a guide is specific <em>against what you gave it</em>.</p>
       </li>
     </ol>
@@ -638,7 +643,7 @@ site    3' AACUACGGUUCAAGGCGCUAAG 5'</pre>
       <tbody>
         <tr>
           <td class="cmd"><span class="cmd-scroll"><code>pytest</code></span></td>
-          <td class="est">1,157 tests</td>
+          <td class="est">1,160 tests collected; 3 need a miRBase file and skip without it</td>
         </tr>
         <tr>
           <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_mutation_coverage.py</code></span></td>
@@ -659,6 +664,10 @@ site    3' AACUACGGUUCAAGGCGCUAAG 5'</pre>
         <tr>
           <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_nothing_is_computed_for_nobody.py</code></span></td>
           <td class="est">no value computed that nothing reads</td>
+        </tr>
+        <tr>
+          <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_the_documented_numbers.py</code></span></td>
+          <td class="est">every number and quotation on this page, re-derived from the package</td>
         </tr>
         <tr>
           <td class="cmd"><span class="cmd-scroll"><code>python -m mypy</code></span></td>
