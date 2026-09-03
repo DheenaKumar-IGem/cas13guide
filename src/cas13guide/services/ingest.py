@@ -177,6 +177,44 @@ def load_screen(
         missing = [
             name for name in dict.fromkeys(required) if name not in header
         ]
+        # Membership is not enough. `csv.DictReader` resolves a repeated header
+        # name to its LAST occurrence, so a screen carrying two columns called
+        # `activity` -- an ordinary artefact of a join or a merged replicate
+        # export -- is read from whichever one happens to come second, with no
+        # warning anywhere.
+        #
+        # That is the failure this module's docstring calls fatal: "activity
+        # reported as log2 fold change, where more negative means better
+        # knockdown -- silently training on that inverts the model". Measured on
+        # a 672-row screen whose stray second `activity` column held the negated
+        # value, every fitted weight flipped sign (gc +0.278 -> -0.278) while
+        # all six acceptance numbers stayed identical, because rank
+        # normalisation is invariant under exact inversion. Both runs printed
+        # "dataset ACCEPTED". Nothing a reader could see distinguished them.
+        #
+        # On the grouping column it is worse than an inversion: grouping by a
+        # duplicate that happens to hold a plate id puts the same transcript on
+        # both sides of the split, which is the leak the docstring says the
+        # column exists to prevent.
+        #
+        # Refusing rather than choosing, for the reason stated a hundred lines
+        # below about a different ambiguity: the wrong resolution inverts every
+        # training label, so there is no safe default. `conservation.py` already
+        # refuses duplicate FASTA record names at the other input door.
+        duplicated = sorted(
+            {name for name in dict.fromkeys(required) if header.count(name) > 1}
+        )
+        if duplicated:
+            for name in duplicated:
+                report.errors.append(
+                    f"column {name!r} appears {header.count(name)} times in "
+                    f"{header}. A CSV reader keeps only the last one, and which "
+                    f"of them you meant decides whether the labels are the right "
+                    f"way up -- so this refuses rather than guessing. Rename or "
+                    f"drop the duplicate."
+                )
+            return [], report
+
         if missing:
             if columns.group in missing:
                 report.errors.append(
@@ -192,6 +230,20 @@ def load_screen(
 
         try:
             rows = list(reader)
+        except csv.Error as exc:
+            # A single unmatched double-quote makes the parser consume to EOF,
+            # so any file past the 128 KB field limit dies here. Only
+            # UnicodeDecodeError was converted, so this escaped `cli._train`
+            # -- which catches DatasetError alone -- as a traceback with exit
+            # 1, the code that command uses for "loaded, and rejected by the
+            # acceptance gate". A malformed file and a rejected dataset were
+            # indistinguishable to anything reading the status.
+            raise DatasetError(
+                f"{path.name} is not valid CSV ({exc}). A stray double-quote "
+                f"makes the parser read to the end of the file looking for its "
+                f"partner, so the position it reports may be far below the "
+                f"line that is actually wrong."
+            ) from exc
         except UnicodeDecodeError as exc:
             # The header may decode and a later row may not: a latin-1 accent
             # halfway down the file is the common shape.

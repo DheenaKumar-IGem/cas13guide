@@ -252,9 +252,10 @@ def limitations_for_run(
                 "self-complementary stretch, not by folding the spacer -- "
                 "ViennaRNA was not importable. That proxy recovers about a "
                 "third of the guides a real fold rejects, and four in five of "
-                "the guides it does reject fold no more tightly than average -- "
-                "so some self-structured spacers passed QC and rather more "
-                "innocent ones were failed. A "
+                "the ones it does reject do not fold tightly enough to meet "
+                "the -8 kcal/mol criterion it stands in for -- so some "
+                "self-structured spacers passed QC, and rather more were "
+                "failed for a stem that is real but not disqualifying. A "
                 "self-folding FAIL cannot be bought back, so install ViennaRNA "
                 '(`pip install "cas13guide[structure]"`) before reading these '
                 "verdicts as final.",

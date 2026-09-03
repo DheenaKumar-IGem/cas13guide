@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1108 tests, run under `unittest` or `pytest`, and 91% line coverage.
+1119 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
 Nine claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1108 tests
+pytest                                                   # 1119 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
@@ -1051,6 +1051,22 @@ The defects worth naming, because they were live rather than hypothetical:
 | `record_wetlab_result` dropped the group label | Zero group labels switches the `MIN_STRATUM_GROUPS` check off, so wet-lab feedback from one transcript came back looking certified | `test_benchmark.py` |
 | `run_search` kept the *last* bound, not the weakest | A per-query heuristic bound would be overwritten by a later exhaustive one | `test_search.py` |
 | `profile_duplex("", "")` died in the CIGAR builder | An `IndexError` that named neither the caller nor the cause | `test_duplex.py` |
+
+### A twelfth, over the code eleven rounds barely touched
+
+Round eleven's critic named what its dimensions never reached: the learning half
+behind `train` and `check` — ingest, training, acceptance, benchmark,
+calibration, features, about 1,900 lines — and stages B and F. Eleven verified,
+**three confirmed**, all three high.
+
+Two of them are the class the critic said this method is *structurally unable*
+to find: a defect where every surface agrees and all of them are wrong.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| A duplicate CSV header silently inverted every training label | `csv.DictReader` keeps the **last** column of a repeated name, and the required-column check tested membership only. A screen with two `activity` columns — an ordinary artefact of a join or a merged replicate export — was read from whichever came second. Measured on a 672-row screen whose stray column held the negated value: **every fitted weight flipped sign** (`gc` +0.278 → −0.278) while **all six acceptance numbers stayed identical**, because rank normalisation is invariant under exact inversion. Both runs printed `dataset ACCEPTED`. This is the failure `ingest.py`'s own docstring calls fatal, and no printed surface distinguished the inverted run from the correct one. The same hole on the *grouping* column is worse than an inversion: grouping by a duplicate holding a plate id puts the same transcript on both sides of the split — the leak that column exists to prevent | `test_bugfix_hunt_round12.py` |
+| A stray double-quote crashed `train` with a traceback and exit 1 | `csv` consumes to EOF looking for the closing quote, so any file past the 128 KB field limit raises `_csv.Error` — converted nowhere, while `cli._train` catches `DatasetError` alone. Exit 1 is what `train` uses for "loaded, and rejected by the acceptance gate", so a malformed file and a rejected dataset were indistinguishable to anything reading the status | `test_bugfix_hunt_round12.py` |
+| A WARNING restated a measured fact as a different, false one | `b_qc`'s docstring is right — "only 21% of its flags really do fold, four in five are false", where *fold* means reaching −8 kcal/mol. The user-facing limitation paraphrased that as "four in five of the guides it does reject fold no more tightly than **average**". Not the same claim, and false: re-measured at the sample and seed `b_qc` itself cites, flagged spacers average **−5.564 kcal/mol against a population −1.861**, and only **9.7%** fold no more tightly than that mean. The proxy is over-strict, not arbitrary. This reaches stdout and the HTML report on every run without ViennaRNA, which is the default install | `test_bugfix_hunt_round12.py` |
 
 ### An eleventh, aimed at the tenth's own diff
 
