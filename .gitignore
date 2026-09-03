@@ -19,3 +19,9 @@ _vocabulary_coverage_plugin.py
 
 # stray logs from tooling
 *.log
+
+# scratch data a review agent leaves in the tree while reproducing a
+# defect. Three 6,000-row CSVs reached a commit this way.
+/stray_*.csv
+/repro_*.csv
+/*.tmp.csv
