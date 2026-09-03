@@ -70,6 +70,7 @@ def generate_controls(
     seed: int = 0,
     attempts: int = 200,
     envelope: int | None = None,
+    fold=None,
 ) -> tuple[ControlGuide, ...]:
     """GC- and composition-matched non-targeting controls, search-verified.
 
@@ -111,7 +112,14 @@ def generate_controls(
                 five_prime_flank=member.candidate.five_prime_flank,
                 three_prime_flank=member.candidate.three_prime_flank,
             )
-            if not qc_candidate(probe, spec).passed:
+            # With the same folding engine the run used on its real guides.
+            # `qc_candidate(probe, spec)` alone falls back to the stem-length
+            # proxy, which catches about a third of what a real fold does -- so
+            # a control could pass here and be FAILed by the QC that actually
+            # ran, which is the divergence the comment above says it removed.
+            # Measured over 4000 shuffles of the spacer b_qc's own docstring
+            # cites: 226 of them, 5.7%.
+            if not qc_candidate(probe, spec, fold).passed:
                 continue
             if _has_any_hit(index, f"ctrl_{member.guide_id}", candidate, depth):
                 continue

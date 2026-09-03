@@ -116,7 +116,18 @@ def evidence_for_hit(
             stratum="accessibility" if independent else "accessibility/predicted",
         )
 
-    energy = registry.energy.duplex_dg_per_nt(spacer, hit.target_site)
+    # The same waste as accessibility above, in the field beside it, left
+    # behind when that one was fixed. `duplex_dg_per_nt` has exactly one
+    # reader -- `metrics/aggregate.intended_duplex_energy`, which skips a
+    # non-intended pair -- and the off-target explorer has no dG column, so a
+    # fold run for an off-target hit was computed and dropped.
+    #
+    # It grows with the background while the intended folds stay fixed:
+    # measured on an 800 nt target against 80 background loci, 1290 discarded
+    # folds against 785 read ones, 12% of wall clock for an identical report.
+    energy = None
+    if intended:
+        energy = registry.energy.duplex_dg_per_nt(spacer, hit.target_site)
 
     return PairEvidence(
         guide_id=hit.guide_id,

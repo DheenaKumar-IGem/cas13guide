@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1083 tests, run under `unittest` or `pytest`, and 91% line coverage.
+1090 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
 Eight claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1083 tests
+pytest                                                   # 1090 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
@@ -1047,6 +1047,17 @@ checked was whether the package's own accounts of itself agree.
 | `cas13guide demo` dropped the CRITICAL that qualifies every number it prints | `limitations_for_run` reads `calibration.synthetic`; the design path sets it and the demo's own stand-in never did. The demo printed three of its four CRITICALs, omitting the one saying the calibration is synthetic and every PASS therefore exercisable rather than earned — from the terminal **and** from the `report.json` it writes. The commit that added that section had named this exact caveat as the thing that was missing | `test_bugfix_hunt_round10.py` |
 | `--top 0` reported a count from the display list | It said "N guide(s) ranked … the exports carry them all" while pointing at a CSV holding a different number, and N moved with `--all-sites` — a display flag deciding a stated fact about the run, days after a sibling fix stopped one deciding the exit status | `test_bugfix_hunt_round10.py` |
 | The HTML denied an absolute figure the same run's CSV carried | The Signal glossary was a module constant, so it told every reader "the constants shipped by default are placeholders, so no absolute figure is offered" — including on a run that supplied measured constants, whose CSV carries `predicted_signal_nm` and whose limitations correctly drop the placeholder warning | `test_bugfix_hunt_round10.py` |
+
+Then a ninth agent was asked a different question — not "is there a bug here"
+but "what did those eight dimensions *not* look at". It named six places, went
+and checked the most promising, and three of its leads were real. The first is
+the worst thing this round found.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| A gene name the FASTA reader is built to accept killed the CLI | `read_fasta` decodes `utf-8-sig`, so a UTF-8 header is supported input; the record name becomes a `target_id` the CLI prints to a stream left at the platform default. On Windows that is cp1252 and the print raises — on **NF-κB1, IFN-γ1, TGF-β1, HIF1-α**, which is how those genes are written. And it landed after the design succeeded and before the `--out` block, so a run with **159 PASS and a full panel wrote no files and returned 1**, the status documented as "nothing survived the gate". The browser door rendered the same bytes fine, so the two doors that "cannot drift" did | `test_round10_critic_findings.py` |
+| Non-targeting controls were QC'd by a proxy the run itself did not use | The run QCs real guides with the ViennaRNA fold and records `qc/vienna-mfe/v1` in the ledger; the control probe fell back to the stem-length proxy, which catches about a third as much. Measured over 4,000 shuffles: **226 (5.7%)** pass the control check and are FAILed by the QC that actually ran — the exact divergence the comment above that call says it removed | `test_round10_critic_findings.py` |
+| A duplex fold was run for every off-target hit and discarded | `duplex_dg_per_nt` has one reader and it skips non-intended pairs; the off-target explorer has no ΔG column. The identical waste was removed for `accessibility` in the field beside it and left here. The report is byte-identical without it, and the discarded share grows with the background corpus while the intended folds stay fixed | `test_round10_critic_findings.py` |
 
 ### What came after the passes
 

@@ -368,7 +368,39 @@ def _serve(args: argparse.Namespace) -> int:
     return serve(host=args.host, port=args.port, open_browser=not args.no_browser)
 
 
+def _make_output_printable() -> None:
+    """Let this program print the names its reader is built to accept.
+
+    ``read_fasta`` decodes with ``utf-8-sig``, so a UTF-8 header is a supported
+    input by design -- and the record name becomes a ``target_id`` this module
+    prints. On a console left at the platform default (cp1252 on Windows) that
+    print raises ``UnicodeEncodeError``, and the trigger is ordinary gene
+    nomenclature: NF-kappaB1, IFN-gamma1, TGF-beta1, HIF1-alpha.
+
+    What made it worse than a bad character was where it landed. The crash
+    happens *after* the design succeeds and *before* the ``--out`` block, so a
+    run with 159 PASS and a full panel wrote no files and returned 1 -- the
+    status this command's own epilog defines as "the run completed and nothing
+    survived the gate". A wrapper script read a complete design as an empty
+    one. The browser door rendered the same bytes without complaint, so the two
+    doors ``workflow.py`` says "cannot drift into behaving differently" did.
+
+    ``backslashreplace`` rather than ``replace``: a console that cannot render
+    a character should show ``\\u03ba``, which says what was there, rather than
+    ``?``, which does not.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # a stream someone else wrapped; leave it alone
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (OSError, ValueError):  # pragma: no cover - detached/odd stream
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _make_output_printable()
     parser = argparse.ArgumentParser(prog="cas13guide", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 

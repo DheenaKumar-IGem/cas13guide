@@ -374,7 +374,8 @@ def run_design(
     )
 
     # ---------------- G: transparent output -------------------
-    controls = generate_controls(panel, spec, reference.index, envelope=envelope)
+    controls = generate_controls(panel, spec, reference.index,
+                                 envelope=envelope, fold=self_fold)
     # Rank everything the gate did not FAIL -- PASS *and* REVIEW.
     #
     # REVIEW means "usable, with a human looking at it", and the R1/R2/R3
