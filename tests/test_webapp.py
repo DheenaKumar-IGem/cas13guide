@@ -7,6 +7,7 @@ that hands the handler a dict.
 """
 
 import http.client
+import re
 import threading
 import unittest
 import uuid
@@ -172,6 +173,101 @@ class TestDesignRoundTrip(ServerTestCase):
         """Both directions -- it is about the preset, not about every run."""
         _status, _headers, body = self.form_post({"sequence": TARGET})
         self.assertNotIn("miRBase", body)
+
+
+class TestTheServedGuidesAreCorrectAgainstTheInput(ServerTestCase):
+    """The browser door proved a table existed. Not that it was right.
+
+    ``examples/verify_output_against_input.py`` re-derives every exported guide
+    from the sequence handed to the CLI -- the spacer must be the reverse
+    complement of the target site at the coordinate the row itself names -- and
+    it does that for 237 guides. Nothing did it for the served page, which
+    checked status 200, the presence of ``<table id="results">``, and which
+    limitations appeared.
+
+    So the door a bench biologist is most likely to use was the one door whose
+    output nothing had checked for correctness. Every assertion below re-derives
+    from ``TARGET`` in plain Python, without asking the package how it got there.
+    """
+
+    #: One design run for the whole class; the assertions are all views of it.
+    _rows = None
+
+    @property
+    def rows(self):
+        cls = type(self)
+        if cls._rows is None:
+            _status, _headers, body = self.form_post({"sequence": TARGET})
+            cls._rows = self.parse_rows(body)
+        return cls._rows
+
+    @staticmethod
+    def parse_rows(body):
+        """(rank, spacer, site) per served row, as the page renders them."""
+        table = re.search(r'<table id="results".*?</table>', body, re.S)
+        if not table:
+            return []
+        rows = []
+        for raw in re.findall(r"<tr[^>]*>(.*?)</tr>", table.group(0), re.S)[1:]:
+            cells = [re.sub(r"<[^>]+>", "", cell).strip()
+                     for cell in re.findall(r"<td[^>]*>(.*?)</td>", raw, re.S)]
+            if len(cells) >= 4:
+                rows.append({"rank": cells[0], "spacer": cells[1],
+                             "site": cells[2], "score": cells[3]})
+        return rows
+
+    def test_the_page_serves_guides_at_all(self):
+        self.assertGreater(len(self.rows), 10, "fixture must produce a real table")
+
+    def test_every_served_spacer_pairs_with_the_site_its_row_names(self):
+        """The one claim a guide row makes that can be checked without trusting
+        anything: revcomp(target[start:start+len]) == spacer."""
+        from cas13guide.util.seq import revcomp
+
+        for row in self.rows:
+            with self.subTest(rank=row["rank"]):
+                start = int(row["site"].split(":")[-1])
+                site = TARGET[start:start + len(row["spacer"])]
+                self.assertEqual(revcomp(site), row["spacer"])
+
+    def test_every_site_lies_inside_the_sequence_that_was_pasted(self):
+        """A coordinate past the end would still render, and would still look
+        like a coordinate."""
+        for row in self.rows:
+            with self.subTest(rank=row["rank"]):
+                start = int(row["site"].split(":")[-1])
+                self.assertGreaterEqual(start, 0)
+                self.assertLessEqual(start + len(row["spacer"]), len(TARGET))
+
+    def test_every_served_spacer_is_orderable(self):
+        """A browser user copies these into an order form."""
+        for row in self.rows:
+            with self.subTest(rank=row["rank"]):
+                self.assertTrue(set(row["spacer"]) <= set("ACGU"), row["spacer"])
+
+    def test_the_ranks_run_one_to_n_with_no_gaps(self):
+        self.assertEqual([r["rank"] for r in self.rows],
+                         [str(i) for i in range(1, len(self.rows) + 1)])
+
+    def test_the_scores_do_not_increase_down_the_ranking(self):
+        """A ranking that is not ordered is not a ranking, and the reader has
+        no way to see it from one screen."""
+        scores = [float(r["score"]) for r in self.rows]
+        for above, below in zip(scores, scores[1:]):
+            self.assertGreaterEqual(above, below)
+
+    def test_the_two_input_doors_answer_the_same_question(self):
+        """Pasting a sequence and uploading it as FASTA is the same run.
+
+        Two doors onto one pipeline is exactly where this package has drifted
+        before, and the browser has two of them on one form.
+        """
+        _status, _headers, uploaded = self.form_post(
+            {"sequence": ""}, files={"fasta": ("t.fa", f">query\n{TARGET}\n")})
+        pasted = [(r["rank"], r["spacer"], r["site"]) for r in self.rows]
+        served = [(r["rank"], r["spacer"], r["site"])
+                  for r in self.parse_rows(uploaded)]
+        self.assertEqual(pasted, served)
 
 
 class TestErrorsAreLegibleNotTracebacks(ServerTestCase):
