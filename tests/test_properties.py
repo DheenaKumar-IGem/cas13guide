@@ -343,10 +343,13 @@ class TestSearchIndexesAgree(unittest.TestCase):
     """
 
     @given(st.lists(RNA_NO_N.filter(lambda s: len(s) >= 25), min_size=1, max_size=3),
-           st.integers(min_value=0, max_value=4))
+           st.integers(min_value=0, max_value=4),
+           st.data())
     @settings(max_examples=40, deadline=None,
               suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much])
-    def test_the_scanner_and_the_fm_index_find_the_same_sites(self, sequences, mismatches):
+    def test_the_scanner_and_the_fm_index_find_the_same_sites(
+        self, sequences, mismatches, data
+    ):
         from cas13guide.contract.enums import Universe
         from cas13guide.services.fmindex import FMIndexSearchIndex
         from cas13guide.services.indexes import ExhaustiveScanIndex
@@ -356,7 +359,32 @@ class TestSearchIndexesAgree(unittest.TestCase):
         for index, sequence in enumerate(sequences):
             world.add(Locus(f"L{index}", sequence, Universe.CODING, expression=1.0))
         universes = frozenset({Universe.CODING})
-        spacer = revcomp(sequences[0][:22])
+
+        # The query used to be ``revcomp(sequences[0][:22])`` every time: the
+        # worlds varied and the question never did. It is drawn now -- a free
+        # 22-mer, or a window of any locus at any offset -- because a
+        # differential test is only as wide as the questions it asks.
+        #
+        # What that is worth, measured rather than assumed: the two backends
+        # were run over 1,500 queries of the new shapes and agreed on every
+        # one, so this pins no fix. An attempt to show the widening catching
+        # something the old shape could not also failed -- a hit dropped at the
+        # last offset a spacer can occupy is caught either way, because
+        # approximate hits land there often enough under the old query too.
+        # And a free 22-mer usually has no hit within four mismatches of a
+        # short random locus, so that shape mostly compares two empty sets.
+        #
+        # It is kept because it is strictly the more general question at no
+        # cost, not because it is known to be stronger. Recorded here so the
+        # next person does not re-run the same experiment.
+        if data.draw(st.booleans()):
+            spacer = data.draw(st.text(alphabet="ACGU", min_size=22, max_size=22))
+        else:
+            source = data.draw(st.sampled_from(sequences))
+            start = data.draw(
+                st.integers(min_value=0, max_value=max(0, len(source) - 22))
+            )
+            spacer = revcomp(source[start:start + 22])
         assume(len(spacer) == 22)
 
         scan = ExhaustiveScanIndex(world, universes).search("g", spacer, mismatches)
