@@ -106,6 +106,63 @@ def collected_test_count() -> int:
     return suite.countTestCases()
 
 
+#: Files that state the DR-interaction flip rate. The figure lived in five
+#: places and all five went stale together when the spacer:DR scan learned G-U
+#: wobbles: the number describes the *ruler*, not the direct repeat, so nothing
+#: about the repeat changing was what moved it.
+FLIP_RATE_SOURCES = (
+    "src/cas13guide/contract/effectors.py",
+    "tests/test_effector_constants.py",
+    "tests/test_measured_claims.py",
+    "README.md",
+)
+
+FLIP_RATE_PATTERN = re.compile(
+    r"(?:changed|flipped)\s+(?:that|the DR-interaction)\s+verdict\s+for\s+[*]*"
+    r"(\d+\.?\d*)%"
+)
+
+#: The corrupted RfxCas13d repeat as it shipped in 8cbe60f, recovered from the
+#: first commit. The flip rate is measured against this.
+SUPERSEDED_REPEAT = "CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU"
+
+
+def stated_flip_rates() -> dict[str, float]:
+    """Every place that states how often the wrong repeat moved a verdict."""
+    found: dict[str, float] = {}
+    for rel in FLIP_RATE_SOURCES:
+        raw = (ROOT / rel).read_text(encoding="utf-8")
+        raw = re.sub(r"(?m)^\s*>\s?", " ", raw)          # markdown blockquotes
+        for value in FLIP_RATE_PATTERN.findall(" ".join(raw.split())):
+            found[rel] = float(value)
+    return found
+
+
+def measured_flip_rate(seed: int = 12345, n: int = 20_000) -> float:
+    """Re-measure it, rather than trusting four files that agree with each other.
+
+    Four documents agreeing is what the stale 4.9% looked like too. The
+    superseded repeat is the one recovered from the first commit; the rule and
+    the threshold are whatever the package currently uses, which is the point --
+    this figure is a property of the ruler as much as of the repeat.
+    """
+    import random
+
+    from cas13guide.contract.effectors import EFFECTORS
+    from cas13guide.contract.enums import Effector
+    from cas13guide.pipeline.b_qc import MAX_DR_STEM, longest_cross_complement
+
+    current = EFFECTORS[Effector.RFX_CAS13D].direct_repeat
+    rng = random.Random(seed)
+    flips = 0
+    for _ in range(n):
+        spacer = "".join(rng.choice("AUGC") for _ in range(22))
+        before = longest_cross_complement(spacer, SUPERSEDED_REPEAT) > MAX_DR_STEM
+        after = longest_cross_complement(spacer, current) > MAX_DR_STEM
+        flips += before != after
+    return 100.0 * flips / n
+
+
 def page_critical_quotes() -> list[str]:
     page = PAGE.read_text(encoding="utf-8")
     blocks = re.findall(r'<li class="lim">.*?</li>', page, re.S)
@@ -258,7 +315,31 @@ def main() -> int:
                  f"prose says {claimed}, the block lists {actual}"):
         failures.append("the README miscounts its own verification commands")
 
-    # ---- 4. the defect count is a count of something -------------------
+    # ---- 4. the most-repeated figure in the repository -------------------
+    print()
+    print("the DR-interaction flip rate, stated in four files")
+    stated = stated_flip_rates()
+    for where, value in sorted(stated.items()):
+        print(f"          {where}: {value}%")
+    if not check(f"every source states it ({len(FLIP_RATE_SOURCES)} expected)",
+                 len(stated) == len(FLIP_RATE_SOURCES),
+                 f"found {sorted(stated)}"):
+        failures.append("a source stopped stating the flip rate")
+    elif not check("they agree with each other",
+                   len(set(stated.values())) == 1,
+                   "; ".join(f"{k}={v}" for k, v in sorted(stated.items()))):
+        failures.append("the stated flip rates disagree")
+    if stated:
+        measured = measured_flip_rate()
+        claimed = next(iter(stated.values()))
+        # Monte Carlo at n=20,000: 2.77% +/- 0.18% over five seeds, so a tenth
+        # of a point is noise and half a point is not.
+        if not check(f"and they match a fresh measurement ({measured:.2f}%)",
+                     abs(measured - claimed) < 0.5,
+                     f"documents say {claimed}%, re-measured {measured:.2f}%"):
+            failures.append("the stated flip rate is stale")
+
+    # ---- 5. the defect count is a count of something -------------------
     print()
     print("the defect count the page closes on")
     stated = re.search(r"have fixed (\d+) defects", PAGE.read_text(encoding="utf-8"))
@@ -269,7 +350,7 @@ def main() -> int:
                  f"the tree holds {counted}"):
         failures.append("the stated defect count is not what the tree holds")
 
-    # ---- 5. the worked example re-derives --------------------------------
+    # ---- 6. the worked example re-derives --------------------------------
     print()
     print("the worked example the page invites a reader to check by hand")
     from cas13guide.util.seq import revcomp
