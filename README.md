@@ -773,7 +773,7 @@ thermodynamic fold the model already used as a feature.
 
 1108 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
-Eight claims this section makes are **measured rather than asserted**, each by a
+Nine claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
 reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
@@ -785,6 +785,7 @@ python examples/verify_vocabulary_coverage.py            # 52 of 52 things it ca
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
 python examples/verify_output_against_input.py           # the guides are right
+python examples/verify_the_maths_against_a_referent.py   # and so is the arithmetic
 python -m mypy                                           # py.typed, checked
 ```
 
@@ -830,6 +831,35 @@ worth having rather than a wasted question.
 It measures whether a value is *produced*, not whether anything asserts it: a
 floor, in the way line coverage is a floor. The mutation check above is what
 asks whether behaviour is pinned.
+
+**The arithmetic is right too, against something that is not this package.**
+Round eleven's critic pointed out that eleven rounds of *consistency* work
+cannot find a formula that is internally coherent, documented as exactly what it
+does, tested against its own output, and wrong. Part of that gap needs a wet-lab
+screen and no file here can stand in for one. But the mathematics is not in that
+category: a regularized incomplete beta has a definition independent of any
+implementation, split conformal has a finite-sample coverage *theorem*, and
+Fréchet bounds are checkable by brute force.
+
+`verify_the_maths_against_a_referent.py` re-derives all four by a different
+method — 77 exact cases for the incomplete beta (closed forms plus the
+binomial-tail identity `I_x(k, n-k+1) = P(Bin(n,x) ≥ k)`), the symmetry relation
+over 35 more, 64 closed-form inverse quantiles, the conformal coverage
+guarantee by simulation at three `(alpha, n)` settings, and the Fréchet bounds
+against enumeration of the joint. Everything agrees to ~1e-15.
+
+Writing it was instructive in a way worth recording. The referent was wrong
+twice before the package was wrong once. A first draft integrated the Beta
+density directly and reported the package off by 0.148 at `Beta(0.5, 0.5, 0.9)`
+— Simpson's rule mishandling the integrable singularity at `t → 0`. A second
+substituted the singularity away and then failed for large `a` instead. What
+settled it needed no integrator at all: `Beta(0.5, 0.5)` is the arcsine
+distribution with closed form `(2/π)·arcsin(√x)`, and the package matched it to
+1e-16 both times. The file is now built only on identities that are exact, and
+says so. Verified to detect a wrong number by scaling the beta by 0.1% and by
+stubbing the quantile; a third injection, moving the continued fraction's
+branch point, turned out to change no value at all — a convergence choice, not
+a correctness one — and it was right not to be flagged.
 
 **The guides that come out are right.** Every other instrument here checks the
 *process* — are the invariants pinned, is every verdict reached, is anything
