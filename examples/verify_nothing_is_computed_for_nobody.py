@@ -86,19 +86,36 @@ ALLOWED: dict[str, str] = {
 
 
 def _declared() -> dict[str, list[str]]:
+    """Dataclass fields, and the properties beside them.
+
+    Fields only, at first. That missed `SignalPrediction.saturated` -- computed
+    on every prediction, read by one test and nothing in the package, while the
+    constants' own comment named it as the check that decides whether a
+    saturating assay may rank. A property is exactly the shape a
+    computed-but-unread *guard* takes, and guards are what this codebase
+    accumulates: the standard fix for two surfaces disagreeing is to add one.
+    """
     found: dict[str, list[str]] = collections.defaultdict(list)
     for path in SRC.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
-            if not any("dataclass" in ast.unparse(d) for d in node.decorator_list):
-                continue
+            is_dataclass = any(
+                "dataclass" in ast.unparse(d) for d in node.decorator_list
+            )
             for stmt in node.body:
-                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                if (is_dataclass and isinstance(stmt, ast.AnnAssign)
+                        and isinstance(stmt.target, ast.Name)):
                     name = stmt.target.id
-                    if not name.startswith("_"):
-                        found[name].append(f"{node.name} ({path.relative_to(SRC)})")
+                elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+                    ast.unparse(d) == "property" for d in stmt.decorator_list
+                ):
+                    name = stmt.name
+                else:
+                    continue
+                if not name.startswith("_"):
+                    found[name].append(f"{node.name} ({path.relative_to(SRC)})")
     return found
 
 
@@ -129,7 +146,7 @@ def main() -> int:
             continue
         (tests_only if name in in_tests else unread).append((name, owners))
 
-    print(f"{len(declared)} public dataclass fields declared")
+    print(f"{len(declared)} public fields and properties declared")
     print()
 
     flagged = [(n, o) for n, o in unread if n not in ALLOWED]

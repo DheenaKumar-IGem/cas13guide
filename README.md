@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1102 tests, run under `unittest` or `pytest`, and 91% line coverage.
+1108 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
 Eight claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1102 tests
+pytest                                                   # 1108 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
@@ -1038,6 +1038,37 @@ and it was in the feature this branch exists to add.
 | A single IUPAC code in a BLAST subject aborted the run with a bare `ValueError` | Refusing is right — skipping the row would hide a real off-target behind an ambiguity code. The defect was the exception *type*: blastn exiting non-zero already raises `BlastUnavailable`, which becomes exit 2, while this escaped as a traceback with exit 1. RefSeq, nt and TSA routinely carry R/Y/M/K/S/W/B/D/H/V, and the user cannot edit a third-party database | `test_bugfix_hunt_round11.py` |
 | `serve --port 0` printed and opened an address that cannot work | The URL was built from the *requested* port. `--port 0` is the conventional "pick a free one"; the server bound an ephemeral port and announced `http://127.0.0.1:0/`, with the working address appearing nowhere. This is the door aimed at people who will not use a command line | `test_bugfix_hunt_round11.py` |
 | `--variants` rewrote the recorded genome build and annotation | Every variant world was built as `Transcriptome("variants", record.name)`, and that version is what the ledger files for each context — so a flag about isoforms discarded the user's `--genome-build` and `--annotation`, including for the context named `reference`, and filed a FASTA header in the annotation slot | `test_bugfix_hunt_round11.py` |
+
+Its critic then found a fifth, and said something about the method worth
+recording. Asked whether eleven rounds are converging, it answered yes — falling
+yield and falling severity, with confirmed findings clustering in code written
+in the previous two or three rounds — and then named the limit:
+
+> This is a **consistency** method, not a **ground-truth** method. It is
+> structurally unable to find a defect where every surface agrees and all of
+> them are wrong: a formula that is internally coherent, documented as exactly
+> what it does, tested against its own output, and scientifically incorrect.
+> Nothing in this repo compares a number to an external referent.
+
+That is accurate and worth stating plainly. `verify_output_against_input.py`
+closes part of it — it checks the guides against the input rather than against
+the package's own account of them — but nothing here validates the *science*
+against a measured screen or a published dataset, and mutation coverage
+measures whether the tests pin the code, not whether the code is right.
+
+The critic also named a blind spot the method *creates*: because the standard
+fix for two surfaces disagreeing is to add a caveat, a flag or a probe, the repo
+accumulates **guards that nothing reads**. Then it found one.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| A saturated assay switched the signal axis **on** | `SignalPrediction.saturated` was computed on every prediction and read by nothing in `src/` — while `PROVISIONAL_CONSTANTS`' own comment names it as the check that decides this. The gate that did run measures a ratio spread, which cannot tell an assay bending because its *activation* curve bends (informative) from one bending because the *reporter is exhausted* (no ordering at all). With measured constants that exhaust the reporter: all 323 guides at 499.9999 nM of a 500 nM reporter, a `relative_signal` spread of **2.5e-08** that `_normalize` stretches to fill [0, 1] — so an axis weighted 2.5 contributed up to **22% of an 11-point score out of float noise**, and **309 of 323 guides changed rank** | `test_round11_critic_findings.py` |
+
+The sweep that should have caught it could not: it walked dataclass *fields*,
+and `saturated` is a property — which is exactly the shape a computed-but-unread
+guard takes. It now walks properties too, and found one more the same hour
+(`SearchOutcome.universe_adequate`, a dead alias for a check the gate makes
+directly, now removed).
 
 ### A tenth pass, run as eight parallel hunts
 

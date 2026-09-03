@@ -253,13 +253,37 @@ class CollateralKineticsModel:
         cached = self._degeneracy_cache.get(key)
         if cached is not None:
             return cached
+        # Only probes the assay can still tell apart. A saturated well is as
+        # bright as it can get, so the difference between two of them is not a
+        # ranking -- it is the float noise left over at the ceiling.
+        #
+        # This matters because a ratio spread cannot distinguish two
+        # nonlinearities and only one of them is informative. An assay that
+        # bends because the *activation* curve bends carries real ordering; one
+        # that bends because the reporter is exhausted carries none, and both
+        # look non-proportional to the probe below.
+        #
+        # `PROVISIONAL_CONSTANTS` states the rule and names the check: "A
+        # saturating assay reports 1.0 for every candidate, which is not a weak
+        # ranking but no ranking at all ... `SignalPrediction.saturated` says
+        # when they have not been." Nothing in src/ read it. Measured with
+        # k_cat = 4e-2 and target_nm = 400, every one of 323 guides came back at
+        # 499.9999 nM of a 500 nM reporter -- a relative_signal spread of
+        # 2.5e-08 that `_normalize` stretched to fill [0, 1], so an axis
+        # weighted 2.5 contributed up to 22% of an 11-point score out of that
+        # noise, and 309 of the 323 changed rank against the shipped constants.
         ratios = []
         for activity, accessibility in self._PROBES:
             product = activity * accessibility
-            signal = self.predict(activity, accessibility).relative_signal
-            if product <= 0.0:
+            prediction = self.predict(activity, accessibility)
+            if product <= 0.0 or prediction.saturated:
                 continue
-            ratios.append(signal / product)
+            ratios.append(prediction.relative_signal / product)
+
+        # No explicit floor on how many survive: one ratio gives a spread of
+        # exactly zero and none skips the block below, so both already answer
+        # False. A guard here would be a guard that cannot fire, which is the
+        # very thing this fix was about.
         answer = False
         if ratios:
             largest = max(ratios)

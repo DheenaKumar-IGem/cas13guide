@@ -27,10 +27,6 @@ class SearchOutcome:
     bound: ExhaustivenessBound
     universe_gaps: frozenset[Universe]
 
-    @property
-    def universe_adequate(self) -> bool:
-        return not self.universe_gaps
-
 
 def universe_gaps(
     spec: ResolvedDesignSpec, bound: ExhaustivenessBound
