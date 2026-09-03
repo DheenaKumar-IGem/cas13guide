@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cas13guide — Cas13 guide-RNA design that tells you what it does not know</title>
+<meta name="description" content="An open-source Cas13 guide-RNA designer. Every score is a bounded interval, every refusal is explained, and every figure is reproducible by a command in the repository.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f7f4ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1214" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&display=swap">
+<script>
+/* Set the stored theme before first paint. The page is complete without this. */
+(function () {
+  try {
+    var t = localStorage.getItem('cas13guide-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
+<style>
+/* ── tokens ─────────────────────────────────────────────────────────────── */
+:root{
+  --paper:#f7f4ee;
+  --paper-2:#fdfbf7;
+  --ink:#181613;
+  --ink-2:#4d4941;
+  --ink-3:#736d61;
+  --rule:#ddd7cb;
+  --rule-2:#eae5db;
+  --accent:#1a4c86;
+  --accent-ink:#fdfbf7;
+  --crit:#a12b23;
+  --warn:#8a5808;
+  --grain:.020;
+  --serif:"Newsreader",Charter,"Bitstream Charter","Iowan Old Style",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0f1214;
+    --paper-2:#151a1d;
+    --ink:#e8e6e0;
+    --ink-2:#b0aca3;
+    --ink-3:#8d887e;
+    --rule:#272d31;
+    --rule-2:#1e2427;
+    --accent:#8fb6e8;
+    --accent-ink:#0f1214;
+    --crit:#e98a80;
+    --warn:#dda94e;
+    --grain:.026;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0f1214;
+  --paper-2:#151a1d;
+  --ink:#e8e6e0;
+  --ink-2:#b0aca3;
+  --ink-3:#8d887e;
+  --rule:#272d31;
+  --rule-2:#1e2427;
+  --accent:#8fb6e8;
+  --accent-ink:#0f1214;
+  --crit:#e98a80;
+  --warn:#dda94e;
+  --grain:.026;
+  color-scheme:dark;
+}
+
+/* ── base ───────────────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box}
+html{background:var(--paper);-webkit-text-size-adjust:100%}
+@media (prefers-reduced-motion: no-preference){html{scroll-behavior:smooth}}
+body{
+  margin:0;
+  background:transparent;
+  color:var(--ink);
+  font-family:var(--serif);
+  font-size:clamp(16px,.55vw + 15px,17.5px);
+  line-height:1.62;
+  font-weight:380;
+  font-optical-sizing:auto;
+  text-rendering:optimizeLegibility;
+}
+/* paper grain — felt, not seen */
+body::after{
+  content:"";position:fixed;inset:0;z-index:9999;pointer-events:none;
+  opacity:var(--grain);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+::selection{background:color-mix(in srgb,var(--accent) 22%,transparent)}
+
+a{color:var(--accent);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:.18em}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:1px}
+
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
+  clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+.skip{position:absolute;left:-9999px;top:0;z-index:50;background:var(--accent);
+  color:var(--accent-ink);padding:.6rem 1rem;font-family:var(--mono);font-size:.8rem}
+.skip:focus{left:.5rem;top:.5rem}
+
+.wrap{max-width:70rem;margin:0 auto;padding:0 clamp(1.15rem,3.5vw,2.5rem)}
+
+/* ── topbar ─────────────────────────────────────────────────────────────── */
+.topbar{
+  position:sticky;top:0;z-index:20;background:var(--paper);
+  border-bottom:1px solid var(--rule);
+}
+.topbar-in{display:flex;align-items:center;gap:1.25rem;min-height:3.25rem;flex-wrap:wrap}
+.brand{
+  font-family:var(--mono);font-size:.86rem;font-weight:600;letter-spacing:.04em;
+  color:var(--ink);text-decoration:none;margin-right:auto;white-space:nowrap;
+}
+.brand:hover{text-decoration:none;color:var(--accent)}
+.topnav{display:flex;gap:1.1rem;flex-wrap:wrap}
+.topnav a,.theme-btn{
+  font-family:var(--mono);font-size:.74rem;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);text-decoration:none;
+}
+.topnav a:hover{color:var(--accent)}
+.theme-btn{
+  background:none;border:1px solid var(--rule);border-radius:2px;color:var(--ink-3);
+  padding:.3rem .55rem;cursor:pointer;line-height:1;
+}
+.theme-btn:hover{border-color:var(--accent);color:var(--accent)}
+@media (max-width:620px){ .topnav a[data-optional]{display:none} }
+
+/* ── ruler rule ─────────────────────────────────────────────────────────── */
+.ruler{
+  height:11px;color:var(--rule);border-bottom:1px solid var(--rule);
+  background-image:
+    repeating-linear-gradient(90deg,currentColor 0 1px,transparent 1px 8px),
+    repeating-linear-gradient(90deg,currentColor 0 1px,transparent 1px 40px);
+  background-size:100% 5px,100% 10px;
+  background-position:left bottom,left bottom;
+  background-repeat:no-repeat;
+}
+
+/* ── hero ───────────────────────────────────────────────────────────────── */
+.hero{padding:clamp(3.5rem,9vw,6.5rem) 0 clamp(2rem,4vw,3rem)}
+.eyebrow{
+  font-family:var(--mono);font-size:.74rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 1.6rem;
+}
+h1{margin:0;font-weight:400;line-height:1}
+.wordmark{
+  display:block;font-family:var(--mono);font-weight:600;letter-spacing:-.01em;
+  font-size:clamp(1.15rem,2.4vw,1.5rem);color:var(--ink);margin-bottom:.85rem;
+}
+.claim{
+  display:block;font-size:clamp(2.05rem,6vw,4rem);line-height:1.06;
+  letter-spacing:-.018em;font-weight:400;max-width:19ch;
+}
+.claim em{font-style:italic;color:var(--accent);font-weight:380}
+.lede{
+  margin:1.9rem 0 0;max-width:42rem;font-size:clamp(1.05rem,1.4vw,1.25rem);
+  line-height:1.55;color:var(--ink-2);
+}
+.actions{display:flex;flex-wrap:wrap;gap:.9rem 1.4rem;align-items:center;margin-top:2.3rem}
+.btn{
+  display:inline-block;font-family:var(--mono);font-size:.78rem;letter-spacing:.1em;
+  text-transform:uppercase;padding:.72rem 1.15rem;border-radius:2px;text-decoration:none;
+  border:1px solid var(--accent);
+}
+.btn-primary{background:var(--accent);color:var(--accent-ink)}
+.btn-primary:hover{background:transparent;color:var(--accent);text-decoration:none}
+.btn-ghost{border-color:var(--rule);color:var(--ink-2);background:transparent}
+.btn-ghost:hover{border-color:var(--ink-3);color:var(--ink);text-decoration:none}
+
+.handoff{
+  display:block;font-family:var(--mono);font-size:.78rem;letter-spacing:.05em;
+  color:var(--ink-3);text-decoration:none;padding:1.1rem 0 0;
+}
+.handoff:hover{color:var(--accent);text-decoration:none}
+.handoff b{color:var(--crit);font-weight:600}
+
+/* ── section scaffold: rail + measure ───────────────────────────────────── */
+.section{
+  display:grid;grid-template-columns:8.5rem minmax(0,1fr);gap:0 2.75rem;
+  padding:clamp(3.2rem,7vw,5.5rem) 0;border-top:1px solid var(--rule);
+}
+.section > *{min-width:0}
+.rail{font-family:var(--mono);font-size:.72rem;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--ink-3);line-height:1.5}
+.rail-in{position:sticky;top:5rem}
+.rail .num{display:block;color:var(--ink);font-weight:600;margin-bottom:.35rem}
+@media (max-width:900px){
+  .section{grid-template-columns:1fr;gap:0}
+  .rail{margin-bottom:1rem}
+  .rail-in{position:static}
+}
+h2{
+  margin:0 0 1.1rem;font-size:clamp(1.6rem,3.4vw,2.35rem);line-height:1.14;
+  font-weight:450;letter-spacing:-.014em;
+}
+h3{
+  margin:2.6rem 0 .7rem;font-family:var(--mono);font-size:.78rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:600;
+}
+.measure{max-width:42rem}
+p{margin:0 0 1.05rem}
+.muted{color:var(--ink-2)}
+:target{scroll-margin-top:5rem}
+
+/* ── refusals ───────────────────────────────────────────────────────────── */
+.lims{margin:2.4rem 0 0;padding:0;list-style:none;counter-reset:lim}
+.lim{
+  position:relative;padding:1.65rem 0 1.65rem 1.6rem;border-top:1px solid var(--rule-2);
+}
+.lim::before{
+  content:"";position:absolute;left:0;top:1.65rem;bottom:1.65rem;width:3px;
+  background:var(--crit);
+}
+.lim-head{display:flex;align-items:baseline;gap:.85rem;margin-bottom:.6rem}
+.lim-num{font-family:var(--mono);font-size:.78rem;color:var(--ink-3);letter-spacing:.06em}
+.sev{
+  font-family:var(--mono);font-size:.7rem;font-weight:600;letter-spacing:.16em;
+  text-transform:uppercase;padding:.2rem .5rem;border:1px solid currentColor;border-radius:2px;
+}
+.sev-crit{color:var(--crit)}
+.lim p{margin:0;max-width:44rem;font-size:1.06rem;line-height:1.58}
+.lim em{font-style:italic}
+.lim-foot{
+  margin-top:2.2rem;padding-top:1.4rem;border-top:1px solid var(--rule);
+  font-family:var(--mono);font-size:.82rem;line-height:1.7;color:var(--ink-2);max-width:44rem;
+}
+
+/* ── readouts / data blocks ─────────────────────────────────────────────── */
+.readout{
+  background:var(--paper-2);border:1px solid var(--rule);border-radius:2px;
+  margin:1.8rem 0 0;
+}
+.readout-hd{
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);padding:.7rem 1.1rem;border-bottom:1px solid var(--rule);
+  display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;
+}
+.kv{margin:0;padding:1.1rem;display:grid;grid-template-columns:max-content minmax(0,1fr);
+  gap:.42rem 1.4rem;font-family:var(--mono);font-size:.86rem;line-height:1.5}
+.kv dt{color:var(--ink-3);letter-spacing:.04em}
+.kv dd{margin:0;color:var(--ink)}
+.kv dd.seq{overflow-x:auto;white-space:nowrap;padding-bottom:2px}
+.kv dd .chip{
+  font-size:.72rem;font-weight:600;letter-spacing:.12em;padding:.1rem .42rem;
+  border:1px solid currentColor;border-radius:2px;color:var(--warn);margin-right:.5rem;
+}
+
+.scroller{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+code{font-family:var(--mono);font-size:.92em}
+pre.duplex{
+  margin:0;padding:1.1rem;font-family:var(--mono);font-size:.86rem;line-height:1.55;
+  color:var(--ink);white-space:pre;
+}
+pre.duplex .pair{color:var(--ink-3)}
+.figcap{
+  margin:.8rem 0 0;font-family:var(--mono);font-size:.76rem;line-height:1.65;
+  color:var(--ink-3);max-width:44rem;
+}
+.strip{
+  margin:1.6rem 0 0;padding:.85rem 1.1rem;border:1px solid var(--rule);border-radius:2px;
+  font-family:var(--mono);font-size:.82rem;color:var(--ink-2);line-height:1.7;
+}
+.strip b{color:var(--ink);font-weight:600}
+
+/* ── diagrams ───────────────────────────────────────────────────────────── */
+.figure{margin:2.2rem 0 0}
+.figure svg{width:100%;height:auto;display:block;min-width:380px}
+.svg-flow{max-width:460px}
+.svg-bounds{max-width:420px}
+.svg-box{fill:none;stroke:var(--ink-3);stroke-width:1.25}
+.svg-line{stroke:var(--ink-3);stroke-width:1.25;fill:none}
+.svg-head{fill:var(--ink-3)}
+.svg-lbl{fill:var(--ink);font-family:var(--mono);font-size:16px}
+.svg-small{fill:var(--ink-3);font-family:var(--mono);font-size:15px;letter-spacing:.06em}
+.svg-fail{stroke:var(--crit);stroke-width:1.25;fill:none}
+.svg-fail-head{fill:var(--crit)}
+.svg-fail-lbl{fill:var(--crit);font-family:var(--mono);font-size:16px;font-weight:600}
+.svg-band{fill:var(--accent);fill-opacity:.13}
+.svg-bar{stroke:var(--ink-2);stroke-width:1.5}
+.svg-dot{fill:var(--ink)}
+.svg-read{fill:var(--accent)}
+.svg-read-lbl{fill:var(--accent);font-family:var(--mono);font-size:15px;font-weight:500}
+
+.rule-claim{
+  margin:2.4rem 0 0;padding-left:1.4rem;border-left:3px solid var(--accent);
+  font-size:clamp(1.15rem,2vw,1.45rem);line-height:1.38;max-width:38rem;letter-spacing:-.006em;
+}
+
+/* ── verification table ─────────────────────────────────────────────────── */
+table.verify{
+  width:100%;border-collapse:collapse;margin:1.9rem 0 0;font-size:.95rem;
+}
+table.verify th{
+  text-align:left;font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:600;
+  padding:0 1.2rem .55rem 0;border-bottom:1px solid var(--rule);
+}
+table.verify td{
+  padding:.85rem 1.2rem .85rem 0;border-bottom:1px solid var(--rule-2);vertical-align:baseline;
+}
+table.verify td:last-child,table.verify th:last-child{padding-right:0}
+td.cmd{white-space:nowrap;width:1%}
+td.cmd code{font-family:var(--mono);font-size:.83rem;color:var(--ink)}
+td.est{color:var(--ink-2);line-height:1.5}
+button.copy{
+  margin-left:.7rem;font-family:var(--mono);font-size:.66rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);background:none;border:1px solid var(--rule);
+  border-radius:2px;padding:.15rem .38rem;cursor:pointer;vertical-align:baseline;
+}
+button.copy:hover{color:var(--accent);border-color:var(--accent)}
+button.copy[data-done="1"]{color:var(--accent);border-color:var(--accent)}
+@media (max-width:760px){
+  table.verify,table.verify tbody,table.verify tr,table.verify td{display:block;width:auto}
+  table.verify thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  table.verify tr{padding:.95rem 0;border-bottom:1px solid var(--rule-2)}
+  table.verify td{border:0;padding:0}
+  td.cmd{overflow-x:auto;white-space:nowrap}
+  td.est{margin-top:.3rem}
+}
+
+blockquote.finding{
+  margin:2.8rem 0 0;padding:0 0 0 1.5rem;border-left:3px solid var(--ink);
+  font-size:clamp(1.08rem,1.8vw,1.3rem);line-height:1.5;max-width:40rem;
+}
+blockquote.finding p{margin:0 0 .9rem}
+blockquote.finding p:last-child{margin-bottom:0}
+
+/* ── footer ─────────────────────────────────────────────────────────────── */
+footer{border-top:1px solid var(--rule);padding:3rem 0 4.5rem;margin-top:0}
+.foot-grid{display:grid;grid-template-columns:8.5rem minmax(0,1fr);gap:0 2.75rem}
+.foot-grid > *{min-width:0}
+.foot-body a{overflow-wrap:anywhere}
+@media (max-width:900px){.foot-grid{grid-template-columns:1fr}}
+.foot-body{max-width:42rem;font-size:.94rem;color:var(--ink-2)}
+.foot-body p{margin:0 0 .85rem}
+.foot-body a{color:var(--accent)}
+.foot-mono{font-family:var(--mono);font-size:.78rem;letter-spacing:.04em;color:var(--ink-3);
+  margin-top:1.6rem}
+
+/* ── load reveal (CSS only; ends visible) ───────────────────────────────── */
+@media (prefers-reduced-motion: no-preference){
+  .rise{opacity:0;transform:translateY(10px);animation:rise .68s cubic-bezier(.2,.7,.3,1) forwards}
+  .d1{animation-delay:.05s}.d2{animation-delay:.14s}.d3{animation-delay:.23s}
+  .d4{animation-delay:.32s}.d5{animation-delay:.41s}
+  @keyframes rise{to{opacity:1;transform:none}}
+}
+
+@media print{
+  body::after{display:none}
+  .topbar,.actions,.handoff,button.copy{display:none}
+  .section,footer{border-color:#bbb}
+  a{color:inherit;text-decoration:none}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="#top">cas13guide</a>
+    <nav class="topnav" aria-label="Sections">
+      <a href="#refusals">Refusals</a>
+      <a href="#output">Output</a>
+      <a href="#decision" data-optional>Decision</a>
+      <a href="#verification">Verification</a>
+      <a href="https://github.com/DheenaKumar-IGem/cas13guide" data-optional>Repository</a>
+    </nav>
+    <button class="theme-btn" id="themeToggle" type="button" hidden></button>
+  </div>
+</header>
+
+<main id="main">
+<div id="top"></div>
+
+<!-- ── hero ─────────────────────────────────────────────────────────────── -->
+<section class="hero" aria-labelledby="h-hero">
+  <div class="wrap">
+    <p class="eyebrow rise d1">Open source · Cas13 guide-RNA designer</p>
+    <h1 id="h-hero">
+      <span class="wordmark rise d1">cas13guide</span>
+      <span class="claim rise d2">Cas13 guide-RNA design that tells you <em>what it does not know</em>.</span>
+    </h1>
+    <p class="lede rise d3">
+      Every score is a bounded interval, every refusal is explained, and every figure on
+      this page is reproducible by a command in the repository.
+    </p>
+    <div class="actions rise d4">
+      <a class="btn btn-primary" href="https://github.com/DheenaKumar-IGem/cas13guide">Repository</a>
+      <a class="btn btn-ghost" href="#refusals">What a run refuses to claim</a>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><div class="ruler" aria-hidden="true"></div></div>
+
+<div class="wrap">
+  <a class="handoff rise d5" href="#refusals">
+    ↓ §02 &nbsp;A default run states, in its own words, <b>four CRITICAL limitations</b>
+  </a>
+</div>
+
+<!-- ── §02 refusals ─────────────────────────────────────────────────────── -->
+<div class="wrap">
+<section class="section" id="refusals" aria-labelledby="h-refusals">
+  <div class="rail"><div class="rail-in"><span class="num">§ 02</span>Refusals</div></div>
+  <div>
+    <h2 id="h-refusals">What a run refuses to claim</h2>
+    <div class="measure">
+      <p class="muted">
+        This is not a disclaimer bolted to the bottom of a page. These are the limitations
+        of the run itself, printed as data every time — in the terminal, in the HTML report,
+        and in the machine-readable JSON. Below is what a default run says, in its own words.
+      </p>
+    </div>
+
+    <ol class="lims">
+      <li class="lim">
+        <div class="lim-head">
+          <span class="lim-num">01</span>
+          <span class="sev sev-crit">Critical</span>
+        </div>
+        <p>Conformal bounds were calibrated on SYNTHETIC data. Every interval, and therefore
+        every PASS, is exercisable rather than earned.</p>
+      </li>
+      <li class="lim">
+        <div class="lim-head">
+          <span class="lim-num">02</span>
+          <span class="sev sev-crit">Critical</span>
+        </div>
+        <p>Activity came from the built-in heuristic, which is a shaped guess and not a
+        trained model. It saturates: a perfect duplex scores about 0.93 regardless of
+        sequence.</p>
+      </li>
+      <li class="lim">
+        <div class="lim-head">
+          <span class="lim-num">03</span>
+          <span class="sev sev-crit">Critical</span>
+        </div>
+        <p>Collateral (trans) cleavage is not predicted for this assay. Once activated,
+        Cas13 degrades bystander RNA, and that scales with target abundance rather than with
+        off-target homology.</p>
+      </li>
+      <li class="lim">
+        <div class="lim-head">
+          <span class="lim-num">04</span>
+          <span class="sev sev-crit">Critical</span>
+        </div>
+        <p>Off-targets were searched over the sequences supplied to this run. Anything not
+        loaded is invisible: a guide is specific <em>against what you gave it</em>.</p>
+      </li>
+    </ol>
+
+    <p class="lim-foot">
+      The four marks above are not a fixed banner: they are what this run could not
+      establish. A tool that only prints its confidence leaves you to guess at the rest.
+    </p>
+  </div>
+</section>
+</div>
+
+<!-- ── §03 output ───────────────────────────────────────────────────────── -->
+<div class="wrap">
+<section class="section" id="output" aria-labelledby="h-output">
+  <div class="rail"><div class="rail-in"><span class="num">§ 03</span>Output</div></div>
+  <div>
+    <h2 id="h-output">A designed guide is a checkable claim</h2>
+    <div class="measure">
+      <p class="muted">
+        A guide is not a recommendation you have to take on faith. The row below says where
+        it binds and what it is made of, so its central claim can be checked by hand — or by
+        a command.
+      </p>
+    </div>
+
+    <div class="readout">
+      <div class="readout-hd"><span>Ranked guide</span><span>worked example</span></div>
+      <dl class="kv">
+        <dt>rank</dt>      <dd>1</dd>
+        <dt>guide</dt>     <dd>g_ecd912d113</dd>
+        <dt>spacer</dt>    <dd class="seq">UUGAUGCCAAGUUCCGCGAUUC</dd>
+        <dt>binds</dt>     <dd class="seq">MALAT1_frag at 154..176</dd>
+        <dt>site</dt>      <dd class="seq">GAAUCGCGGAACUUGGCAUCAA</dd>
+        <dt>GC</dt>        <dd>0.50</dd>
+        <dt>verdict</dt>   <dd><span class="chip">REVIEW</span>1 locus/loci with no expression evidence</dd>
+      </dl>
+    </div>
+
+    <h3>The claim, made checkable</h3>
+    <div class="readout">
+      <div class="readout-hd"><span>Spacer against site</span><span>column by column</span></div>
+      <div class="scroller">
+<pre class="duplex">spacer  5' UUGAUGCCAAGUUCCGCGAUUC 3'
+<span class="pair">           |||||||||||||||||||||| </span>
+site    3' AACUACGGUUCAAGGCGCUAAG 5'</pre>
+      </div>
+    </div>
+    <p class="figcap">
+      The site is the same sequence listed above, written 3'→5' so that each column is a
+      base pair. The spacer is the reverse complement of the target site at the stated
+      position — and the project ships a command that re-derives exactly that for every
+      exported guide, in plain Python, without asking the package how it got there:
+      <code>python examples/verify_output_against_input.py</code>.
+    </p>
+
+    <h3>What leaves the run</h3>
+    <div class="strip">
+      <b>CSV</b> · <b>FASTA</b> · a self-contained <b>HTML</b> report · a machine-readable
+      <b>JSON</b> report<br>
+      All four carry the same caveats.
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ── §04 decision ─────────────────────────────────────────────────────── -->
+<div class="wrap">
+<section class="section" id="decision" aria-labelledby="h-decision">
+  <div class="rail"><div class="rail-in"><span class="num">§ 04</span>Decision</div></div>
+  <div>
+    <h2 id="h-decision">How it decides</h2>
+    <div class="measure">
+      <p class="muted">
+        Three steps, in this order. The order is the design: what happens first cannot be
+        undone by what happens later.
+      </p>
+    </div>
+
+    <figure class="figure">
+      <div class="scroller">
+        <svg class="svg-flow" viewBox="0 0 460 152" role="img" aria-labelledby="flow-title flow-desc">
+          <title id="flow-title">The decision order: gate, then Pareto frontier, then preferences</title>
+          <desc id="flow-desc">A guide passes through the gate first. Guides with a FAIL verdict are
+          dropped there by the gate itself. Whatever survives goes to the Pareto frontier, and only
+          then to user preferences.</desc>
+
+          <rect class="svg-box" x="4"   y="14" width="96"  height="52" rx="2"/>
+          <rect class="svg-box" x="134" y="14" width="166" height="52" rx="2"/>
+          <rect class="svg-box" x="334" y="14" width="122" height="52" rx="2"/>
+
+          <text class="svg-lbl" x="52"  y="46" text-anchor="middle">gate</text>
+          <text class="svg-lbl" x="217" y="46" text-anchor="middle">Pareto frontier</text>
+          <text class="svg-lbl" x="395" y="46" text-anchor="middle">preferences</text>
+
+          <line class="svg-line" x1="100" y1="40" x2="126" y2="40"/>
+          <polygon class="svg-head" points="126,35.5 134,40 126,44.5"/>
+          <line class="svg-line" x1="300" y1="40" x2="326" y2="40"/>
+          <polygon class="svg-head" points="326,35.5 334,40 326,44.5"/>
+
+          <line class="svg-fail" x1="52" y1="66" x2="52" y2="106"/>
+          <polygon class="svg-fail-head" points="47.5,106 56.5,106 52,114"/>
+          <text class="svg-fail-lbl" x="68" y="98">FAIL</text>
+          <text class="svg-small" x="68" y="120">dropped here</text>
+        </svg>
+      </div>
+      <figcaption class="figcap">
+        The gate drops FAIL verdicts itself rather than trusting callers to pre-filter.
+      </figcaption>
+    </figure>
+
+    <p class="rule-claim">No weighting can rescue a guide the gate failed. A refusal is not
+    a low score — it is a refusal.</p>
+
+    <h3>Which end of the interval gets read</h3>
+    <div class="measure">
+      <p class="muted">
+        Metrics are read at the bound that is <em>unfavourable</em> to the guide. Coverage at
+        its lower bound, hazard at its upper. A high point estimate with a wide interval is
+        not evidence of efficacy.
+      </p>
+    </div>
+
+    <figure class="figure">
+      <div class="scroller">
+        <svg class="svg-bounds" viewBox="0 0 420 158" role="img" aria-labelledby="bound-title bound-desc">
+          <title id="bound-title">Benefit is read at the lower bound, hazard at the upper bound</title>
+          <desc id="bound-desc">Two identical intervals with a point estimate marked inside each.
+          For benefit, the value read is the interval's lower end. For hazard, it is the upper end.
+          Neither reads the point estimate.</desc>
+
+          <text class="svg-small" x="4" y="55">BENEFIT</text>
+          <rect class="svg-band" x="96" y="43" width="274" height="14"/>
+          <line class="svg-bar" x1="96" y1="50" x2="370" y2="50"/>
+          <line class="svg-bar" x1="96" y1="41" x2="96" y2="59"/>
+          <line class="svg-bar" x1="370" y1="41" x2="370" y2="59"/>
+          <circle class="svg-dot" cx="310" cy="50" r="4.5"/>
+          <polygon class="svg-read" points="91,70 101,70 96,61"/>
+          <text class="svg-read-lbl" x="96" y="88" text-anchor="middle">read here</text>
+
+          <text class="svg-small" x="4" y="113">HAZARD</text>
+          <rect class="svg-band" x="96" y="101" width="274" height="14"/>
+          <line class="svg-bar" x1="96" y1="108" x2="370" y2="108"/>
+          <line class="svg-bar" x1="96" y1="99" x2="96" y2="117"/>
+          <line class="svg-bar" x1="370" y1="99" x2="370" y2="117"/>
+          <circle class="svg-dot" cx="150" cy="108" r="4.5"/>
+          <polygon class="svg-read" points="365,128 375,128 370,119"/>
+          <text class="svg-read-lbl" x="370" y="146" text-anchor="middle">read here</text>
+        </svg>
+      </div>
+      <figcaption class="figcap">
+        The bar is the interval; the dot is the point estimate. Neither read uses the dot.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+</div>
+
+<!-- ── §05 verification ─────────────────────────────────────────────────── -->
+<div class="wrap">
+<section class="section" id="verification" aria-labelledby="h-verification">
+  <div class="rail"><div class="rail-in"><span class="num">§ 05</span>Verification</div></div>
+  <div>
+    <h2 id="h-verification">A claim is worth what the procedure that reproduces it is worth</h2>
+    <div class="measure">
+      <p class="muted">
+        Every row below is a command anyone can run, and the figure it produces. Nothing in
+        this section is asserted; each line is measured by the procedure beside it.
+      </p>
+    </div>
+
+    <table class="verify">
+      <caption class="sr-only">Commands in the repository and what each one establishes</caption>
+      <thead>
+        <tr><th scope="col">Command</th><th scope="col">What it establishes</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="cmd"><code>pytest</code></td>
+          <td class="est">1,135 tests</td>
+        </tr>
+        <tr>
+          <td class="cmd"><code>python examples/verify_mutation_coverage.py</code></td>
+          <td class="est">32 semantic mutations, 32 caught</td>
+        </tr>
+        <tr>
+          <td class="cmd"><code>python examples/verify_vocabulary_coverage.py</code></td>
+          <td class="est">every verdict the tool can reach is reached by a test</td>
+        </tr>
+        <tr>
+          <td class="cmd"><code>python examples/verify_output_against_input.py</code></td>
+          <td class="est">every exported guide re-derived from the input</td>
+        </tr>
+        <tr>
+          <td class="cmd"><code>python examples/verify_the_maths_against_a_referent.py</code></td>
+          <td class="est">the arithmetic checked against closed forms, not against itself</td>
+        </tr>
+        <tr>
+          <td class="cmd"><code>python examples/verify_nothing_is_computed_for_nobody.py</code></td>
+          <td class="est">no value computed that nothing reads</td>
+        </tr>
+        <tr>
+          <td class="cmd"><code>python -m mypy</code></td>
+          <td class="est">typed, and the marker is honest</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>What that procedure cannot do</h3>
+    <blockquote class="finding">
+      <p>Thirteen review rounds have fixed about eighty defects. The method finds
+      disagreements between two descriptions of one run. It cannot find a formula that is
+      coherent, documented, tested against its own output, and scientifically wrong.</p>
+      <p>Whether the activity model predicts real knockdown is a question for a wet-lab
+      screen, and nothing in this repository stands in for one.</p>
+    </blockquote>
+  </div>
+</section>
+</div>
+
+</main>
+
+<footer>
+  <div class="wrap foot-grid">
+    <div class="rail"><span class="num">§ 06</span>End</div>
+    <div class="foot-body">
+      <p>
+        <a href="https://github.com/DheenaKumar-IGem/cas13guide">github.com/DheenaKumar-IGem/cas13guide</a>
+        — source, issues, and every command listed above.
+      </p>
+      <p>
+        Third-party components and their licences are listed in
+        <a href="https://github.com/DheenaKumar-IGem/cas13guide/blob/main/THIRD_PARTY_LICENSES.md">THIRD_PARTY_LICENSES.md</a>
+        in the repository.
+      </p>
+      <p class="foot-mono">
+        Research software. Whether a designed guide works is a question for a wet-lab screen.
+      </p>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── theme toggle ─────────────────────────────────────────────────────── */
+  var root = document.documentElement;
+  var btn = document.getElementById('themeToggle');
+
+  function current() {
+    var set = root.getAttribute('data-theme');
+    if (set === 'light' || set === 'dark') return set;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark' : 'light';
+  }
+  function paint() {
+    var next = current() === 'dark' ? 'light' : 'dark';
+    btn.textContent = next;
+    btn.setAttribute('aria-label', 'Switch to ' + next + ' theme');
+    btn.setAttribute('title', 'Switch to ' + next + ' theme');
+  }
+  if (btn) {
+    btn.hidden = false;
+    paint();
+    btn.addEventListener('click', function () {
+      var next = current() === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('cas13guide-theme', next); } catch (e) {}
+      paint();
+    });
+  }
+
+  /* ── copy buttons on the commands ─────────────────────────────────────── */
+  function copy(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      ok ? resolve() : reject();
+    });
+  }
+
+  var cells = document.querySelectorAll('td.cmd');
+  Array.prototype.forEach.call(cells, function (cell) {
+    var code = cell.querySelector('code');
+    if (!code) return;
+    var text = code.textContent;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'copy';
+    b.textContent = 'copy';
+    b.setAttribute('aria-label', 'Copy command: ' + text);
+    b.addEventListener('click', function () {
+      copy(text).then(function () {
+        b.textContent = 'copied';
+        b.setAttribute('data-done', '1');
+      }, function () {
+        b.textContent = 'select it';
+      });
+      window.setTimeout(function () {
+        b.textContent = 'copy';
+        b.removeAttribute('data-done');
+      }, 1600);
+    });
+    cell.appendChild(b);
+  });
+})();
+</script>
+</body>
+</html>
