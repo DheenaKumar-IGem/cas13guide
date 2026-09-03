@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1090 tests, run under `unittest` or `pytest`, and 91% line coverage.
+1102 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
 Eight claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1090 tests
+pytest                                                   # 1102 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
@@ -1021,6 +1021,23 @@ The defects worth naming, because they were live rather than hypothetical:
 | `record_wetlab_result` dropped the group label | Zero group labels switches the `MIN_STRATUM_GROUPS` check off, so wet-lab feedback from one transcript came back looking certified | `test_benchmark.py` |
 | `run_search` kept the *last* bound, not the weakest | A per-query heuristic bound would be overwritten by a later exhaustive one | `test_search.py` |
 | `profile_duplex("", "")` died in the CIGAR builder | An `IndexError` that named neither the caller nor the cause | `test_duplex.py` |
+
+### An eleventh, aimed at the tenth's own diff
+
+Three of round ten's findings were regressions from round nine, so this round
+pointed a finder straight at round ten's changes and spent the rest on places no
+round had covered: BLAST coordinate handling, the preset tiling path, the
+browser door, the panel posterior, conservation. Fourteen candidates, ten
+refuted, **four confirmed**. The count is falling — 8, then 11 with the critic,
+now 4 — but one of the four is the worst single defect in the project's history,
+and it was in the feature this branch exists to add.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| **FR6.3's headline number was conditioned on the wrong point of the scale** | `for_panel` passed the conformal *lower bound* to `guide_success`, which selects calibration rows by `abs(predicted - x) <= bandwidth` — but `add_observation` stores the model's raw point prediction, so the window landed a full conformal quantile below the rows it was meant to sit among. The module docstring states both halves of why that is wrong in its first paragraph: the rows are the ones "whose prediction sits near this guide's", and "nothing here reads a conformal quantile". On a perfectly calibrated screen with q = 0.30, a guide predicted at 0.60 — a level where **every** calibration row cleared the threshold — came back with posterior mean **0.0012 instead of 0.9988**. The answer inverted, on the number the panel floor and every printed `success_mean` rest on | `test_bugfix_hunt_round11.py` |
+| A single IUPAC code in a BLAST subject aborted the run with a bare `ValueError` | Refusing is right — skipping the row would hide a real off-target behind an ambiguity code. The defect was the exception *type*: blastn exiting non-zero already raises `BlastUnavailable`, which becomes exit 2, while this escaped as a traceback with exit 1. RefSeq, nt and TSA routinely carry R/Y/M/K/S/W/B/D/H/V, and the user cannot edit a third-party database | `test_bugfix_hunt_round11.py` |
+| `serve --port 0` printed and opened an address that cannot work | The URL was built from the *requested* port. `--port 0` is the conventional "pick a free one"; the server bound an ephemeral port and announced `http://127.0.0.1:0/`, with the working address appearing nowhere. This is the door aimed at people who will not use a command line | `test_bugfix_hunt_round11.py` |
+| `--variants` rewrote the recorded genome build and annotation | Every variant world was built as `Transcriptome("variants", record.name)`, and that version is what the ledger files for each context — so a flag about isoforms discarded the user's `--genome-build` and `--annotation`, including for the context named `reference`, and filed a FASTA header in the annotation slot | `test_bugfix_hunt_round11.py` |
 
 ### A tenth pass, run as eight parallel hunts
 

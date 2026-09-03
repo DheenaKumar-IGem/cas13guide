@@ -634,11 +634,13 @@ def run_request(request: DesignRequest) -> DesignOutcome:
                 biotype=Universe.NCRNA, expression=request.expression,
                 background=accepted_background, extra_targets=records[1:],
                 index_for=index_for,
+                genome_build=request.genome_build, annotation=request.annotation,
             )
         except ValueError as exc:
             raise DesignRequestError(f"--variants: {exc}") from exc
 
     calibration_service = seed_calibration(request, spec)
+    from .blast import BlastUnavailable
     from .kinetics import StiffKineticsError
 
     try:
@@ -657,6 +659,15 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         raise DesignRequestError(
             f"--kinetics-constants {request.kinetics_json}: {exc}"
         ) from exc
+    except BlastUnavailable as exc:
+        # The same shape as the kinetics case above, one subsystem over, and
+        # missed when that one was fixed. `_reference_index` guards blastn's
+        # absence at *construction*; an ambiguity code in a subject is raised
+        # at *search* time, outside that guard, so it escaped as a traceback
+        # and exit 1 -- the status documented as "nothing survived the gate".
+        # The database is third-party and the user cannot edit it, so this is
+        # reachable on the module's intended use.
+        raise DesignRequestError(str(exc)) from exc
     data = report.to_dict()
     weakest_bound = report.search_bound
     gaps = report.universe_gaps

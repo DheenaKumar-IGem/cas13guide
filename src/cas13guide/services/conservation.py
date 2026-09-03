@@ -302,6 +302,8 @@ def variant_contexts(
     background: Sequence[Locus] = (),
     extra_targets: Sequence[SequenceRecord] = (),
     index_for=None,
+    genome_build: str = "variants",
+    annotation: str = "v1",
 ):
     """One :class:`DesignContext` per variant, for FR7.2.
 
@@ -337,7 +339,16 @@ def variant_contexts(
     _refuse_reserved_names(records)
     contexts = []
     for index, record in enumerate(records):
-        world = Transcriptome("variants", record.name)
+        # The run's own build and annotation, not the literals this used to
+        # pass. `Transcriptome.version` is what `run_design` files in the
+        # provenance ledger for every context, so building each world as
+        # `Transcriptome("variants", record.name)` meant adding --variants
+        # silently replaced the user's --genome-build and --annotation with
+        # "variants/<a FASTA header>" -- including for the context named
+        # "reference", whose loci are identical to the non-variant run's. A
+        # flag about isoforms rewrote the one line saying which annotation was
+        # searched, and filed a record name in the annotation slot.
+        world = Transcriptome(genome_build, annotation)
         world.add(
             Locus(record.name, record.sequence, biotype, gene=record.name,
                   expression=expression)

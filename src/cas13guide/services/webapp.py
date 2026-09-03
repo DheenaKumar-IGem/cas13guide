@@ -343,7 +343,15 @@ def make_server(host: str = "127.0.0.1", port: int = 8000) -> HTTPServer:
 def serve(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True) -> int:
     """Run the development server until interrupted."""
     server = make_server(host, port)
-    url = f"http://{host}:{port}/"
+    # The port the socket actually bound, not the one that was asked for. They
+    # differ on `--port 0`, the conventional "pick a free one" argument, which
+    # argparse accepts without restriction: the server came up on an ephemeral
+    # port and announced -- and opened -- `http://127.0.0.1:0/`, while the
+    # working address appeared nowhere. This is the door aimed at people who
+    # will not use a command line, and the single line of output they get was
+    # an address that cannot be opened.
+    bound_port = server.server_address[1]
+    url = f"http://{host}:{bound_port}/"
     print(f"cas13guide is at {url}")
     if host not in ("127.0.0.1", "localhost"):
         print(

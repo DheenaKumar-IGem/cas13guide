@@ -469,19 +469,44 @@ class BayesianPanelConfidence:
         per_target: dict[str, list[GuideSuccess]] = {t: [] for t in required}
 
         for assessment in panel.guides:
-            best: dict[str, tuple[float, int]] = {}
+            best: dict[str, tuple[float, float, int]] = {}
             for evidence in assessment.evidence:
                 target_id = evidence.hit.target_id
                 if evidence.target_class is not TargetClass.REQUIRED or not target_id:
                     continue
+                # Chosen at the lower bound, as coverage is everywhere else --
+                # but *windowed* at the point, below.
                 lower = benefit_lower(evidence.activity)
                 if target_id not in best or lower > best[target_id][0]:
-                    best[target_id] = (lower, evidence.hit.duplex.n_mismatch)
-            for target_id, (lower, n_mismatch) in best.items():
+                    best[target_id] = (
+                        lower, evidence.activity.point, evidence.hit.duplex.n_mismatch
+                    )
+            for target_id, (_lower, model_point, n_mismatch) in best.items():
                 if target_id not in per_target:
                     continue
+                # The window is positioned by the model's *point* prediction,
+                # because that is what the calibration table is indexed by:
+                # `add_observation` stores the model's raw prediction, and
+                # `guide_success` selects rows with |predicted - x| <= bandwidth.
+                # Passing the lower bound compared unlike with unlike -- the
+                # window landed a full conformal quantile below the rows it was
+                # meant to sit among, and the module docstring says both halves
+                # of why that is wrong: the rows are the ones "whose prediction
+                # sits near this guide's", and "nothing here reads a conformal
+                # quantile".
+                #
+                # It was not a small bias. On a perfectly calibrated screen with
+                # q = 0.30, a guide predicted at 0.60 -- a level where every
+                # calibration row cleared the threshold -- came back with
+                # posterior mean 0.0012 instead of 0.9988, because the window
+                # landed near 0.30 where none had. The uncertainty conformal
+                # measures is already carried by the interval this posterior is
+                # reported beside; charging it twice, once by shifting the
+                # window, is what made the number meaningless.
                 per_target[target_id].append(
-                    self.guide_success(assessment.guide_id, target_id, lower, n_mismatch)
+                    self.guide_success(
+                        assessment.guide_id, target_id, model_point, n_mismatch
+                    )
                 )
 
         targets: list[TargetConfidence] = []
