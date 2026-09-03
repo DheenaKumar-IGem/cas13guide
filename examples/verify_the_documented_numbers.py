@@ -143,6 +143,24 @@ def page_worked_example() -> dict[str, str]:
     return {normalise(k).lower(): normalise(v) for k, v in pairs}
 
 
+def regression_class_count() -> int:
+    """Defects with a regression test class named for them.
+
+    The page used to say "about eighty defects", which is not a number anyone
+    could check -- a defect is not a countable object in a repository, and an
+    approximation nobody can reproduce is the kind of claim this file exists to
+    stop. One class per defect *is* countable, so that is what the page now
+    says and this is what counts it.
+    """
+    total = 0
+    for path in sorted((ROOT / "tests").glob("test_*.py")):
+        name = path.name
+        if not (name.startswith("test_bugfix") or name.startswith("test_round")):
+            continue
+        total += len(re.findall(r"^class Test", path.read_text(encoding="utf-8"), re.M))
+    return total
+
+
 def page_duplex() -> tuple[str, str]:
     """The base-paired alignment the page draws, as (top strand, bottom strand).
 
@@ -201,7 +219,18 @@ def main() -> int:
         if not check(f'"{label}"', matched, detail):
             failures.append("a quoted limitation is not what the tool prints")
 
-    # ---- 3. the worked example re-derives --------------------------------
+    # ---- 3. the defect count is a count of something -------------------
+    print()
+    print("the defect count the page closes on")
+    stated = re.search(r"have fixed (\d+) defects", PAGE.read_text(encoding="utf-8"))
+    counted = regression_class_count()
+    if not check(f"the page states a countable figure ({counted} regression classes)",
+                 bool(stated) and int(stated.group(1)) == counted,
+                 f"page says {stated.group(1) if stated else 'nothing countable'}, "
+                 f"the tree holds {counted}"):
+        failures.append("the stated defect count is not what the tree holds")
+
+    # ---- 4. the worked example re-derives --------------------------------
     print()
     print("the worked example the page invites a reader to check by hand")
     from cas13guide.util.seq import revcomp
