@@ -659,11 +659,21 @@ class TestHazardIsNeverSoftened(unittest.TestCase):
         self.assertEqual(vector.worst_off_target, max(per_context))
         # The two ways of softening it: averaging, and reading the reference
         # context alone. Both are strictly wrong whenever the spread is real.
-        if max(per_context) > min(per_context):
-            self.assertGreater(vector.worst_off_target,
-                               sum(per_context) / len(per_context))
-            if per_context[0] < max(per_context):
-                self.assertGreater(vector.worst_off_target, per_context[0])
+        #
+        # "Real" has to mean representable, not merely nonzero. Hypothesis
+        # reaches inputs a quarter of an ULP apart -- 1.0 against
+        # 0.9999999999999999, which become per-context hazards of 0.5 and
+        # 0.49999999999999994 -- and the mean of two adjacent doubles rounds
+        # back to the larger one. Asserting max > mean there demands a
+        # distinction float64 cannot hold, and it fails against a correct
+        # implementation. It also tests nothing: where the mean *is* the max,
+        # an implementation that returned the mean would be returning the max,
+        # which is the thing this asks for.
+        mean = sum(per_context) / len(per_context)
+        if mean < max(per_context):
+            self.assertGreater(vector.worst_off_target, mean)
+        if per_context[0] < max(per_context):
+            self.assertGreater(vector.worst_off_target, per_context[0])
 
     @given(hazards=LEVELS, coverages=LEVELS)
     @SETTINGS

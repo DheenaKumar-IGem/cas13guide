@@ -93,18 +93,29 @@ class _Profile:
 
 
 def _profile(assessment: GuideAssessment) -> _Profile:
+    """Coverage is a REQUIRED-only question; spacing is not.
+
+    ``coverage`` feeds the objective, which is the expected number of
+    *required* targets covered, so it reads REQUIRED evidence only. ``sites``
+    feeds the spacing constraint, which asks whether two guides land on top of
+    each other -- a question that does not care why a target was wanted. The
+    two used to be built in one pass under one condition, which quietly gave
+    the spacing constraint the coverage rule: DESIRED overlaps and any overlap
+    at a zero lower bound were invisible to it. See
+    :meth:`GuideAssessment.binding_sites`, which both this and
+    ``f_decide.distinct_site_ids`` now read.
+    """
     coverage: dict[str, float] = {}
-    sites: dict[str, int] = {}
     off: set[str] = set()
     for e in assessment.evidence:
         if e.target_class is TargetClass.REQUIRED and e.hit.target_id:
             tid = e.hit.target_id
             if benefit_lower(e.activity) > coverage.get(tid, 0.0):
                 coverage[tid] = benefit_lower(e.activity)
-                sites[tid] = e.hit.start
         elif not e.is_intended:
             off.add(e.locus_id)
-    return _Profile(coverage=coverage, off_loci=frozenset(off), sites=sites)
+    return _Profile(coverage=coverage, off_loci=frozenset(off),
+                    sites=assessment.binding_sites())
 
 
 def _objective(profiles: list[_Profile], weights: dict[str, float]) -> float:

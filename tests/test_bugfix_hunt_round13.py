@@ -470,5 +470,143 @@ class TestTheLedgerRecordsTheAbundanceEvidence(unittest.TestCase):
                 self.assertIs(record["detail"].get("build_verified"), False)
 
 
+class TestThePanelAsksTheSameQuestionAsTheReport(unittest.TestCase):
+    """``optimizer._profile`` and ``f_decide.distinct_site_ids`` disagreed.
+
+    ``f_decide``'s comment said outright that they agree: "Comparing binding
+    sites is also what ``optimizer._profile`` does when it enforces panel
+    spacing, so the ranked list and the panel selector now answer the same
+    question rather than two similar ones." They did not.
+
+    ``distinct_site_ids`` read every *intended* hit and recorded the site with
+    the highest calibrated lower bound. ``_profile`` read REQUIRED hits only,
+    and recorded a site only when that bound was strictly greater than zero,
+    because it built the spacing map and the coverage map in one pass under the
+    coverage map's condition. So the panel could hold two guides the report
+    beside it marked as one site, in two ways:
+
+    * an overlap on a DESIRED target was invisible to the selector;
+    * an overlap at a lower bound of exactly 0.0 was invisible too -- and
+      conformal intervals are clamped to [0, 1], so 0.0 is the ordinary lower
+      bound for a weak hit rather than an edge case.
+
+    Both break the optimizer's own promise that "a panel cannot be three
+    shifted copies of one site".
+    """
+
+    SPACER = "GCAUUGCUGUGGAGCUGAAGUC"
+
+    def _assessment(self, guide_id: str, sites) -> object:
+        """``sites``: (target_id, target_class, start, activity_lower)."""
+        from dataclasses import replace
+
+        from cas13guide.contract.enums import ReasonCode, Verdict
+        from cas13guide.models.evidence import (
+            Candidate,
+            GateResult,
+            GuideAssessment,
+            MetricVector,
+        )
+
+        evidence = []
+        for target_id, target_class, start, lower in sites:
+            one = make_evidence(  # noqa: F405
+                lower, min(1.0, lower + 0.3), guide_id=guide_id,
+                locus_id=target_id, target_id=target_id, target_class=target_class,
+            )
+            evidence.append(replace(one, hit=replace(one.hit, start=start)))
+        return GuideAssessment(
+            guide_id=guide_id,
+            candidate=Candidate(guide_id=guide_id, spacer=self.SPACER,
+                                source_target_id="t1", start=0),
+            qc=clean_qc(guide_id),  # noqa: F405
+            metrics=MetricVector(0.5, 0.0, 0.05, 0.05, 0.5, 1.0),
+            gate=GateResult(Verdict.PASS, (ReasonCode.CONSTRAINTS_SATISFIED,)),
+            evidence=tuple(evidence),
+        )
+
+    def test_a_desired_target_is_a_binding_site(self):
+        from cas13guide.contract.enums import TargetClass
+
+        assessment = self._assessment("g1", [("t2", TargetClass.DESIRED, 200, 0.6)])
+        self.assertEqual(assessment.binding_sites(), {"t2": 200})
+
+    def test_a_zero_lower_bound_is_still_a_binding_site(self):
+        """Conformal intervals are clamped to [0, 1], so this is the ordinary
+        value for a weak hit -- the condition that hid it was the coverage
+        map's, borrowed by the spacing map."""
+        from cas13guide.contract.enums import TargetClass
+
+        assessment = self._assessment("g1", [("t1", TargetClass.REQUIRED, 55, 0.0)])
+        self.assertEqual(assessment.binding_sites(), {"t1": 55})
+
+    def test_the_selector_and_the_report_read_one_rule(self):
+        """The structural invariant. Two derivations of one map is how these
+        drifted, so the test is that there is only one."""
+        from cas13guide.contract.enums import TargetClass
+        from cas13guide.pipeline.optimizer import _profile
+
+        assessment = self._assessment("g1", [
+            ("t1", TargetClass.REQUIRED, 55, 0.0),
+            ("t2", TargetClass.DESIRED, 200, 0.6),
+        ])
+        self.assertEqual(_profile(assessment).sites, assessment.binding_sites())
+
+    def test_two_guides_over_one_desired_site_are_not_compatible(self):
+        from cas13guide.contract.enums import TargetClass
+        from cas13guide.pipeline.optimizer import _compatible, _profile
+
+        first = _profile(self._assessment("g1", [
+            ("t1", TargetClass.REQUIRED, 55, 0.7),
+            ("t2", TargetClass.DESIRED, 200, 0.6)]))
+        second = _profile(self._assessment("g2", [
+            ("t1", TargetClass.REQUIRED, 300, 0.7),
+            ("t2", TargetClass.DESIRED, 205, 0.6)]))
+
+        # Far apart on the required target, five nucleotides apart on the
+        # desired one -- which is the case the selector could not see.
+        self.assertFalse(_compatible(second, [first], min_spacing=20,
+                                     max_shared_off=99))
+
+    def test_two_guides_over_one_zero_bound_site_are_not_compatible(self):
+        from cas13guide.contract.enums import TargetClass
+        from cas13guide.pipeline.optimizer import _compatible, _profile
+
+        first = _profile(self._assessment("g1", [
+            ("t1", TargetClass.REQUIRED, 55, 0.0)]))
+        second = _profile(self._assessment("g2", [
+            ("t1", TargetClass.REQUIRED, 58, 0.0)]))
+        self.assertFalse(_compatible(second, [first], min_spacing=20,
+                                     max_shared_off=99))
+
+    def test_guides_that_really_are_apart_stay_compatible(self):
+        """The constraint must still admit a panel. Widening what counts as a
+        site is only correct if it does not make every pair conflict."""
+        from cas13guide.contract.enums import TargetClass
+        from cas13guide.pipeline.optimizer import _compatible, _profile
+
+        first = _profile(self._assessment("g1", [
+            ("t1", TargetClass.REQUIRED, 55, 0.7),
+            ("t2", TargetClass.DESIRED, 200, 0.6)]))
+        second = _profile(self._assessment("g2", [
+            ("t1", TargetClass.REQUIRED, 300, 0.7),
+            ("t2", TargetClass.DESIRED, 400, 0.6)]))
+        self.assertTrue(_compatible(second, [first], min_spacing=20,
+                                    max_shared_off=99))
+
+    def test_coverage_is_still_a_required_only_question(self):
+        """The objective counts *required* targets covered. Widening the site
+        map must not leak DESIRED into the thing being maximised."""
+        from cas13guide.contract.enums import TargetClass
+        from cas13guide.pipeline.optimizer import _profile
+
+        profile = _profile(self._assessment("g1", [
+            ("t1", TargetClass.REQUIRED, 55, 0.7),
+            ("t2", TargetClass.DESIRED, 200, 0.6),
+        ]))
+        self.assertEqual(set(profile.coverage), {"t1"})
+        self.assertEqual(set(profile.sites), {"t1", "t2"})
+
+
 if __name__ == "__main__":
     unittest.main()

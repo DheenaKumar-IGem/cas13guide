@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..contract.enums import QCFlag, ReasonCode, ReviewTier, TargetClass, Universe, Verdict
-from ..metrics.bounds import Interval
+from ..metrics.bounds import Interval, benefit_lower
 from ..util.duplex import DuplexProfile
 
 
@@ -222,6 +222,55 @@ class GuideAssessment:
     #: off-target explorer did not list, under a validation plan that says
     #: "sequence the top off-target loci from the explorer table".
     context_evidence: tuple[PairEvidence, ...] = ()
+
+    def binding_sites(self) -> dict[str, int]:
+        """Where this guide binds, per intended target: one coordinate each.
+
+        Two places need this and they used to derive it separately.
+        ``f_decide.distinct_site_ids`` read every *intended* hit and took the
+        site with the highest calibrated lower bound; ``optimizer._profile``,
+        enforcing panel spacing, read REQUIRED hits only and recorded a site
+        only when that bound was strictly greater than zero. So the ranked list
+        and the panel selector answered two similar questions, under a comment
+        in ``f_decide`` claiming they answered one.
+
+        The gap had two halves, and both are reachable from an ordinary run:
+
+        * an overlap on a DESIRED target was invisible to the optimizer, so a
+          panel could hold two guides binding the same site of a desired
+          transcript while the report beside it marked them as one site;
+        * an overlap at a site whose lower bound is exactly 0.0 was invisible
+          too -- and conformal intervals are clamped to ``[0, 1]``, so 0.0 is
+          the *ordinary* lower bound for a weak hit, not an edge case.
+
+        Either one breaks the promise in the optimizer's own docstring: "two
+        guides tiling the same target must not sit within ``min_spacing`` nt of
+        each other, so a panel cannot be three shifted copies of one site."
+
+        Highest lower bound rather than lowest coordinate: filing a guide under
+        a site it barely binds compares it at a near-zero-activity coordinate
+        instead of its real one. At the shipped 4-mismatch wobble-aware
+        envelope a 22-mer picks up a second hit on its own transcript often
+        enough to matter -- 61 of 1650 guides on one 2 kb target -- and
+        measured, 3 of 68 marked rows became single-base shifts of a row
+        already listed, under the line saying shifted copies are hidden.
+
+        The tiled coordinate is the fallback, used only when a guide has no
+        intended evidence at all, which is then the only information there is.
+        """
+        sites: dict[str, int] = {}
+        best: dict[str, float] = {}
+        for evidence in self.evidence:
+            target_id = evidence.hit.target_id
+            if not evidence.is_intended or not target_id:
+                continue
+            lower = benefit_lower(evidence.activity)
+            if target_id not in best or lower > best[target_id]:
+                best[target_id] = lower
+                sites[target_id] = evidence.hit.start
+        if not sites:
+            return {self.candidate.source_target_id: self.candidate.start}
+        return sites
 
     @property
     def spacer(self) -> str:
