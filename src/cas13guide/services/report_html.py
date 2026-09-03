@@ -74,6 +74,7 @@ _OFF_TARGET_HEADINGS: tuple[tuple[str, str, str], ...] = (
     ("hazard", "Hazard", "UCB(activity) x UCB(expression) x biotype weight -- the quantity the metrics sum."),
     ("expression_unknown", "Expr?", "True when nothing measured this locus's abundance; the plan says to prioritise these."),
     ("ood", "OOD", "True when the bound behind this row is not certified for this regime."),
+    ("context", "Context", "Which evaluated world this hit was seen in. A hazard that exists only in a variant or haplotype still drove the metric and the verdict, and this table used to show the reference alone."),
 )
 
 _OFF_TARGET_COLUMNS: tuple[str, ...] = tuple(key for key, _l, _d in _OFF_TARGET_HEADINGS)
@@ -299,17 +300,45 @@ def render_report(
         )
     )
 
+    # The Signal column's text is a claim about *this* run. It said "the
+    # kinetic constants shipped by default are placeholders, so no absolute
+    # figure is offered" unconditionally -- including on a run that supplied
+    # measured constants, whose CSV carries `predicted_signal_nm` and whose own
+    # limitations correctly drop the placeholder warning. Three surfaces
+    # describing one run, one of them contradicting the other two.
+    has_absolute = any(row.get("predicted_signal_nm") is not None for row in ranked)
+    glossary_for_run = dict(SCORE_GLOSSARY)
+    columns = TABLE_COLUMNS
+    if has_absolute:
+        glossary_for_run["predicted_signal"] = (
+            "Signal",
+            "Relative predicted fluorescence from the collateral-cleavage "
+            "model, comparable within this run. This run supplied measured "
+            "kinetic constants, so the absolute figure is offered too -- see "
+            "nM beside it.",
+        )
+        glossary_for_run["predicted_signal_nm"] = (
+            "nM",
+            "Cleaved reporter in nanomolar, from measured constants. Present "
+            "only because this run supplied them; with the shipped "
+            "placeholders no absolute figure is offered, because real units "
+            "derived from placeholder rates would be a fabricated measurement "
+            "wearing a unit label.",
+        )
+        index = columns.index("predicted_signal")
+        columns = columns[: index + 1] + ("predicted_signal_nm",) + columns[index + 1 :]
+
     head = "".join(
-        f'<th title="{html.escape(SCORE_GLOSSARY.get(c, (c, ""))[1])}">'
-        f'{html.escape(SCORE_GLOSSARY.get(c, (c, ""))[0])}<span class="arrow"></span></th>'
-        for c in TABLE_COLUMNS
+        f'<th title="{html.escape(glossary_for_run.get(c, (c, ""))[1])}">'
+        f'{html.escape(glossary_for_run.get(c, (c, ""))[0])}<span class="arrow"></span></th>'
+        for c in columns
     )
 
     body_rows = []
     for entry in ranked:
         metrics = entry.get("metrics") or {}
         cells = []
-        for column in TABLE_COLUMNS:
+        for column in columns:
             value = entry.get(column, metrics.get(column))
             sort_value: Any = value
             attrs = ' class="seq"' if column == "spacer" else ""
@@ -381,10 +410,10 @@ def render_report(
     )
 
     glossary = "".join(
-        f"<dt>{html.escape(SCORE_GLOSSARY[c][0])}</dt>"
-        f"<dd>{html.escape(SCORE_GLOSSARY[c][1])}</dd>"
-        for c in TABLE_COLUMNS
-        if c in SCORE_GLOSSARY
+        f"<dt>{html.escape(glossary_for_run[c][0])}</dt>"
+        f"<dd>{html.escape(glossary_for_run[c][1])}</dd>"
+        for c in columns
+        if c in glossary_for_run
     )
 
     track_html = "".join(

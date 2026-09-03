@@ -54,6 +54,7 @@ def assess_guides(
                 metrics=metrics,
                 gate=result,
                 evidence=reference,
+                context_evidence=all_evidence,
             )
         )
     return assessments

@@ -343,11 +343,15 @@ class DesignReport:
 
 
 def _off_target_rows(assessments: list[GuideAssessment], limit: int = 50) -> tuple[dict, ...]:
-    rows: list[dict[str, Any]] = []
+    # One row per (guide, locus), carrying the WORST context -- which is what
+    # `worst_off_target` is a max over. `off_targets()` now spans every
+    # context, so a locus present in the reference and in two haplotypes would
+    # otherwise take three of the fifty rows to say one thing, and a table
+    # capped at fifty would fill with repeats of the same locus.
+    worst_row: dict[tuple[str, str], dict[str, Any]] = {}
     for a in assessments:
         for e in a.off_targets():
-            rows.append(
-                {
+            row = {
                     "guide_id": a.guide_id,
                     "locus": e.locus_id,
                     "gene": e.hit.gene,
@@ -364,9 +368,18 @@ def _off_target_rows(assessments: list[GuideAssessment], limit: int = 50) -> tup
                     "hazard": round(pair_hazard(e), 4),
                     "expression_unknown": e.expression_unknown,
                     "ood": e.ood,
-                }
-            )
-    rows.sort(key=lambda r: r["hazard"], reverse=True)
+                    # Which world this hit was seen in. A hazard that exists
+                    # only in a haplotype is still the number the gate acted
+                    # on, and a reader told to "sequence the top off-target
+                    # loci from the explorer table" needs to know which.
+                    "context": e.context,
+            }
+            key = (a.guide_id, e.locus_id)
+            previous = worst_row.get(key)
+            if previous is None or row["hazard"] > previous["hazard"]:
+                worst_row[key] = row
+
+    rows = sorted(worst_row.values(), key=lambda r: r["hazard"], reverse=True)
     return tuple(rows[:limit])
 
 

@@ -238,7 +238,11 @@ def _design(args: argparse.Namespace) -> int:
         # display limit emptied it says something false about the run, next to
         # exports that carry every one of those guides.
         print()
-        print(f"{len(shown)} guide(s) ranked, none displayed (--top "
+        # `all_rows`, not `shown`: `shown` has been through the distinct-site
+        # filter, so it counted 7 where the CSV this sentence points at held
+        # 223 -- and the count changed with `--all-sites`, a display flag, in
+        # the one message whose job is to say what the run produced.
+        print(f"{len(all_rows)} guide(s) ranked, none displayed (--top "
               f"{args.top}). The exports carry them all.")
     else:
         print()

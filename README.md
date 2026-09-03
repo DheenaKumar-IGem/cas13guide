@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1063 tests, run under `unittest` or `pytest`, and 91% line coverage.
+1083 tests, run under `unittest` or `pytest`, and 91% line coverage.
 
 Eight claims this section makes are **measured rather than asserted**, each by a
 procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
@@ -779,7 +779,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1063 tests
+pytest                                                   # 1083 tests
 python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
@@ -1021,6 +1021,32 @@ The defects worth naming, because they were live rather than hypothetical:
 | `record_wetlab_result` dropped the group label | Zero group labels switches the `MIN_STRATUM_GROUPS` check off, so wet-lab feedback from one transcript came back looking certified | `test_benchmark.py` |
 | `run_search` kept the *last* bound, not the weakest | A per-query heuristic bound would be overwritten by a later exhaustive one | `test_search.py` |
 | `profile_duplex("", "")` died in the CIGAR builder | An `IndexError` that named neither the caller nor the cause | `test_duplex.py` |
+
+### A tenth pass, run as eight parallel hunts
+
+Eight finders over eight dimensions, each finding put to two skeptics told to
+refute it by default. Twenty-three candidates, fifteen refuted, **eight
+confirmed** — and three of the eight were regressions introduced by the round
+immediately before it, which is both the argument for adversarial verification
+and its limit: a pass that only re-reads its own diff finds what it already
+expects.
+
+The eight share a shape. Every one is a **disagreement between two descriptions
+of the same run** — a note saying a record was ignored beside a metric computed
+from it, a table omitting the hazard the verdict rested on, a glossary denying a
+figure the CSV carries, a count that moves with a display flag. Not one is a
+wrong formula. The arithmetic here has been checked to death; what had not been
+checked was whether the package's own accounts of itself agree.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| A `--background` record the run said it ignored was searched anyway — but only with `--variants` | The collision guard filtered the reference world and the **unfiltered** list went to the variant contexts, where the name no longer collides. Adding `--variants` to an otherwise identical request took `worst_off_target` from 0.000 to **0.571** while the note kept saying the copy was ignored. A background corpus pulled from the same annotation routinely contains the target's own id | `test_bugfix_hunt_round10.py` |
+| A guide could FAIL for a hazard the report never displayed | `worst_off_target` is a max across contexts; the off-target explorer read the reference alone. A hit living only in a haplotype drove the metric and the verdict and appeared in no row — under a validation plan that says "sequence the top off-target loci from the explorer table". Measured: 18 guides judged on a hazard, **0 rows** | `test_bugfix_hunt_round10.py` |
+| A trained model was asked a question its domain had already refused | `evidence_for_hit` computed `in_domain`, called `predict()` anyway, and discarded the result three lines later. Harmless for the built-in heuristic; a trained model's FeatureSpec is fixed at the screen's spacer length, so fitting at 22 nt and designing at 23 nt — **both canonical for RfxCas13d** — crashed the run on a prediction nothing would read | `test_bugfix_hunt_round10.py` |
+| An unreadable input path escaped as a traceback and exit 1 | `read_fasta` caught only `UnicodeDecodeError`. A tab-completed `--fasta data/` gave a stack trace and the status `design --help` documents as "the run completed and nothing survived the gate" — so a wrapper read a typo as a legitimate empty result | `test_bugfix_hunt_round10.py` |
+| `cas13guide demo` dropped the CRITICAL that qualifies every number it prints | `limitations_for_run` reads `calibration.synthetic`; the design path sets it and the demo's own stand-in never did. The demo printed three of its four CRITICALs, omitting the one saying the calibration is synthetic and every PASS therefore exercisable rather than earned — from the terminal **and** from the `report.json` it writes. The commit that added that section had named this exact caveat as the thing that was missing | `test_bugfix_hunt_round10.py` |
+| `--top 0` reported a count from the display list | It said "N guide(s) ranked … the exports carry them all" while pointing at a CSV holding a different number, and N moved with `--all-sites` — a display flag deciding a stated fact about the run, days after a sibling fix stopped one deciding the exit status | `test_bugfix_hunt_round10.py` |
+| The HTML denied an absolute figure the same run's CSV carried | The Signal glossary was a module constant, so it told every reader "the constants shipped by default are placeholders, so no absolute figure is offered" — including on a run that supplied measured constants, whose CSV carries `predicted_signal_nm` and whose limitations correctly drop the placeholder warning | `test_bugfix_hunt_round10.py` |
 
 ### What came after the passes
 

@@ -208,7 +208,20 @@ class GuideAssessment:
     qc: QCResult
     metrics: MetricVector
     gate: GateResult
+    #: The **reference** context's evidence. Deliberately one context: a
+    #: guide's site coordinate is a position on the reference, and averaging
+    #: that across haplotypes would be meaningless.
     evidence: tuple[PairEvidence, ...] = ()
+    #: Every context's evidence, which is what the metrics are aggregated over
+    #: and what the gate was handed.
+    #:
+    #: Both exist because they answer different questions. `worst_off_target`
+    #: is a max across contexts, so a hazard living only in a variant world
+    #: drove the metric and the verdict while `off_targets()` -- reading the
+    #: reference alone -- showed nothing: a guide could FAIL for a hit the
+    #: off-target explorer did not list, under a validation plan that says
+    #: "sequence the top off-target loci from the explorer table".
+    context_evidence: tuple[PairEvidence, ...] = ()
 
     @property
     def spacer(self) -> str:
@@ -219,4 +232,10 @@ class GuideAssessment:
         return self.gate.verdict is Verdict.PASS
 
     def off_targets(self) -> tuple[PairEvidence, ...]:
-        return tuple(e for e in self.evidence if not e.is_intended)
+        """Every off-target hit behind this guide's hazard, in any context.
+
+        Falls back to the reference evidence for an assessment built without
+        the full set, so an older caller keeps working.
+        """
+        source = self.context_evidence or self.evidence
+        return tuple(e for e in source if not e.is_intended)

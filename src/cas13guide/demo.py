@@ -88,9 +88,28 @@ def build_world() -> tuple[Transcriptome, Transcriptome, dict[str, str]]:
     return reference, variant, {"TGT1": "t_tgt"}
 
 
+#: What generates the stand-in below. Named here so the ledger and the
+#: limitation both read it from one place.
+_SYNTHETIC_SOURCE = {
+    "kind": "synthetic",
+    "seed": 11,
+    "n_per_stratum": 120,
+    "noise_sd": 0.13,
+}
+
+
 def seed_calibration(spec: ResolvedDesignSpec) -> CalibrationService:
     """Stand in for held-out tiling-screen data."""
     cs = CalibrationService()
+    # Marked, not merely described. `limitations.py` reads this flag to decide
+    # whether to raise the CRITICAL that every conformal interval here rests on
+    # generated data -- and `services/workflow.seed_calibration` sets it while
+    # this one did not, so the demo printed three of the four CRITICALs that
+    # apply to it and dropped the one that qualifies every number on the page.
+    # The `source` mapping is the same fact for the provenance ledger, which
+    # recorded this calibration as "unstated" for the same reason.
+    cs.synthetic = True
+    cs.source = dict(_SYNTHETIC_SOURCE)
     effector = spec.profile.effector.value
     assay = spec.profile.assay.value
     # Strata are error regimes (mismatch depth), not intent labels.

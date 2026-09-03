@@ -250,6 +250,18 @@ def read_fasta(path: str | Path) -> list[SequenceRecord]:
             f"{path.name} is not readable as text -- is it a compressed or "
             "binary file?"
         ) from exc
+    except OSError as exc:
+        # Everything else the filesystem can say: a directory where a file was
+        # meant (a tab-completed `--fasta data/`), a file the user cannot read,
+        # a broken symlink. Only UnicodeDecodeError was caught, so these
+        # escaped run_request as a raw traceback and exit 1 -- the status
+        # `design --help` documents as "the run completed and nothing survived
+        # the gate", which a wrapper script reads as an empty but valid result.
+        # This module's own docstring says malformed input "has to produce a
+        # message that says what is wrong and where, not a stack trace".
+        raise SequenceInputError(
+            f"cannot read {path}: {exc.strerror or exc}"
+        ) from exc
     return parse_fasta(text)
 
 

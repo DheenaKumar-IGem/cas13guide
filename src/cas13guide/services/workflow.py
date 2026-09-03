@@ -536,6 +536,16 @@ def run_request(request: DesignRequest) -> DesignOutcome:
     # export header -- a false statement outliving the session.
     target_names = {record.name for record in records}
     seen_background: set[str] = set()
+    #: The background records this run actually accepted. `background_loci` is
+    #: everything the file held, including the records rejected below -- and it
+    #: was the list handed to `variant_contexts`, so a record dropped from the
+    #: reference world for colliding with a target's name was still added to
+    #: every *variant* world, where the name does not collide. The run printed
+    #: "the background copy ignored" and then searched the target against it:
+    #: adding `--variants` to an otherwise identical request took
+    #: worst_off_target from 0.000 to 0.571, with the note still saying
+    #: otherwise. The filtered list is what the contexts get.
+    accepted_background: list[Locus] = []
     for locus in background_loci:
         if locus.locus_id in seen_background:
             notes.append(
@@ -563,6 +573,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
             )
             continue
         world.add(locus)
+        accepted_background.append(locus)
 
     reference_index = _reference_index(request, world)
     contexts = [
@@ -621,7 +632,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
             contexts = variant_contexts(
                 combined, ALL_UNIVERSES, target_id=records[0].name,
                 biotype=Universe.NCRNA, expression=request.expression,
-                background=background_loci, extra_targets=records[1:],
+                background=accepted_background, extra_targets=records[1:],
                 index_for=index_for,
             )
         except ValueError as exc:

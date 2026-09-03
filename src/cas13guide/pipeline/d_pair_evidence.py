@@ -81,14 +81,24 @@ def evidence_for_hit(
     in_domain = registry.activity.domain.supports(
         spec.profile.effector, len(spacer), hit.duplex.n_mismatch
     )
-    prediction = registry.activity.predict(spacer, hit.duplex, model_accessibility)
-
     stratum = _stratum_for(spec, hit)
-    activity = calibration.interval(prediction, stratum, spec.thresholds.alpha)
+
     if not in_domain:
-        # Model domain violation is a stronger statement than a missing
-        # calibration stratum: refuse to narrow at all.
+        # Do not ask a model a question it has told us it cannot answer. The
+        # domain check ran here and `predict()` was called anyway, its result
+        # thrown away three lines later -- harmless for the built-in heuristic,
+        # fatal for a trained one: `TrainedActivityModel.predict` delegates to
+        # a FeatureSpec fixed at the screen's spacer length and raises
+        # ValueError for any other, so fitting on a 22 nt screen and designing
+        # at 23 nt -- both canonical for RfxCas13d -- crashed the run on a
+        # prediction nothing was going to read.
+        #
+        # A domain violation is a stronger statement than a missing calibration
+        # stratum: refuse to narrow at all.
         activity = Interval.unknown(stratum=f"{stratum}->model-out-of-domain")
+    else:
+        prediction = registry.activity.predict(spacer, hit.duplex, model_accessibility)
+        activity = calibration.interval(prediction, stratum, spec.thresholds.alpha)
 
     tpm = expression.expression_tpm(hit.locus_id)
     if tpm is None and locus is not None:
