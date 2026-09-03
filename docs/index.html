@@ -27,7 +27,7 @@
   --paper-2:#fdfbf7;
   --ink:#181613;
   --ink-2:#4d4941;
-  --ink-3:#736d61;
+  --ink-3:#655f54;
   --rule:#ddd7cb;
   --rule-2:#eae5db;
   --accent:#1a4c86;
@@ -305,6 +305,7 @@ table.verify td{
 }
 table.verify td:last-child,table.verify th:last-child{padding-right:0}
 td.cmd{white-space:nowrap;width:1%}
+.cmd-scroll{display:inline}
 td.cmd code{font-family:var(--mono);font-size:.83rem;color:var(--ink)}
 td.est{color:var(--ink-2);line-height:1.5}
 button.copy{
@@ -319,7 +320,13 @@ button.copy[data-done="1"]{color:var(--accent);border-color:var(--accent)}
   table.verify thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
   table.verify tr{padding:.95rem 0;border-bottom:1px solid var(--rule-2)}
   table.verify td{border:0;padding:0}
-  td.cmd{overflow-x:auto;white-space:nowrap}
+  /* The command scrolls; the button does not. It used to be appended
+     inside the scrolling cell, so on the three longest commands it sat past
+     the right edge at 375px and the one-tap affordance quietly stopped
+     working for exactly the names most error-prone to type by hand. */
+  td.cmd{display:flex;align-items:baseline;gap:.65rem;white-space:normal}
+  .cmd-scroll{display:block;overflow-x:auto;white-space:nowrap;flex:1 1 auto;min-width:0}
+  button.copy{margin-left:0;flex:0 0 auto}
   td.est{margin-top:.3rem}
 }
 
@@ -630,31 +637,31 @@ site    3' AACUACGGUUCAAGGCGCUAAG 5'</pre>
       </thead>
       <tbody>
         <tr>
-          <td class="cmd"><code>pytest</code></td>
+          <td class="cmd"><span class="cmd-scroll"><code>pytest</code></span></td>
           <td class="est">1,157 tests</td>
         </tr>
         <tr>
-          <td class="cmd"><code>python examples/verify_mutation_coverage.py</code></td>
+          <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_mutation_coverage.py</code></span></td>
           <td class="est">32 semantic mutations, 32 caught</td>
         </tr>
         <tr>
-          <td class="cmd"><code>python examples/verify_vocabulary_coverage.py</code></td>
+          <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_vocabulary_coverage.py</code></span></td>
           <td class="est">every verdict the tool can reach is reached by a test</td>
         </tr>
         <tr>
-          <td class="cmd"><code>python examples/verify_output_against_input.py</code></td>
+          <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_output_against_input.py</code></span></td>
           <td class="est">every exported guide re-derived from the input</td>
         </tr>
         <tr>
-          <td class="cmd"><code>python examples/verify_the_maths_against_a_referent.py</code></td>
+          <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_the_maths_against_a_referent.py</code></span></td>
           <td class="est">the arithmetic checked against closed forms, not against itself</td>
         </tr>
         <tr>
-          <td class="cmd"><code>python examples/verify_nothing_is_computed_for_nobody.py</code></td>
+          <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_nothing_is_computed_for_nobody.py</code></span></td>
           <td class="est">no value computed that nothing reads</td>
         </tr>
         <tr>
-          <td class="cmd"><code>python -m mypy</code></td>
+          <td class="cmd"><span class="cmd-scroll"><code>python -m mypy</code></span></td>
           <td class="est">typed, and the marker is honest</td>
         </tr>
       </tbody>
@@ -767,6 +774,8 @@ site    3' AACUACGGUUCAAGGCGCUAAG 5'</pre>
         b.removeAttribute('data-done');
       }, 1600);
     });
+    // Appended to the cell, deliberately outside `.cmd-scroll`: on mobile
+    // that span is the scrolling box, and a button inside it scrolls away.
     cell.appendChild(b);
   });
 })();
