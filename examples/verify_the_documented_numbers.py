@@ -143,6 +143,36 @@ def page_worked_example() -> dict[str, str]:
     return {normalise(k).lower(): normalise(v) for k, v in pairs}
 
 
+#: Enough to count a verification block. Written out because the README writes
+#: the number as a word, and a word is what a reader checks against.
+NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+}
+
+
+def claimed_and_actual_procedures() -> tuple[int | None, int]:
+    """"N claims ... each by a procedure anyone can re-run" against the block.
+
+    The sentence said "Nine" from the commit that introduced it, when the block
+    below it held eight commands. Nothing compared the two, so it stayed wrong
+    until a ninth command was added for an unrelated reason and made it
+    accidentally true. A number that becomes correct by coincidence was never
+    a claim; this makes it one.
+    """
+    readme = README.read_text(encoding="utf-8")
+    match = re.search(r"^(\w+) claims this section makes", readme, re.M)
+    claimed = NUMBER_WORDS.get(match.group(1).lower()) if match else None
+
+    start = readme.index("claims this section makes")
+    block = readme[start:]
+    block = block[block.index("```bash") + 7:]
+    block = block[: block.index("```")]
+    actual = len(re.findall(r"^(?:pytest|python) ", block, re.M))
+    return claimed, actual
+
+
 def regression_class_count() -> int:
     """Defects with a regression test class named for them.
 
@@ -219,7 +249,16 @@ def main() -> int:
         if not check(f'"{label}"', matched, detail):
             failures.append("a quoted limitation is not what the tool prints")
 
-    # ---- 3. the defect count is a count of something -------------------
+    # ---- 3. the verification block is as long as it says -----------------
+    print()
+    print("the number of procedures the README says it offers")
+    claimed, actual = claimed_and_actual_procedures()
+    if not check(f"the prose count matches the block ({actual} commands)",
+                 claimed == actual,
+                 f"prose says {claimed}, the block lists {actual}"):
+        failures.append("the README miscounts its own verification commands")
+
+    # ---- 4. the defect count is a count of something -------------------
     print()
     print("the defect count the page closes on")
     stated = re.search(r"have fixed (\d+) defects", PAGE.read_text(encoding="utf-8"))
@@ -230,7 +269,7 @@ def main() -> int:
                  f"the tree holds {counted}"):
         failures.append("the stated defect count is not what the tree holds")
 
-    # ---- 4. the worked example re-derives --------------------------------
+    # ---- 5. the worked example re-derives --------------------------------
     print()
     print("the worked example the page invites a reader to check by hand")
     from cas13guide.util.seq import revcomp
