@@ -82,6 +82,35 @@ class TestTheFlipRateIsStatedConsistently(unittest.TestCase):
                          "; ".join(f"{k}={v}" for k, v in sorted(stated.items())))
 
 
+class TestTheMutationCountIsStatedConsistently(unittest.TestCase):
+    """Three figures describe the size of the mutation sweep, and one of them
+    is a denominator rather than a headline -- "10 of the 32 are caught only by
+    the full run". Adding a mutation moves all three, and the denominator is
+    the one a writer forgets, because it does not look like the number they
+    came to change.
+
+    Whether every mutation is *caught* is the sweep's own result and takes
+    minutes to establish, so it is not asserted here; only that no document
+    claims more caught than the sweep carries.
+    """
+
+    def test_every_stated_total_is_the_size_of_the_set(self):
+        size = documents.mutation_set_size()
+        stated = documents.stated_mutation_counts()
+        totals = {k: v for k, v in stated.items() if "caught" not in k}
+        self.assertTrue(totals, f"no total found among {sorted(stated)}")
+        self.assertEqual(set(totals.values()), {size},
+                         "; ".join(f"{k}={v}" for k, v in sorted(totals.items())))
+
+    def test_no_document_claims_more_caught_than_exist(self):
+        size = documents.mutation_set_size()
+        caught = {k: v for k, v in documents.stated_mutation_counts().items()
+                  if "caught" in k}
+        for where, value in sorted(caught.items()):
+            with self.subTest(where=where):
+                self.assertLessEqual(value, size)
+
+
 class TestThePagesFigureIsACountOfSomething(unittest.TestCase):
     """It said "about eighty defects", which nobody could check either way."""
 

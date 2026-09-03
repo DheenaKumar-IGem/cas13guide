@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1183 tests, run under `unittest` or `pytest` — both discover the same set —
+1204 tests, run under `unittest` or `pytest` — both discover the same set —
 and 91% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -783,8 +783,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1183 tests
-python examples/verify_mutation_coverage.py              # 32 mutations, 32 caught
+pytest                                                   # 1204 tests
+python examples/verify_mutation_coverage.py              # 38 mutations, 38 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -831,12 +831,47 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole — 10 of the 32 are caught
-only by the full run, so a screening subset would have reported ten holes that
-are not there. It mutates the LCB/UCB asymmetry, the six named metrics, every
-FAIL branch in the gate, the QC checks, the panel constraints, the candidate
-budget, the out-of-domain substitution, the conformal quantile, the search-bound
-algebra, the FR6.3 posterior, the kinetics stability guard, and the wobble rule.
+against the **whole** suite before being called a hole — Two of the 38 are
+caught only by the full run, so a screening subset would have reported that many
+holes that are not there. It mutates the LCB/UCB asymmetry, the six named
+metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
+the candidate budget, the out-of-domain substitution, the conformal quantile,
+the search-bound algebra, the FR6.3 posterior and its Fréchet floor, the
+kinetics stability guard, the wobble rule, the expression bound, the PFS
+exemption for an unread base, the spacer:DR pairing rule with its threshold, the
+shared binding-site rule, and the world digest.
+
+**And it was wrong about itself until recently, which is worth reading before
+believing the paragraph above.** The sweep mutates a *copy* of the tree, and the
+copy held `src`, `tests` and `pyproject.toml` — while eight tests read
+`README.md` or `examples/`. So the copied tree failed six tests with two
+collection errors before any mutation was applied. Its logic is: screen a
+mutation, and if it survives, confirm against the whole suite — green means
+hole, red means caught. With the baseline permanently red the whole-suite run
+was never green, so `holes` could never be non-empty. "0 holes" was true by
+construction rather than by measurement, and the sweep was **structurally
+incapable of reporting one**.
+
+Ten mutations had taken that path. With the copy fixed, eight of them were
+genuine holes — the gate's coverage boundary, the discrimination margin's
+`max` over forbidden hits, the desired-target weighting, the panel's lower-bound
+read, the candidate budget's remainder, the conformal group-adequacy minimum,
+the coverage slack, and the Fréchet floor. Each could have been reverted without
+a single test noticing. Most were the same failure of imagination: a fixture
+with one element, where `max` and `min` agree; a weight of 1.0, where dropping
+the weight changes nothing; a threshold exercised far from the boundary that
+moved. They are pinned in `tests/test_mutation_holes.py`, each verified to fail
+against the mutation it closes.
+
+Three smaller repairs came with it. A mutation whose anchor no longer matches is
+now a **failure** rather than a silent skip — `distinct-sites-best-becomes-worst`
+had stopped running when its code moved and the sweep still reported success.
+An anchor that matches more than once is a failure too: `wobble-rule-dropped`
+renamed a constant that appears twice in its module, which is a *consistent*
+rename and therefore a no-op, and it only ever passed because two other modules
+import that name and the suite died of an `ImportError`. And the sweep now
+refuses to run at all from a red baseline, which is what surfaced the original
+problem.
 
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the

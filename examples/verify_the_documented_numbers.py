@@ -127,6 +127,58 @@ FLIP_RATE_PATTERN = re.compile(
 SUPERSEDED_REPEAT = "CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU"
 
 
+def mutation_set_size() -> int:
+    """How many mutations the sweep actually carries, from the sweep itself."""
+    sys.path.insert(0, str(ROOT / "examples"))
+    import verify_mutation_coverage
+
+    return len(verify_mutation_coverage.MUTATIONS)
+
+
+def stated_mutation_counts() -> dict[str, int]:
+    """Every figure in the documents that is a count of the mutation set.
+
+    Three of them, and one is a denominator rather than a headline -- "10 of
+    the 32 are caught only by the full run". Adding a mutation moves all three,
+    and the denominator is the one a writer forgets, because it does not look
+    like the number they came to change.
+    """
+    readme = README.read_text(encoding="utf-8")
+    page = PAGE.read_text(encoding="utf-8")
+    found: dict[str, int] = {}
+    block = re.search(r"verify_mutation_coverage\.py\s+#\s*(\d+) mutations,\s*(\d+) caught",
+                      readme)
+    if block:
+        found["README command block (total)"] = int(block.group(1))
+        found["README command block (caught)"] = int(block.group(2))
+    denominator = re.search(r"of the (\d+) are caught\s*\n?\s*only by the full run",
+                            " ".join(readme.split()))
+    if denominator is None:
+        denominator = re.search(r"of the (\d+) are caught only by the full run",
+                                " ".join(readme.split()))
+    if denominator:
+        found["README full-run denominator"] = int(denominator.group(1))
+    cell = re.search(r"(\d+) semantic mutations,\s*(\d+) caught", page)
+    if cell:
+        found["landing page (total)"] = int(cell.group(1))
+        found["landing page (caught)"] = int(cell.group(2))
+
+    # The sweep's own docstring, which is the source a reader reaches when they
+    # want to know whether to believe the sweep. It carried a fourth number:
+    # 33, while the README said 32 twice and the page said 32, and the list
+    # itself held 32. Nothing compared any of them.
+    sweep = (ROOT / "examples" / "verify_mutation_coverage.py").read_text(encoding="utf-8")
+    header = sweep[: sweep.index('"""', 3) + 3]
+    measured = re.search(r"Last measured:\s*[*]*(\d+) mutations,\s*(\d+) caught", header)
+    if measured:
+        found["sweep docstring (total)"] = int(measured.group(1))
+        found["sweep docstring (caught)"] = int(measured.group(2))
+    denominator = re.search(r"of the (\d+) are caught", " ".join(header.split()))
+    if denominator:
+        found["sweep docstring denominator"] = int(denominator.group(1))
+    return found
+
+
 def stated_flip_rates() -> dict[str, float]:
     """Every place that states how often the wrong repeat moved a verdict."""
     found: dict[str, float] = {}
@@ -315,7 +367,28 @@ def main() -> int:
                  f"prose says {claimed}, the block lists {actual}"):
         failures.append("the README miscounts its own verification commands")
 
-    # ---- 4. the most-repeated figure in the repository -------------------
+    # ---- 4. the size of the mutation set -------------------------------
+    print()
+    print("the mutation sweep's size, wherever the documents state it")
+    size = mutation_set_size()
+    stated_mutations = stated_mutation_counts()
+    for where, value in sorted(stated_mutations.items()):
+        print(f"          {where}: {value}")
+    totals = {k: v for k, v in stated_mutations.items() if "caught" not in k}
+    if not check(f"every stated total is the set's size ({size})",
+                 bool(totals) and set(totals.values()) == {size},
+                 f"documents say {sorted(set(totals.values()))}, the sweep carries {size}"):
+        failures.append("the documented mutation count is stale")
+    caught = {k: v for k, v in stated_mutations.items() if "caught" in k}
+    # Whether every mutation is *caught* is the sweep's own result, not
+    # something this file can assert -- it only checks the claim is not larger
+    # than the set it is about.
+    if not check("and no more are claimed caught than exist",
+                 all(v <= size for v in caught.values()),
+                 f"claims {sorted(set(caught.values()))} caught of {size}"):
+        failures.append("more mutations are claimed caught than the sweep carries")
+
+    # ---- 5. the most-repeated figure in the repository -------------------
     print()
     print("the DR-interaction flip rate, stated in four files")
     stated = stated_flip_rates()
@@ -339,7 +412,7 @@ def main() -> int:
                      f"documents say {claimed}%, re-measured {measured:.2f}%"):
             failures.append("the stated flip rate is stale")
 
-    # ---- 5. the defect count is a count of something -------------------
+    # ---- 6. the defect count is a count of something -------------------
     print()
     print("the defect count the page closes on")
     stated = re.search(r"have fixed (\d+) defects", PAGE.read_text(encoding="utf-8"))
@@ -350,7 +423,7 @@ def main() -> int:
                  f"the tree holds {counted}"):
         failures.append("the stated defect count is not what the tree holds")
 
-    # ---- 6. the worked example re-derives --------------------------------
+    # ---- 7. the worked example re-derives --------------------------------
     print()
     print("the worked example the page invites a reader to check by hand")
     from cas13guide.util.seq import revcomp
