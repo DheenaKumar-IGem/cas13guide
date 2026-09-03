@@ -280,5 +280,195 @@ class TestTheThresholdIsCalibratedToThePairingRule(unittest.TestCase):
         self.assertIn("MAX_SELF_STEM", source)
 
 
+class TestProvenanceIdentifiesTheWorldItSearched(unittest.TestCase):
+    """The ledger could not tell two off-target worlds apart.
+
+    The only entry naming the sequence world recorded
+    ``ctx.transcriptome.version``, which is ``f"{build}/{annotation}"`` built
+    from ``--genome-build``/``--annotation``. Those default to GRCh38/v44 and
+    are never compared against the file ``--background`` points at. So the
+    world was identified by a caller-asserted string that is constant by
+    default, plus a locus count -- and two different corpora holding the same
+    number of records produced byte-identical provenance, under a genome build
+    nothing had checked, republished verbatim in the HTML report and
+    report.json.
+
+    "A guide is specific *against what you gave it*" is the tool's central
+    caveat. The record of what you gave it was a number.
+    """
+
+    def _world(self, pairs, expression=None):
+        from cas13guide.contract.enums import Universe
+        from cas13guide.services.transcriptome import Locus, Transcriptome
+
+        world = Transcriptome("GRCh38", "v44")
+        for locus_id, sequence in pairs:
+            world.add(Locus(locus_id, sequence, Universe.CODING,
+                            gene=locus_id, expression=expression))
+        return world
+
+    PAIRS = [("L0", "ACGUACGUACGUACGUACGU"), ("L1", "GGGGCCCCAAAAUUUUGGGG")]
+    OTHER = [("L0", "UUUUAAAACCCCGGGGUUUU"), ("L1", "AGAGAGAGCUCUCUCUAGAG")]
+
+    def test_two_corpora_of_the_same_size_are_distinguishable(self):
+        """The defect exactly: same count, different sequences."""
+        one, two = self._world(self.PAIRS), self._world(self.OTHER)
+        self.assertEqual(len(one), len(two))
+        self.assertEqual(one.version, two.version)
+        self.assertNotEqual(one.digest, two.digest)
+
+    def test_load_order_does_not_change_the_digest(self):
+        """Otherwise the same corpus would look like two, and a digest that
+        changes for no reason is one nobody can use."""
+        self.assertEqual(
+            self._world(self.PAIRS).digest,
+            self._world(list(reversed(self.PAIRS))).digest,
+        )
+
+    def test_abundance_is_part_of_the_world(self):
+        """The hazard product reads expression, so two worlds that differ only
+        in abundance give different answers and must not share an identity."""
+        self.assertNotEqual(
+            self._world(self.PAIRS).digest,
+            self._world(self.PAIRS, expression=12.0).digest,
+        )
+
+    def test_an_added_locus_changes_it(self):
+        extra = self.PAIRS + [("L2", "ACGUACGUACGUACGUACGU")]
+        self.assertNotEqual(self._world(self.PAIRS).digest,
+                            self._world(extra).digest)
+
+    def test_the_asserted_build_is_still_recorded_as_asserted(self):
+        """The build is what the caller said; the digest is what was loaded.
+        Both are kept, and only one of them is a measurement."""
+        world = self._world(self.PAIRS)
+        self.assertEqual(world.version, "GRCh38/v44")
+        self.assertNotEqual(world.version, world.digest)
+
+
+class TestTheExportHeaderSaysWhatWasSearched(unittest.TestCase):
+    """``provenance_lines`` filtered the ledger to model/calibration/search.
+
+    So the ``transcriptome`` records -- the only entries naming the world, its
+    locus count and which index ran over it -- were silently dropped, and even
+    where the ledger *could* distinguish two runs the exported header could
+    not. A CSV outlives the session that made it, and this is the file whose
+    whole job is to say how it was produced.
+
+    ``exclusion`` records were dropped the same way, and ``provenance.py``'s
+    own docstring says a silent exclusion is the bug.
+    """
+
+    def _report(self, digest: str, loci: int = 5) -> dict:
+        return {
+            "spec_fingerprint": "abc123",
+            "provenance": {"records": [
+                {"kind": "model", "name": "activity", "version": "act/v1",
+                 "detail": {}},
+                {"kind": "transcriptome", "name": "reference",
+                 "version": "GRCh38/v44",
+                 "detail": {"loci": loci, "digest": digest,
+                            "expression": "expression/static/v1",
+                            "build_verified": False,
+                            "index": "index/exhaustive-scan/v1",
+                            "index_choice": "scan beats FM here"}},
+                {"kind": "exclusion", "name": "collateral cleavage",
+                 "version": "-", "detail": {"why": "not predicted for this assay"}},
+            ]},
+        }
+
+    def _lines(self, *args, **kwargs) -> list[str]:
+        from cas13guide.services.fasta import provenance_lines
+
+        return provenance_lines(self._report(*args, **kwargs))
+
+    def test_the_header_names_the_world(self):
+        joined = "\n".join(self._lines("93ff8484e3b0"))
+        self.assertIn("transcriptome: reference = GRCh38/v44", joined)
+
+    def test_it_carries_the_digest_that_tells_two_worlds_apart(self):
+        joined = "\n".join(self._lines("93ff8484e3b0"))
+        self.assertIn("93ff8484e3b0", joined)
+
+    def test_two_worlds_give_two_different_headers(self):
+        """The point of the whole fix, at the surface a user keeps."""
+        self.assertNotEqual(self._lines("93ff8484e3b0"), self._lines("c637e04d9095"))
+
+    def test_it_names_the_expression_source(self):
+        self.assertIn("expression/static/v1", "\n".join(self._lines("d")))
+
+    def test_a_deliberate_exclusion_travels_with_the_file(self):
+        joined = "\n".join(self._lines("d"))
+        self.assertIn("excluded: collateral cleavage", joined)
+        self.assertIn("not predicted for this assay", joined)
+
+    def test_the_model_lines_are_unchanged(self):
+        self.assertIn("model: activity = act/v1", "\n".join(self._lines("d")))
+
+    def test_no_line_carries_an_embedded_newline(self):
+        """The header is comment lines a parser skips by prefix, so a newline
+        inside a value puts the rest on an unprefixed line and it reads as
+        data. Adding record kinds must not reintroduce that."""
+        for line in self._lines("93ff8484e3b0"):
+            with self.subTest(line=line[:40]):
+                self.assertNotIn("\n", line)
+
+
+class TestTheLedgerRecordsTheAbundanceEvidence(unittest.TestCase):
+    """``ExpressionSource.version`` was declared and never read.
+
+    ``ModelRegistry.versions()`` has no expression slot and the per-context
+    record wrote transcriptome version, locus count, index version and index
+    rationale -- not the expression source. Every other seam is recorded:
+    activity, accessibility, energy, kinetics, calibration and its source dict,
+    hazard weights, qc_self_fold, the search bound. This was the one input to
+    the hazard product that left no trace, against provenance.py's opening
+    claim that every parameter is recorded so a result can be reproduced and
+    diffed.
+    """
+
+    TARGET = (
+        "GGACAUCGAAUCGCGGAACUUGGCAUCAAGCUAGCUAGGCAUCGAUCGAUCAGCUAGCAUCGAUCGGAUCC"
+        "AUGGAUUCCAGGCACUUCUCGAUCAUAGGACUCGGUAAUGCCAUGAGUCGAUGGACUUCAGUGCCAUCGAU"
+    )
+
+    def _records(self):
+        import pathlib
+        import tempfile
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        with tempfile.TemporaryDirectory() as directory:
+            fasta = pathlib.Path(directory) / "t.fa"
+            fasta.write_text(f">T1\n{self.TARGET}\n", encoding="utf-8")
+            outcome = run_request(DesignRequest(
+                fasta_path=str(fasta), task="knockdown",
+                assay="cell_culture_knockdown", effector="RfxCas13d",
+                use_structure=False, use_signal=False,
+            ))
+        return [record for record in outcome.report["provenance"]["records"]
+                if record.get("kind") == "transcriptome"]
+
+    def test_the_expression_source_version_is_recorded(self):
+        records = self._records()
+        self.assertTrue(records, "a run must record its world")
+        for record in records:
+            with self.subTest(context=record["name"]):
+                self.assertTrue(record["detail"].get("expression"))
+
+    def test_the_world_digest_is_recorded(self):
+        for record in self._records():
+            with self.subTest(context=record["name"]):
+                self.assertRegex(record["detail"].get("digest", ""), r"^[0-9a-f]{12}$")
+
+    def test_the_ledger_says_the_build_was_never_verified(self):
+        """The claim GRCh38/v44 is the caller's, not the tool's. Recording it
+        without saying so is how an unchecked assertion gets republished as a
+        finding."""
+        for record in self._records():
+            with self.subTest(context=record["name"]):
+                self.assertIs(record["detail"].get("build_verified"), False)
+
+
 if __name__ == "__main__":
     unittest.main()

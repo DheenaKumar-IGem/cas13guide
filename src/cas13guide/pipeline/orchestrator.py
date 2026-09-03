@@ -183,8 +183,25 @@ def run_design(
         ),
     )
     for ctx in contexts:
+        # `version` is asserted and `digest` is measured, and both are here on
+        # purpose. The build string is what the caller said the world is; the
+        # digest is what it turned out to hold. Recording only the first let
+        # two different background corpora with the same locus count produce
+        # byte-identical provenance, under a genome build nothing had checked.
+        #
+        # The expression source is the last seam that left no trace. Every
+        # other one is recorded -- activity, accessibility, energy, kinetics,
+        # calibration, hazard weights, qc_self_fold, search bound -- and this
+        # one feeds the hazard product directly, so two runs whose abundance
+        # evidence differed were indistinguishable in the ledger that exists
+        # to make a result reproducible and diffable.
+        expression = ctx.expression_source()
         ledger.record("transcriptome", ctx.name, ctx.transcriptome.version,
-                      loci=len(ctx.transcriptome), index=ctx.index.version,
+                      loci=len(ctx.transcriptome),
+                      digest=ctx.transcriptome.digest,
+                      build_verified=False,
+                      expression=getattr(expression, "version", "expression/unversioned"),
+                      index=ctx.index.version,
                       index_choice=ctx.index_rationale)
 
     # An intended target shorter than the window is dropped by

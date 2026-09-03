@@ -408,17 +408,45 @@ def provenance_lines(
             + f"; ranked={len(report_dict.get('ranked', []))}"
         )
     for record in (report_dict.get("provenance") or {}).get("records", []):
-        if record.get("kind") in ("model", "calibration", "search"):
-            line = f"{record.get('kind')}: {record.get('name')} = {record.get('version')}"
+        kind = record.get("kind")
+        # `transcriptome` and `exclusion` were both filtered out, and both
+        # belong in a file that outlives the session more than anything else
+        # here does. A transcriptome record is the only entry naming the world
+        # a guide was called specific against; an exclusion is something the
+        # run deliberately did not check, and this module's own docstring says
+        # a silent exclusion is the bug. Without them a CSV could not say what
+        # it was searched over even when the ledger could.
+        #
+        # Still omitted, deliberately: `spec` (the fingerprint is already on
+        # its own line above), `hazard_weights` and `control_flow` (both are
+        # in report.json, and neither changes what the rows mean).
+        if kind == "exclusion":
+            detail = record.get("detail") or {}
+            lines.append(f"excluded: {record.get('name')} -- {detail.get('why', '')}".rstrip(" -"))
+            continue
+        if kind in ("model", "calibration", "search", "transcriptome"):
+            line = f"{kind}: {record.get('name')} = {record.get('version')}"
             # The parameters that generated a model, not only its version
             # string. Recording the calibration's seed and noise in the ledger
             # and not here left the exported header byte-identical for two runs
             # whose every number differed -- which is the failure the ledger
             # entry was added to fix, surviving one level out in the file that
             # is supposed to outlive the session.
-            source = (record.get("detail") or {}).get("source")
+            detail = record.get("detail") or {}
+            source = detail.get("source")
             if source:
                 line += f" [{_render_detail(source)}]"
+            elif kind == "transcriptome":
+                # The digest is the load-bearing one: the build string beside
+                # it is asserted, not verified, so it is the digest that tells
+                # two worlds apart six months from now.
+                shown = {
+                    key: detail[key]
+                    for key in ("loci", "digest", "expression", "index")
+                    if key in detail
+                }
+                if shown:
+                    line += f" [{_render_detail(shown)}]"
             lines.append(line)
     for shortfall in report_dict.get("shortfalls") or []:
         lines.append(f"shortfall: {shortfall}")
