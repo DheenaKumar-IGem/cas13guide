@@ -93,7 +93,7 @@ FM_SECONDS_PER_QUERY = 2.8
 #:
 #: That does not move the decision, and the direction is the safe one: the
 #: crossover sits near 87 Mb, deep inside the flat regime, and below it the
-#: scanner wins under either figure -- at 600 kb it is 0.019 s/query against a
+#: scanner wins under either figure -- at 600 kb it is 0.018 s/query against a
 #: real FM 0.742. The model is left alone for that reason.
 #:
 #: What it did move was the *reported* number. `plan_index` printed the
