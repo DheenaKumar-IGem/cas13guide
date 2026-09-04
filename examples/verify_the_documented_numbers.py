@@ -638,6 +638,51 @@ def main() -> int:
                          f"README says {stated}"):
                 failures.append(f"the quoted canonical lengths for {label} are stale")
 
+    # ---- 12. the heuristic saturates where it says it does ---------------
+    print()
+    print("the saturation figure that justifies a CRITICAL limitation")
+    import random
+
+    from cas13guide.services.registry import HeuristicCas13Model
+    from cas13guide.util.duplex import DuplexProfile
+
+    pattern = r"a perfect duplex scores\s*(?:≈|about\s+)(\d\.\d+)"
+    stated_readme = re.findall(pattern, text)
+    stated_page = re.findall(pattern, PAGE.read_text(encoding="utf-8"))
+    everywhere = set(stated_readme) | set(stated_page)
+    if not check("the README and the page agree on one figure",
+                 len(everywhere) == 1 and len(stated_readme) >= 1 and len(stated_page) >= 1,
+                 f"README says {stated_readme}, the page says {stated_page}"):
+        failures.append("the saturation figure differs between documents")
+    else:
+        saturation = float(everywhere.pop())
+        model = HeuristicCas13Model()
+        rng = random.Random(20260904)
+        scores = []
+        for _ in range(4000):
+            length = rng.choice([22, 23, 28, 30])
+            spacer = "".join(rng.choice("ACGU") for _ in range(length))
+            scores.append(model.predict(
+                spacer,
+                DuplexProfile(length=length, mismatch_positions=(),
+                              wobble_positions=(), cigar="M" * length),
+                None))
+        ceiling = max(scores)
+        if not check(f"a perfect duplex tops out at {saturation} (measured {ceiling:.4f})",
+                     round(ceiling, 2) == saturation,
+                     f"the documents say {saturation}, the model gives {ceiling:.4f}"):
+            failures.append("the stated saturation is not what the model does")
+        # "regardless of sequence" is the load-bearing half of the sentence:
+        # it is the reason the ranking among well-matched guides is said to
+        # carry almost no information. A wide spread would falsify it while
+        # leaving the headline number correct.
+        spread = ceiling - min(scores)
+        if not check(f"and barely moves with sequence (spread {spread:.4f})",
+                     spread < 0.05,
+                     f"perfect duplexes range over {spread:.4f}, which is not "
+                     f'"regardless of sequence"'):
+            failures.append("the saturation is not sequence-independent as claimed")
+
     print()
     if failures:
         print(f"{len(failures)} documented claim(s) do not reproduce:")
