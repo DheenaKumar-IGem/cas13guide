@@ -216,5 +216,58 @@ class TestEveryFileTheDocumentsNameExists(unittest.TestCase):
             "; ".join(f"{name} cited {count}x" for name, count in dangling))
 
 
+class TestThePageQuotesTheToolCorrectly(unittest.TestCase):
+    """What the landing page prints as the tool's own words must be them.
+
+    Every other check in this module compares two *documents*. This one
+    compares a document against the package, which is the only way a
+    quotation can be checked at all: two documents can agree with each other
+    and both be wrong, which is exactly what happened when the page and the
+    tool both named nine sequence universes for a corpus holding one.
+
+    `verify_the_documented_numbers.py` has done this since it was written, and
+    nothing ran it. Its counts are mirrored into the tests above; its
+    quotations were not, so a limitation's wording could change and a full
+    green suite would say nothing. That is not hypothetical -- it is how the
+    page came to quote a superseded remedy for two commits.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from verify_the_documented_numbers import (
+            normalise,
+            page_critical_quotes,
+            tool_critical_limitations,
+        )
+
+        cls.normalise = staticmethod(normalise)
+        cls.page = page_critical_quotes()
+        cls.tool = tool_critical_limitations()
+
+    def test_the_page_quotes_as_many_as_the_tool_prints(self):
+        self.assertEqual(
+            len(self.page), len(self.tool),
+            f"the page quotes {len(self.page)} CRITICAL limitations and a run "
+            f"prints {len(self.tool)}",
+        )
+
+    def test_every_quotation_is_whole_and_is_something_the_tool_says(self):
+        """Membership of the exact string, which is both checks at once.
+
+        An abridged quote is not a quote the tool says, so one assertion
+        covers wording and completeness together -- and completeness is the
+        half that matters most here: when the page last softened these, what
+        went each time was the sharpest consequence and the remedy.
+        """
+        printed = [self.normalise(text) for text in self.tool]
+        for quote in self.page:
+            with self.subTest(quote=quote[:60]):
+                self.assertIn(
+                    self.normalise(quote), printed,
+                    "the page attributes this to the tool, and the tool does "
+                    "not say it -- in these words, or in this much of them",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

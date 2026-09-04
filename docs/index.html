@@ -474,9 +474,10 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 4.5rem;margin-top:0}
         <p>The assay exposes the guide to universes the search did not cover: mito,
         ncrna, pre_mrna, rrna. A missing universe does not produce a warning-shaped
         result, it produces a suspiciously clean one. Load sequences from it with
-        <code>--background</code> and say what they are with
-        <code>--background-biotype</code>; a universe with no sequence in the corpus is
-        not searched, whatever the run declares.</p>
+        <code>--background</code>, labelling each record in its FASTA header (&gt;id
+        biotype=rrna) or the whole file with <code>--background-biotype</code>; a
+        universe with no sequence in the corpus is not searched, whatever the run
+        declares.</p>
       </li>
     </ol>
 
@@ -658,7 +659,7 @@ site    3' AACUACGGUUCAAGGCGCUAAG 5'</pre>
       <tbody>
         <tr>
           <td class="cmd"><span class="cmd-scroll"><code>pytest</code></span></td>
-          <td class="est">1,320 tests collected; 3 need a miRBase file and skip without it</td>
+          <td class="est">1,322 tests collected; 3 need a miRBase file and skip without it</td>
         </tr>
         <tr>
           <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_mutation_coverage.py</code></span></td>
