@@ -621,6 +621,12 @@ cas13guide design --fasta target.fa --variants isoforms.fa
 # conservation (2 variant(s)): 58/193 windows reach every variant within <=0 mismatches
 ```
 
+The two numbers there are from one run on one pair of files and are **not**
+reproducible from this repository, which ships no variant fixture — unlike
+every other figure quoted in this section. They are the shape of the line, not
+a measurement you can check. Where a number here *is* checkable it says so, and
+`examples/verify_the_documented_numbers.py` holds it to the package.
+
 **Conservation is measured in duplex space, not sequence space.** The obvious
 implementation compares variants for identity, and that is the wrong question:
 what matters is not whether two variants carry the same letter but whether one
