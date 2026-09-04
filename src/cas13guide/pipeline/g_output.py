@@ -404,10 +404,11 @@ def _off_target_rows(assessments: list[GuideAssessment], limit: int = 50) -> tup
     rows = sorted(worst_row.values(), key=lambda r: r["hazard"], reverse=True)
     # The cap is on what a page can usefully show, not on what was found, and
     # the two were indistinguishable downstream: every surface reported
-    # `len(off_targets)` as though it were the total.
-    for rank, row in enumerate(rows[:limit]):
-        row["of_total"] = len(rows)
-        row["rank"] = rank + 1
+    # `len(off_targets)` as though it were the total. `off_target_total`
+    # carries the real one, at the report level rather than repeated on every
+    # row -- and `rank` is already a column of the *ranked guide* table, so a
+    # second meaning for it here would be a name collision across two tables a
+    # reader sees on one page.
     return tuple(rows[:limit])
 
 

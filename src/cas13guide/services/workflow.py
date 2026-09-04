@@ -730,7 +730,13 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         try:
             contexts = variant_contexts(
                 combined, ALL_UNIVERSES, target_id=records[0].name,
-                biotype=Universe.NCRNA, expression=request.expression,
+                # The same biotype the reference world files the target under.
+                # Hardcoding NCRNA here while `_target_biotype` decided it
+                # there gave the target two universes: adding --variants to an
+                # otherwise identical cell_culture run took 223 PASS to 223
+                # REVIEW, reporting `coding` as a universe the search did not
+                # cover, because no variant world held a coding locus.
+                biotype=target_biotype, expression=request.expression,
                 background=accepted_background, extra_targets=records[1:],
                 index_for=index_for,
                 genome_build=request.genome_build, annotation=request.annotation,

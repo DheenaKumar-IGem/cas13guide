@@ -578,5 +578,105 @@ class TestOneBackgroundFileCanHoldSeveralUniverses(unittest.TestCase):
         self.assertIn("rrna", message)
 
 
+class TestAVariantDoesNotMoveTheTargetToAnotherUniverse(unittest.TestCase):
+    """The target is one molecule and must be filed the same way in every world.
+
+    `variant_contexts` builds a separate Transcriptome per haplotype, and the
+    biotype it files the target under was passed in separately from the one
+    the reference world uses. Once the reference stopped hardcoding NCRNA the
+    two disagreed, and because the universe-adequacy gate reads what each
+    index actually holds, the variant worlds were missing a universe the
+    reference world had: adding --variants to an otherwise identical
+    cell_culture run took 223 PASS to 223 REVIEW and reported `coding` as a
+    universe the search did not cover.
+
+    The general shape has bitten this module before -- `--variants` used to
+    replace the whole context list, so adding one turned a report with
+    off-target hits into a clean one. What is pinned here is that adding a
+    variant changes only what a variant can change.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import random
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        rng = random.Random(23)
+
+        def seq(n):
+            return "".join(rng.choice("ACGU") for _ in range(n))
+
+        cls._directory = tempfile.TemporaryDirectory()
+        home = Path(cls._directory.name)
+        eol = chr(10)
+        target = seq(300)
+        (home / "t.fa").write_text(">TGT1" + eol + target + eol, encoding="utf-8")
+        rows = []
+        for name, biotype in (("RN18S1", "rrna"), ("MT-CO1", "mito"),
+                              ("LINC01", "ncrna"), ("PREM1", "pre_mrna")):
+            rows += [">" + name + " biotype=" + biotype, seq(300)]
+        (home / "bg.fa").write_text(eol.join(rows) + eol, encoding="utf-8")
+        variant = "".join(
+            ("A" if base != "A" else "C") if index % 37 == 9 else base
+            for index, base in enumerate(target)
+        )
+        (home / "var.fa").write_text(">hap2" + eol + variant + eol,
+                                     encoding="utf-8")
+
+        def run(**extra):
+            return run_request(DesignRequest(
+                fasta_path=str(home / "t.fa"),
+                background_path=str(home / "bg.fa"),
+                task="knockdown", assay="cell_culture_knockdown",
+                effector="RfxCas13d", use_structure=False, use_signal=False,
+                **extra,
+            )).report
+
+        cls.plain = run()
+        cls.with_variant = run(variants_path=str(home / "var.fa"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._directory.cleanup()
+
+    @staticmethod
+    def _gap(report):
+        return [item for item in report["limitations"]
+                if item["id"] == "universe-gap"]
+
+    def test_the_fixture_is_adequate_without_the_variant(self):
+        """Or the assertion below would hold over a run that was never clean."""
+        self.assertEqual(self._gap(self.plain), [])
+        self.assertGreater(self.plain["verdict_counts"]["PASS"], 0)
+
+    def test_adding_a_variant_introduces_no_universe_gap(self):
+        self.assertEqual(
+            self._gap(self.with_variant), [],
+            "adding a variant reported a universe the reference run covered",
+        )
+
+    def test_the_searched_universes_are_the_same_either_way(self):
+        def scope(report):
+            [item] = [x for x in report["limitations"]
+                      if x["id"] == "search-scope-is-what-you-loaded"]
+            return item["text"]
+
+        self.assertEqual(scope(self.plain), scope(self.with_variant))
+
+    def test_a_variant_still_changes_what_a_variant_should(self):
+        """Not a no-op: guides that lose the variant are downgraded."""
+        self.assertLess(
+            self.with_variant["verdict_counts"]["PASS"],
+            self.plain["verdict_counts"]["PASS"],
+        )
+        reasons = {
+            reason
+            for row in self.with_variant["ranked"]
+            for reason in row.get("reasons", ())
+        }
+        self.assertIn("variant_coverage_lost", reasons)
+
+
 if __name__ == "__main__":
     unittest.main()
