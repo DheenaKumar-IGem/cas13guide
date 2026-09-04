@@ -340,6 +340,39 @@ def tests_needing_mirbase() -> int:
     )
 
 
+def unresolvable_file_citations() -> list[tuple[str, int]]:
+    """``(path, how many times it is cited)`` for citations naming no file.
+
+    The two documents point at 115 distinct ``.py`` paths across 179
+    citations -- every defect table row names the test module holding its
+    regression, and the prose names the module each behaviour lives in. A
+    rename is ordinary work and orphans every one of them silently, which is
+    the same failure the mutation sweep had when its screening hints named
+    modules that no longer existed. That guard caught two stale hints; this is
+    the same guard pointed at the prose.
+
+    Paths are written relative to the package (``services/arc_model.py``) or
+    as bare filenames (``b_qc.py``), so both are accepted.
+    """
+    import collections
+
+    bases = [ROOT / "src" / "cas13guide", ROOT / "src", ROOT / "examples",
+             ROOT / "tests", ROOT]
+    known: set[str] = set()
+    for base in bases:
+        for path in base.rglob("*.py"):
+            known.add(path.relative_to(base).as_posix())
+            known.add(path.name)
+
+    cited: collections.Counter[str] = collections.Counter()
+    for document in (README, PAGE):
+        for name in re.findall(r"`([a-z0-9_]+(?:/[a-z0-9_]+)*[.]py)`",
+                               document.read_text(encoding="utf-8")):
+            cited[name] += 1
+    return [(name, count) for name, count in sorted(cited.items())
+            if name not in known]
+
+
 def documented_word_counts() -> list[tuple[str, int | None, int]]:
     """``(label, what the README spells out, what the tree holds)``.
 
@@ -876,6 +909,15 @@ def main() -> int:
         if not check(f"{label}: {actual}", stated == actual,
                      f"the README says {stated}"):
             failures.append(f"the stated count of {label} is stale")
+
+    # ---- 15. every file the documents point at ---------------------------
+    print()
+    print("the files the two documents name")
+    dangling = unresolvable_file_citations()
+    if not check("every cited .py path resolves",
+                 not dangling,
+                 "; ".join(f"{name} (cited {count}x)" for name, count in dangling)):
+        failures.append("the documents cite files that do not exist")
 
     print()
     if failures:

@@ -196,5 +196,20 @@ class TestTheVocabularySizeIsTheVocabularys(unittest.TestCase):
         self.assertLessEqual(produced, size)
 
 
+class TestEveryFileTheDocumentsNameExists(unittest.TestCase):
+    """179 citations across two documents, and a rename orphans them silently.
+
+    This is the failure the mutation sweep had when its screening hints named
+    modules that no longer existed: a pointer that resolves to nothing reads
+    exactly like one that resolves, until somebody follows it.
+    """
+
+    def test_no_citation_dangles(self):
+        dangling = documents.unresolvable_file_citations()
+        self.assertEqual(
+            dangling, [],
+            "; ".join(f"{name} cited {count}x" for name, count in dangling))
+
+
 if __name__ == "__main__":
     unittest.main()
