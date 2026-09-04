@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1227 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Four of the 56 are
+  survives is re-run against all 1230 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. Four of the 57 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **56 mutations, 56 caught, 0 holes.**
+Last measured: **57 mutations, 57 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -398,6 +398,15 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     # runs with identical content can disagree -- an identity that changes for
     # no reason is worse than none, which is the lesson the world digest in
     # transcriptome.py already carries.
+    # services/benchmark.py: the same all([]) hazard as the acceptance gate,
+    # on the property both the `check` CI gate and the "conformal coverage"
+    # acceptance criterion read. Found by grepping the package for every all()
+    # over a collection that can be empty, after the acceptance one turned up.
+    ("benchmark-certifies-coverage-it-never-measured",
+     "src/cas13guide/services/benchmark.py",
+     "        return bool(self.coverage) and all(c.ok for c in self.coverage)",
+     "        return all(c.ok for c in self.coverage)",
+     ["test_mutation_holes.py", "test_benchmark.py", "test_acceptance.py"]),
     ("provenance-digest-depends-on-key-order",
      "src/cas13guide/services/provenance.py",
      "        payload = json.dumps(self.to_dict(), sort_keys=True, default=str)",

@@ -933,5 +933,58 @@ class TestTheLedgerDigestIsAContentIdentity(unittest.TestCase):
         self.assertEqual(ledger.digest(), ledger.digest())
 
 
+class TestCoverageIsNotCertifiedUnmeasured(unittest.TestCase):
+    """The seventeenth hole, and the first found by reasoning rather than
+    mutating.
+
+    After the acceptance gate's ``bool(self.criteria) and all(...)`` turned out
+    to be unpinned, the obvious next question was where else in the package an
+    ``all()`` runs over a collection that can be empty. Seven places; four
+    already guarded, one correct to answer True on nothing (a panel with no
+    required targets is trivially feasible), one whose criteria are built two
+    lines above it -- and this.
+
+    ``BenchmarkReport.coverage_ok`` ran ``all(c.ok for c in self.coverage)``
+    with no guard. The coverage tuple is built per stratum from the benchmark
+    cases, so a run that evaluated no cases builds none, and the property
+    answered "yes, the bounds mean what they claim" having measured nothing.
+
+    Two gates read it: ``cas13guide check`` exits 0 on it, and it is the
+    "conformal coverage" criterion in the acceptance report. So an empty
+    benchmark certified a model on the axis that says its intervals are
+    trustworthy.
+
+    Empty is not ok, on purpose. Coverage is the claim that a calibrated
+    interval contains the truth about as often as it says; with nothing
+    measured there is no evidence for it, and absence of evidence has been the
+    wrong answer everywhere else in this package too.
+    """
+
+    def _report(self, coverage):
+        from cas13guide.services.benchmark import BenchmarkReport
+
+        return BenchmarkReport(n=len(coverage), spearman=0.9, mae=0.1,
+                               coverage=tuple(coverage))
+
+    def _stratum(self, ok: bool):
+        from cas13guide.services.calibration import CoverageReport
+
+        # empirical well above or well below nominal, so `ok` is unambiguous
+        return CoverageReport(stratum="s", n=100, nominal=0.90,
+                              empirical=0.95 if ok else 0.10)
+
+    def test_a_benchmark_with_no_strata_is_not_covered(self):
+        self.assertFalse(self._report([]).coverage_ok)
+
+    def test_a_benchmark_whose_strata_all_cover_is(self):
+        """The complement, so "never ok" would not pass as readily."""
+        self.assertTrue(self._report([self._stratum(True),
+                                      self._stratum(True)]).coverage_ok)
+
+    def test_one_uncovered_stratum_is_enough_to_refuse(self):
+        self.assertFalse(self._report([self._stratum(True),
+                                       self._stratum(False)]).coverage_ok)
+
+
 if __name__ == "__main__":
     unittest.main()
