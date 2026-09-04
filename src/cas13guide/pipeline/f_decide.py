@@ -89,13 +89,47 @@ def gate(
         worst = max(e.activity.upper for e in forbidden)
         detail.append(f"forbidden hit UCB(activity) {worst:.3f} > {t.forbidden_activity_max:.3f}")
 
-    # Universe adequacy is a gate condition, not documentation (fix #3).
-    if universe_gaps:
+    # Universe adequacy is a gate condition, not documentation (fix #3) -- but
+    # it covers two findings that deserve different verdicts. A universe the
+    # run *declared* and did not search is a defect in the run: the index was
+    # narrower than the corpus it was built from, and the off-target table is
+    # clean for a reason that has nothing to do with this guide. A universe the
+    # assay is exposed to that the corpus simply holds no sequence in is a
+    # statement about the evidence supplied -- the same statement for every
+    # candidate here -- and no verdict on this guide can lift it.
+    # What separates the two is whether the sequences were there to search. An
+    # index that cannot see its corpus reports None and does not get to have
+    # the run accused of skipping anything.
+    # Two ways a gap is the *run's* fault rather than the corpus's. Either the
+    # run declared a universe and searched less than it declared -- provable
+    # from the declaration alone, and the hole fix #3 was written for -- or the
+    # corpus held sequences in a universe the assay needs and the search did
+    # not look at them. An index that cannot see its corpus reports None and
+    # does not get to have the run accused of the second.
+    available = bound.corpus_universes
+    if available is not None:
+        # The precise test, and it subsumes the declaration: a universe the
+        # corpus holds and the search did not cover was skipped, whatever was
+        # declared. Declaring more than the corpus holds is not a skip -- there
+        # was nothing there to skip -- it is an overclaim, and it is the
+        # unrepresented arm below that says so.
+        skipped = frozenset(universe_gaps & available)
+    else:
+        # No corpus to consult, so the declaration is the only evidence: a
+        # universe the run said it would search and did not. Still only ever a
+        # classification of the gaps the caller reported -- a caller that says
+        # there is no gap is not overruled by arithmetic on the declaration.
+        skipped = frozenset(
+            universe_gaps & (spec.context.declared_universes - bound.universes)
+        )
+    if skipped:
         fail.append(ReasonCode.UNIVERSE_INADEQUATE)
         detail.append(
-            "unsearched universes required by assay: "
-            + ",".join(sorted(u.value for u in universe_gaps))
+            "available and not searched: "
+            + ",".join(sorted(u.value for u in skipped))
         )
+
+    unrepresented = frozenset(universe_gaps - skipped)
 
     if (
         metrics.discrimination_margin is not None
@@ -199,6 +233,17 @@ def gate(
     # acceptable for missing its target in an isoform than in the reference --
     # it is only less certain which one the user cares about, and that is a
     # judgement for a human, which is what REVIEW means.
+    if unrepresented:
+        review.append(
+            (
+                ReviewTier.R1,
+                ReasonCode.UNIVERSE_UNREPRESENTED,
+                "no sequence supplied in "
+                + ",".join(sorted(u.value for u in unrepresented))
+                + ", which this assay exposes the guide to",
+            )
+        )
+
     if metrics.robustness < t.required_coverage_min:
         review.append(
             (

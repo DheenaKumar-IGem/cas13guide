@@ -44,6 +44,10 @@ def world_and_spec(examples):
     world = Transcriptome("GRCh38", "v44")
     world.add(Locus("TGT1", sequence, Universe.CODING, gene="TGT", expression=120.0))
     world.add(Locus("RRNA1", "AUGC" * 100, Universe.RRNA, gene="RN18S", expression=9000.0))
+    # The assay is exposed to five universes and this corpus held two, so every
+    # guide was a REVIEW for a gap in the evidence rather than anything the
+    # trained model did. What is being measured here is discrimination.
+    cover_universes(world)
     spec = ResolvedDesignSpec(
         contract=TargetContract(
             task=Task.KNOCKDOWN,

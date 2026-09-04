@@ -117,6 +117,15 @@ class ReasonCode(str, Enum):
     REQUIRED_TARGET_MISSED = "required_target_missed"
     CREDIBLE_FORBIDDEN_HIT = "credible_forbidden_hit"
     UNIVERSE_INADEQUATE = "universe_inadequate"
+    #: The assay exposes the guide to a universe the corpus holds no sequence
+    #: in. Distinct from UNIVERSE_INADEQUATE, which means the run declared a
+    #: universe and then searched less than it declared -- a defect in the run.
+    #: This one is a statement about the evidence the user supplied, identical
+    #: for every candidate, and liftable only by supplying sequences. It is a
+    #: REVIEW because a clean off-target table against a corpus that cannot
+    #: contain an off-target is not evidence of specificity, and deciding
+    #: whether that matters is a human's job.
+    UNIVERSE_UNREPRESENTED = "universe_unrepresented"
     DISCRIMINATION_MARGIN_INSUFFICIENT = "discrimination_margin_insufficient"
     HAZARD_BUDGET_EXCEEDED = "hazard_budget_exceeded"
 

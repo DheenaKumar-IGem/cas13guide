@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 93 are
+  "hole" is never an artefact of which modules were chosen. None of the 96 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **93 mutations, 93 caught, 0 holes.**
+Last measured: **96 mutations, 96 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -736,6 +736,27 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         "    if metrics.robustness < t.required_coverage_min:",
         "    if metrics.required_coverage < t.required_coverage_min:",
         ["test_gate.py"],
+    ),
+    (
+        "the-fm-index-reports-its-filter-instead",
+        "src/cas13guide/services/fmindex.py",
+        "        self.universes = frozenset(locus.biotype for locus in loci)",
+        "        self.universes = universes",
+        ["test_fmindex.py", "test_gate.py", "test_orchestrator.py"],
+    ),
+    (
+        "the-gate-blames-the-run-for-a-universe-nobody-had",
+        "src/cas13guide/pipeline/f_decide.py",
+        "        skipped = frozenset(universe_gaps & available)",
+        "        skipped = frozenset(universe_gaps)",
+        ["test_gate.py", "test_orchestrator.py"],
+    ),
+    (
+        "every-background-record-is-coding-again",
+        "src/cas13guide/services/workflow.py",
+        "                                         background_biotype,",
+        "                                         Universe.CODING,",
+        ["test_subcommands_end_to_end.py", "test_bugfix_regressions_round4.py"],
     ),
 ]
 

@@ -385,5 +385,98 @@ class TestOffTargetSitesAreNotFolded(unittest.TestCase):
         for guide_id in shared:
             self.assertEqual(pick(with_bg)[guide_id], pick(without)[guide_id])
 
+
+class TestTheBackgroundSaysWhatItIs(unittest.TestCase):
+    """``--background-biotype`` has to reach the loci, not just the parser.
+
+    Every ``--background`` record was ``Universe.CODING`` whatever it was, so
+    the two largest entries in ``DEFAULT_HAZARD_BY_BIOTYPE`` -- rRNA at 2.0 and
+    mito at 1.5 -- were unreachable from the CLI. A user who supplied rRNA as
+    off-target evidence, which is the case those weights exist for, had it
+    weighted like any other transcript.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import random
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        rng = random.Random(19)
+        target = "".join(rng.choice("ACGU") for _ in range(300))
+        # A near-copy, so there are off-target rows to carry a weight.
+        swap = {"A": "G", "G": "A", "C": "U", "U": "C"}
+        paralog = "".join(
+            swap[base] if index % 11 == 5 else base
+            for index, base in enumerate(target)
+        )
+        cls._directory = tempfile.TemporaryDirectory()
+        home = Path(cls._directory.name)
+        eol = chr(10)
+        (home / "t.fa").write_text(">TGT1" + eol + target + eol, encoding="utf-8")
+        (home / "bg.fa").write_text(">BG1" + eol + paralog + eol, encoding="utf-8")
+
+        def run(biotype):
+            return run_request(DesignRequest(
+                fasta_path=str(home / "t.fa"),
+                background_path=str(home / "bg.fa"),
+                background_biotype=biotype,
+                task="knockdown", assay="cell_culture_knockdown",
+                effector="RfxCas13d", use_structure=False, use_signal=False,
+            )).report
+
+        cls.as_coding = run("coding")
+        cls.as_rrna = run("rrna")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._directory.cleanup()
+
+    def test_the_fixture_really_produces_off_target_rows(self):
+        """Or every assertion below would hold over an empty table."""
+        self.assertTrue(self.as_coding["off_targets"])
+        self.assertTrue(self.as_rrna["off_targets"])
+
+    def test_the_label_reaches_the_off_target_rows(self):
+        self.assertEqual(
+            {row["biotype"] for row in self.as_coding["off_targets"]}, {"coding"}
+        )
+        self.assertEqual(
+            {row["biotype"] for row in self.as_rrna["off_targets"]}, {"rrna"}
+        )
+
+    def test_the_label_reaches_the_hazard_weight(self):
+        """The consequence those weights exist for.
+
+        The weight is ``unannotated * by_biotype[b]`` -- an off-target the
+        contract does not name carries 0.6, times the biotype's prior. Pinning
+        the product alone would not say which factor the flag moves, so this
+        composes it from the shipped prior.
+        """
+        from cas13guide.contract.enums import Universe
+        from cas13guide.contract.spec import DEFAULT_HAZARD_BY_BIOTYPE, HazardWeights
+
+        unannotated = HazardWeights().unannotated
+        self.assertEqual(
+            {row["hazard_weight"] for row in self.as_coding["off_targets"]},
+            {unannotated * DEFAULT_HAZARD_BY_BIOTYPE[Universe.CODING]},
+        )
+        self.assertEqual(
+            {row["hazard_weight"] for row in self.as_rrna["off_targets"]},
+            {unannotated * DEFAULT_HAZARD_BY_BIOTYPE[Universe.RRNA]},
+        )
+        # And the prior is not 1.0, or the assertion above would hold whatever
+        # biotype the background was given.
+        self.assertNotEqual(
+            DEFAULT_HAZARD_BY_BIOTYPE[Universe.RRNA],
+            DEFAULT_HAZARD_BY_BIOTYPE[Universe.CODING],
+        )
+
+    def test_an_rrna_background_is_the_more_hazardous_run(self):
+        worst_coding = max(row["hazard"] for row in self.as_coding["off_targets"])
+        worst_rrna = max(row["hazard"] for row in self.as_rrna["off_targets"])
+        self.assertGreater(worst_rrna, worst_coding)
+
+
 if __name__ == "__main__":
     unittest.main()

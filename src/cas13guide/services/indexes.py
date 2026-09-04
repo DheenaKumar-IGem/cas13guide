@@ -42,6 +42,13 @@ class ExhaustivenessBound:
     exhaustive: bool
     method: str
     note: str = ""
+    #: Universes the corpus behind this index holds a sequence in, or ``None``
+    #: when the index cannot know -- a remote BLAST database, say. It is the
+    #: only thing that separates "the search skipped sequences it had" from
+    #: "there were none": both leave the same hole in the off-target table and
+    #: only one is the run's fault. An index that cannot prove the sequences
+    #: were there does not get to have the run accused of skipping them.
+    corpus_universes: frozenset[Universe] | None = None
 
     def covers(self, required_mismatches: int) -> bool:
         return self.exhaustive and self.max_mismatches >= required_mismatches
@@ -232,14 +239,27 @@ def _scan_locus(expected: str, sequence: str, max_mismatches: int):
 
 
 class ExhaustiveScanIndex:
-    """Full scan over the declared universes. Complete by construction."""
+    """Full scan over every locus admitted by the filter.
+
+    Complete with respect to the corpus, which is not the same as complete
+    with respect to the universes the filter names: a universe the corpus
+    holds no sequence in is reported as absent rather than as searched.
+    """
 
     version = "index/exhaustive-scan/v1"
 
     def __init__(self, transcriptome: Transcriptome, universes: frozenset[Universe]) -> None:
         self.transcriptome = transcriptome
-        self.universes = universes
+        self.requested_universes = universes
         self._loci = transcriptome.in_universes(universes)
+        #: What the bound reports. The filter is what this index was *willing*
+        #: to search; this is what it has. Reporting the filter made the
+        #: ledger's claim and the CRITICAL limitation name every universe the
+        #: caller admitted, for a corpus that held one -- and made
+        #: `universe_gaps` subtract the declaration from itself, so the gate
+        #: whose whole purpose is to catch a suspiciously clean off-target
+        #: report could not fire on the documented command.
+        self.universes = frozenset(locus.biotype for locus in self._loci)
         # Built lazily on the first query. Building it eagerly would cost one
         # byte per base up front and make "the scanner costs nothing to build"
         # -- which the index-selection cost model relies on -- untrue for an
@@ -338,6 +358,7 @@ class ExhaustiveScanIndex:
             universes=self.universes,
             exhaustive=True,
             method=self.version,
+            corpus_universes=self.transcriptome.covered_universes(),
         )
         return SearchResult(hits=tuple(hits), bound=bound)
 
@@ -373,9 +394,12 @@ class SeedHeuristicIndex:
         seed_length: int = 11,
     ) -> None:
         self.transcriptome = transcriptome
-        self.universes = universes
+        self.requested_universes = universes
         self.seed_length = seed_length
         self._loci = transcriptome.in_universes(universes)
+        # See ExhaustiveScanIndex: the bound reports what is held, not the
+        # filter that was admitted.
+        self.universes = frozenset(locus.biotype for locus in self._loci)
 
     def search(self, guide_id: str, spacer: str, max_mismatches: int) -> SearchResult:
         expected = revcomp(spacer)
@@ -420,6 +444,7 @@ class SeedHeuristicIndex:
             universes=self.universes,
             exhaustive=False,
             method=self.version,
+            corpus_universes=self.transcriptome.covered_universes(),
             note=(
                 f"requires an exact {k}nt terminal seed; hits with mismatches "
                 "in both seeds are not guaranteed to be found"
@@ -475,8 +500,10 @@ class UnionSearchIndex:
         seen: set[tuple[str, int]] = set()
         bound: ExhaustivenessBound | None = None
         universes: set[Universe] = set()
+        corpora: list[frozenset[Universe] | None] = []
         for index in self.indexes:
             result = index.search(guide_id, spacer, max_mismatches)
+            corpora.append(result.bound.corpus_universes)
             for hit in result.hits:
                 key = (hit.locus_id, hit.start)
                 if key in seen:
@@ -490,7 +517,19 @@ class UnionSearchIndex:
         hits.sort(key=lambda h: (h.locus_id, h.start))
         return SearchResult(
             hits=tuple(hits),
-            bound=replace(bound, universes=frozenset(universes), method=self.version),
+            bound=replace(
+                bound,
+                universes=frozenset(universes),
+                method=self.version,
+                # None from any member poisons the union: one index that cannot
+                # see its corpus is enough to make the union unable to prove a
+                # sequence was available.
+                corpus_universes=(
+                    None
+                    if any(c is None for c in corpora)
+                    else frozenset(u for c in corpora if c is not None for u in c)
+                ),
+            ),
         )
 
     def any_hit(self, spacer: str, max_mismatches: int) -> bool:

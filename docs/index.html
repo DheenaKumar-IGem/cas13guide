@@ -408,7 +408,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 4.5rem;margin-top:0}
 
 <div class="wrap">
   <a class="handoff rise d5" href="#refusals">
-    ↓ §02 &nbsp;A default run states, in its own words, <b>four CRITICAL limitations</b>
+    ↓ §02 &nbsp;A default run states, in its own words, <b>five CRITICAL limitations</b>
   </a>
 </div>
 
@@ -462,15 +462,30 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 4.5rem;margin-top:0}
           <span class="lim-num">04</span>
           <span class="sev sev-crit">Critical</span>
         </div>
-        <p>Off-targets were searched over circrna, coding, mito, ncrna, pre_mrna, repeat,
-        rrna, synthetic, viral in the sequences supplied to this run. Anything not
-        loaded is invisible: a guide is specific <em>against what you gave it</em>.</p>
+        <p>Off-targets were searched over coding in the sequences supplied to this
+        run. Anything not loaded is invisible: a guide is specific <em>against what you
+        gave it</em>.</p>
+      </li>
+      <li class="lim">
+        <div class="lim-head">
+          <span class="lim-num">05</span>
+          <span class="sev sev-crit">Critical</span>
+        </div>
+        <p>The assay exposes the guide to universes the search did not cover: mito,
+        ncrna, pre_mrna, rrna. A missing universe does not produce a warning-shaped
+        result, it produces a suspiciously clean one. Load sequences from it with
+        <code>--background</code> and say what they are with
+        <code>--background-biotype</code>; a universe with no sequence in the corpus is
+        not searched, whatever the run declares.</p>
       </li>
     </ol>
 
     <p class="lim-foot">
-      The four marks above are not a fixed banner: they are what this run could not
+      The five marks above are not a fixed banner: they are what this run could not
       establish. A tool that only prints its confidence leaves you to guess at the rest.
+      The last two are the same fact told twice, which is the point: this run was given
+      one sequence, so its off-target table is clean because there was nothing in it to
+      hit &mdash; and the run says so rather than letting a clean table speak for itself.
     </p>
   </div>
 </section>
@@ -499,7 +514,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 4.5rem;margin-top:0}
         <dt>binds</dt>     <dd class="seq">MALAT1_frag at 7..29</dd>
         <dt>site</dt>      <dd class="seq">GAAUCGCGGAACUUGGCAUCAA</dd>
         <dt>GC</dt>        <dd>0.50</dd>
-        <dt>verdict</dt>   <dd><span class="chip">PASS</span>all constraints satisfied with adequate evidence</dd>
+        <dt>verdict</dt>   <dd><span class="chip">REVIEW</span>no sequence supplied in mito,ncrna,pre_mrna,rrna, which this assay exposes the guide to</dd>
       </dl>
     </div>
 
@@ -643,11 +658,11 @@ site    3' AACUACGGUUCAAGGCGCUAAG 5'</pre>
       <tbody>
         <tr>
           <td class="cmd"><span class="cmd-scroll"><code>pytest</code></span></td>
-          <td class="est">1,290 tests collected; 3 need a miRBase file and skip without it</td>
+          <td class="est">1,298 tests collected; 3 need a miRBase file and skip without it</td>
         </tr>
         <tr>
           <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_mutation_coverage.py</code></span></td>
-          <td class="est">93 semantic mutations, 93 caught</td>
+          <td class="est">96 semantic mutations, 96 caught</td>
         </tr>
         <tr>
           <td class="cmd"><span class="cmd-scroll"><code>python examples/verify_vocabulary_coverage.py</code></span></td>

@@ -36,7 +36,15 @@ def seeded_calibration(spec, n=120):
     return cs
 
 
-def world(include_target: bool) -> Transcriptome:
+def world(include_target: bool, adequate: bool = True) -> Transcriptome:
+    """The corpus. ``adequate`` decides whether it covers the assay's universes.
+
+    It used to hold a single CODING locus while every spec declared five, which
+    no test could notice: the index reported the universes it was *asked* for,
+    so a corpus of one biotype and a declaration of five agreed. Now the corpus
+    is the evidence, and a fixture that wants a run to be adequate has to
+    supply one.
+    """
     t = Transcriptome("GRCh38", "v44")
     if include_target:
         t.add(Locus("L_T1", SEQ_A, Universe.CODING, gene="TGT", expression=100.0))
@@ -49,7 +57,7 @@ def world(include_target: bool) -> Transcriptome:
                 expression=10.0,
             )
         )
-    return t
+    return cover_universes(t) if adequate else t
 
 
 def run(spec, transcriptome, step=1, events=None):
@@ -209,6 +217,14 @@ class TestBacktrackLoops(unittest.TestCase):
 
 class TestUniverseGateEndToEnd(unittest.TestCase):
     def test_declaring_too_few_universes_fails_everything(self):
+        """The corpus holds them; the declaration narrows the index past them.
+
+        This is the shape fix #3 was written for -- a clean off-target report
+        bought by not looking -- and it is a FAIL because the run could have
+        looked. The fixture has to supply the sequences for that to be true:
+        while the world held one CODING locus, declaring too few universes
+        skipped nothing, and the test passed on a technicality.
+        """
         spec = make_spec(universes=frozenset({Universe.CODING}))
         report = run(spec, world(include_target=True))
         self.assertEqual(report.verdict_counts["PASS"], 0)
@@ -216,6 +232,21 @@ class TestUniverseGateEndToEnd(unittest.TestCase):
         self.assertTrue(
             any("universes" in str(r).lower() for r in report.provenance["records"])
         )
+
+    def test_a_corpus_that_never_held_them_is_a_review_not_a_failure(self):
+        """No verdict on a guide can lift a gap in the evidence supplied.
+
+        Same declaration, same assay, same shortfall against
+        ASSAY_REQUIRED_UNIVERSES -- and a corpus with nothing in those
+        universes to skip. Failing a guide for that says the guide is bad; it
+        is the run that is uninformative, identically for every candidate, and
+        the web form has no way to supply a background at all.
+        """
+        spec = make_spec(universes=frozenset({Universe.CODING}))
+        report = run(spec, world(include_target=True, adequate=False))
+        self.assertEqual(report.verdict_counts["FAIL"], 0)
+        self.assertGreater(report.verdict_counts["REVIEW"], 0)
+        self.assertEqual(report.verdict_counts["PASS"], 0)
 
 
 if __name__ == "__main__":

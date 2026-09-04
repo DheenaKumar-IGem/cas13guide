@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1290 tests
+python -m unittest discover -s tests -t tests    # 1298 tests
 pytest                              # same suite under pytest
 ```
 
@@ -811,7 +811,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1290 tests, run under `unittest` or `pytest` — both discover the same set —
+1298 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -823,9 +823,9 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1290 tests
-python examples/verify_mutation_coverage.py              # 93 mutations, 93 caught
-python examples/verify_vocabulary_coverage.py            # 53 of 53 things it can say
+pytest                                                   # 1298 tests
+python examples/verify_mutation_coverage.py              # 96 mutations, 96 caught
+python examples/verify_vocabulary_coverage.py            # 54 of 54 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
 python examples/verify_output_against_input.py           # the guides are right
@@ -848,9 +848,16 @@ landing page quoted the four CRITICAL limitations as the tool's own words when
 all four had been abridged — what was dropped, each time, was the remedy and
 the sharpest consequence: *"Fit a real screen with `cas13guide train` before
 treating a bound as a guarantee"*, *"so no specificity score on this page bounds
-it"*, and the nine sequence universes actually searched. On a page whose whole
+it"*, and the sequence universes the run says it searched. On a page whose whole
 premise is that the tool tells you what it does not know, the quotes had been
 softened in exactly the places that say how bad it is and what to do about it.
+
+That last quote was worth even less than the abridgement made it look. The page
+had trimmed a list of nine universes; the *tool* had been naming nine because an
+index reported the filter it was constructed with rather than the loci it held,
+and the corpus behind that run was a single sequence. Both documents agreed, and
+both were wrong, which is the failure mode a cross-check between two documents
+cannot catch.
 
 That last one is why this is a script rather than a lint rule about digits. A
 published claim about what a tool says is checkable by running the tool, and
@@ -871,7 +878,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 93 are
+against the **whole** suite before being called a hole. None of the 96 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -1452,6 +1459,7 @@ The defects worth naming, because they were live rather than hypothetical:
 |---|---|---|
 | The FM walk branched over a hard-coded `ACGU` | `N` is a legal base, so any window overlapping an assembly gap was unreachable — the index returned a **smaller hit set than the scanner while still reporting `exhaustive=True`**, and a 1-mismatch paralog off-target simply vanished | `test_search.py` |
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
+| …and then the search reported its *filter* as what it had searched | The fix keyed the gate on "what the index proved", and `ExhaustiveScanIndex` proved it by restating the constructor argument. Every CLI run declared all nine universes and searched the loci it was given, so `(required | declared) - searched` was `ALL - ALL`: on the documented command the report told the user off-targets had been searched over **rrna and mito** — the two highest hazard weights in the package — against a corpus of one sequence, and 223 guides were certified PASS on an off-target table that could not have held a row. `Transcriptome.covered_universes` would have answered it and had been deleted as dead code, correctly: nothing called it | `test_gate.py`, `test_orchestrator.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
 | `cas13guide demo` **tracebacked for every installed user** | `_demo` put `<cli.py>/../../examples` on `sys.path` and imported `demo_knockdown`; from site-packages that resolves to `Lib/examples`, which does not exist, because `examples/` is not in the wheel. A subcommand named in `--help` died with `ModuleNotFoundError` and exit 1 for anyone who did not clone the repo | `test_installed_package.py` |

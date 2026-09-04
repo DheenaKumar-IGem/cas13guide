@@ -174,6 +174,8 @@ def _design(args: argparse.Namespace) -> int:
         background_path=args.background,
         effector=args.effector,
         assay=args.assay,
+        target_biotype=args.target_biotype,
+        background_biotype=args.background_biotype,
         task=args.task,
         spacer_length=args.spacer_length,
         max_mismatches=args.max_mismatches,
@@ -459,6 +461,17 @@ def main(argv: list[str] | None = None) -> int:
 
     design.add_argument("--effector", default="LwaCas13a",
                         choices=["LwaCas13a", "RfxCas13d", "PspCas13b"])
+    design.add_argument(
+        "--target-biotype", choices=["coding", "ncrna", "pre_mrna", "circrna",
+                 "repeat", "mito", "rrna", "viral", "synthetic"],
+        default=None,
+        help="what the target sequences are (default: implied by --assay)")
+    design.add_argument(
+        "--background-biotype", choices=["coding", "ncrna", "pre_mrna", "circrna",
+                 "repeat", "mito", "rrna", "viral", "synthetic"],
+        default="coding",
+        help="what the --background sequences are; sets their hazard weight "
+             "and whether they cover a universe the assay is exposed to")
     design.add_argument("--assay", default="in_vitro_detection",
                         choices=["in_vitro_detection", "cell_culture_knockdown",
                                  "in_vivo_knockdown", "antiviral"])

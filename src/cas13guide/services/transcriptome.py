@@ -83,5 +83,18 @@ class Transcriptome:
     def in_universes(self, universes: frozenset[Universe]):
         return [lo for lo in self.loci.values() if lo.biotype in universes]
 
+    def covered_universes(self) -> frozenset[Universe]:
+        """The universes this corpus actually holds a sequence in.
+
+        Deleted once as dead code, correctly: nothing called it. What nothing
+        called was the only function able to distinguish "searched rRNA" from
+        "was willing to search rRNA and was given none", and the indexes were
+        reporting the second as the first. A universe with no locus in it is
+        not covered by an exhaustive scan over it; it is absent from the
+        corpus, which is the one thing a user cannot see from a clean
+        off-target table.
+        """
+        return frozenset(locus.biotype for locus in self.loci.values())
+
     def __len__(self) -> int:
         return len(self.loci)

@@ -31,10 +31,33 @@ from ..contract.spec import (
 )
 from .fasta import SequenceInputError, SequenceRecord, parse_sequence_input, read_fasta
 
-#: Universes declared for a design run. Deliberately the full set: declaring
-#: fewer would quietly narrow the universe-adequacy gate, which is the check
-#: that stops a suspiciously clean off-target report from passing.
+#: The index *filter*: every universe is admitted, so no locus the user
+#: supplied is excluded from the search. This is the job the name was right
+#: for.
+#:
+#: It was also passed as ``declared_universes``, the caller's assertion of what
+#: the corpus covers, with a comment saying declaring fewer "would quietly
+#: narrow the universe-adequacy gate". The opposite was true. `universe_gaps`
+#: computes ``(required | declared) - searched``; declaring everything and
+#: searching a corpus of one ncrna locus gave ``ALL - ALL``, because the index
+#: reported its filter as what it had searched. The gate returned no gap on
+#: every run the CLI has ever done, and the report told the user off-targets
+#: had been searched over rrna and mito -- the two highest hazard weights in
+#: the package -- against sequences that were never loaded.
 ALL_UNIVERSES: frozenset[Universe] = frozenset(Universe)
+
+#: What the target record is, when the user has not said. Keyed on the assay
+#: because that is the only evidence available: an in-vitro detection run is
+#: designed against a supplied amplicon, an antiviral run against a viral
+#: genome, a knockdown run against a cellular transcript. Every value here was
+#: previously ``NCRNA`` regardless of assay, which is why an in-vitro run
+#: covered neither universe its own assay is exposed to.
+TARGET_BIOTYPE_BY_ASSAY: dict[AssayType, Universe] = {
+    AssayType.IN_VITRO_DETECTION: Universe.SYNTHETIC,
+    AssayType.ANTIVIRAL: Universe.VIRAL,
+    AssayType.CELL_CULTURE_KNOCKDOWN: Universe.CODING,
+    AssayType.IN_VIVO_KNOCKDOWN: Universe.CODING,
+}
 
 #: Kept as the module's public name for callers that imported it, but the
 #: caveats a run actually carries are now *derived* from that run -- see
@@ -70,6 +93,12 @@ class DesignRequest:
 
     effector: str = "LwaCas13a"
     assay: str = "in_vitro_detection"
+    #: What the supplied sequences are. The universe-adequacy gate asks whether
+    #: the corpus covers what the assay exposes the guide to, and it can only
+    #: be answered by labelling the sequences -- a declaration cannot buy
+    #: coverage, because the gate reads what the index holds.
+    target_biotype: str | None = None
+    background_biotype: str = "coding"
     task: str = "detection"
     spacer_length: int | None = None
     max_mismatches: int = 4
@@ -213,11 +242,42 @@ def _resolve_spacer_length(
     return length
 
 
+def _target_biotype(request: DesignRequest) -> Universe:
+    """What the target records are, as the user said or as the run can tell."""
+    if request.target_biotype:
+        return Universe(request.target_biotype)
+    if request.preset:
+        # A preset ships its own biotype -- the shipped ones are miRNAs, and
+        # ncrna is what they are. Letting the assay default overrule it made a
+        # run disagree with `to_target_spec` about the same preset, so the
+        # tests that use `to_target_spec` would have been describing a target
+        # no run produces.
+        try:
+            return get_preset(request.preset).biotype
+        except KeyError:
+            # An unknown preset id has its own legible message further in.
+            pass
+    try:
+        return TARGET_BIOTYPE_BY_ASSAY[AssayType(request.assay)]
+    except ValueError:
+        # An unknown assay string is rejected with a legible message further
+        # in; returning a default here keeps that message the one the user
+        # sees, rather than a KeyError from this helper.
+        return Universe.NCRNA
+
+
 def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
                notes: list[str]) -> ResolvedDesignSpec:
     try:
         effector = Effector(request.effector)
         assay = AssayType(request.assay)
+        target_biotype = _target_biotype(request)
+        # The corpus covers the background's universe too, when one is given.
+        # An overclaim here can only widen the gap the gate reads -- it keys on
+        # what the index holds -- so the safe direction is to name it.
+        corpus = {target_biotype}
+        if request.background_path:
+            corpus.add(Universe(request.background_biotype))
         task = Task(request.task)
     except ValueError as exc:
         raise DesignRequestError(str(exc)) from exc
@@ -239,7 +299,7 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
                     TargetClass.REQUIRED if index == 0 else TargetClass.DESIRED
                 ),
                 gene=record.name,
-                biotype=Universe.NCRNA,
+                biotype=target_biotype,
                 expression=request.expression,
             )
             for index, record in enumerate(records)
@@ -253,7 +313,11 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
                 organism=request.organism,
                 genome_build=request.genome_build,
                 annotation_version=request.annotation,
-                declared_universes=ALL_UNIVERSES,
+                # What the corpus actually holds, not what the search was
+                # willing to admit. `build_spec` sees only the target records;
+                # `run_request` widens this with the accepted --background
+                # loci once it knows which survived.
+                declared_universes=frozenset(corpus),
             ),
             thresholds=Thresholds(
                 required_search_mismatches=request.max_mismatches,
@@ -518,13 +582,20 @@ def run_request(request: DesignRequest) -> DesignOutcome:
     registry = build_registry(request, notes, spec=spec, records=records)
 
     world = Transcriptome(request.genome_build, request.annotation)
+    target_biotype = _target_biotype(request)
     for record in records:
-        world.add(Locus(record.name, record.sequence, Universe.NCRNA,
+        world.add(Locus(record.name, record.sequence, target_biotype,
                         gene=record.name, expression=request.expression))
     background_loci: list[Locus] = []
+    # Every --background record used to be CODING whatever it was, so the two
+    # highest hazard weights in DEFAULT_HAZARD_BY_BIOTYPE -- rRNA at 2.0 and
+    # mito at 1.5 -- were unreachable from the CLI: a user who supplied rRNA
+    # as off-target evidence had it weighted 1.0, like any transcript.
+    background_biotype = Universe(request.background_biotype)
     if request.background_path:
         for record in _read_fasta_or_fail(request.background_path, "--background"):
-            background_loci.append(Locus(record.name, record.sequence, Universe.CODING,
+            background_loci.append(Locus(record.name, record.sequence,
+                                         background_biotype,
                                          gene=record.name, expression=None))
     # Captured before the loop, because the loop grows `world`: testing
     # membership against it made the *second* of two background records sharing

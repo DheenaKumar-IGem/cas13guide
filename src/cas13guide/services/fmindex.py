@@ -202,9 +202,12 @@ class FMIndexSearchIndex:
         checkpoint: int = 512,
     ) -> None:
         self.transcriptome = transcriptome
-        self.universes = universes
+        self.requested_universes = universes
 
         loci = transcriptome.in_universes(universes)
+        # See ExhaustiveScanIndex: the bound reports what is held, not the
+        # filter that was admitted.
+        self.universes = frozenset(locus.biotype for locus in loci)
         # Deterministic order so the index is reproducible across runs.
         loci.sort(key=lambda locus: locus.locus_id)
 
@@ -246,6 +249,7 @@ class FMIndexSearchIndex:
             max_mismatches=max_mismatches,
             wobble_aware=True,
             universes=self.universes,
+            corpus_universes=self.transcriptome.covered_universes(),
             exhaustive=True,
             method=self.version,
             note="BWT backtracking; every string within the budget is enumerated",
