@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1211 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Four of the 47 are
+  survives is re-run against all 1212 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. Four of the 49 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **47 mutations, 47 caught, 0 holes.**
+Last measured: **49 mutations, 49 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -322,6 +322,27 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      'name, _, description = header.partition(" ")',
      'name, _, description = header.partition("_")',
      ["test_the_input_doors_agree.py", "test_bugfix_regressions.py"]),
+    # pipeline/orchestrator.py: which context is *the* reference. Coordinates,
+    # the off-target explorer and the ranked report all read the reference
+    # context; the metrics are aggregated across all of them. Picking a variant
+    # instead still produces a full run with plausible numbers, and every
+    # position it reports is a position on a haplotype the user did not ask
+    # about. Only reachable with --variants, which is exactly where the two
+    # earlier context defects lived.
+    ("orchestrator-picks-a-variant-as-the-reference",
+     "src/cas13guide/pipeline/orchestrator.py",
+     'reference = next((c for c in contexts if c.name == "reference"), contexts[0])',
+     'reference = next((c for c in contexts if c.name != "reference"), contexts[0])',
+     ["test_mutation_holes.py", "test_context_evidence.py", "test_bugfix_regressions_round4.py"]),
+    # contract/spec.py: the gate's own floor. Every threshold here is a default
+    # a caller may override, so nothing about the *value* is sacred -- but the
+    # shipped default is what almost every run is judged against, and lowering
+    # it by a fifth passes guides the gate is written to stop.
+    ("spec-lowers-the-shipped-coverage-floor",
+     "src/cas13guide/contract/spec.py",
+     "    required_coverage_min: Fraction = 0.50",
+     "    required_coverage_min: Fraction = 0.40",
+     ["test_gate.py", "test_mutation_holes.py", "test_decision_order.py"]),
 ]
 
 

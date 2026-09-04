@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1211 tests, run under `unittest` or `pytest` — both discover the same set —
+1212 tests, run under `unittest` or `pytest` — both discover the same set —
 and 91% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -783,8 +783,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1211 tests
-python examples/verify_mutation_coverage.py              # 47 mutations, 47 caught
+pytest                                                   # 1212 tests
+python examples/verify_mutation_coverage.py              # 49 mutations, 49 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -831,7 +831,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole — Four of the 47 are
+against the **whole** suite before being called a hole — Four of the 49 are
 caught only by the full run, so a screening subset would have reported that many
 holes that are not there. It mutates the LCB/UCB asymmetry, the six named
 metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
@@ -888,6 +888,21 @@ off-by-one that would have trained on its own held-out folds, the
 duplicate-column refusal in `ingest.py`, inverting which runs get the collateral
 warning, dropping transcriptome records from the export header, and grouping the
 survivors instead of the failures into the rejection table.
+
+An eleventh came from `pipeline/orchestrator.py`, and working out what it
+actually broke was the instructive part. One line picks which context is *the*
+reference; invert it and a variant is chosen, with the suite green. But each
+context searches its own index either way — the reference only decides which
+one reuses the already-computed search — so the per-context evidence is
+identical, and a test written against the evidence sees nothing. That is what
+the first attempt here did.
+
+What the choice really decides is read from the reference's transcriptome
+directly: the exon-junction map handed to tiling, the envelope escalation, and
+the world the non-targeting controls are screened against. The junction map is
+the one whose absence is silent — `spans_junction` was False on every guide in
+every real run until that wire was added — so a run reading it from the wrong
+world looks exactly like the bug that already happened once. Pinned there.
 
 Four smaller repairs came with it. A mutation whose anchor no longer matches is
 now a **failure** rather than a silent skip — `distinct-sites-best-becomes-worst`

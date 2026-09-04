@@ -31,6 +31,7 @@ asserted the severity it reached them at. That is the last class here, and the
 reason to keep pointing mutations at modules nothing has mutated yet.
 """
 
+import random
 import unittest
 
 from helpers import *  # noqa: F401,F403
@@ -580,6 +581,87 @@ class TestTheHtmlReportMarksItsCriticalNotes(unittest.TestCase):
         page = self._page()
         self.assertIn("SYNTHETIC", page)
         self.assertIn("prediction", page)
+
+
+class TestTheReferenceContextIsTheReferenceOne(unittest.TestCase):
+    """An eleventh hole, in ``pipeline/orchestrator.py``.
+
+    One line decides which context is *the* reference::
+
+        reference = next((c for c in contexts if c.name == "reference"), contexts[0])
+
+    Invert that test and a variant is chosen, with the whole suite green.
+
+    Working out what that actually breaks was the interesting part, and it is
+    less than it first looks. Each context searches its own index either way --
+    ``ctx_outcome = outcome if ctx is reference else run_search(..., ctx.index)``
+    -- so the reference variable only decides which context *reuses* the
+    already-computed outcome, and the per-context evidence is identical. A test
+    written against the evidence sees nothing, which is what the first attempt
+    here did.
+
+    What it does decide is read from the reference's transcriptome directly:
+    the exon-junction map handed to tiling, the envelope escalation, and the
+    world the non-targeting controls are screened against. The junction map is
+    the cleanest of the three to observe, and it is the one whose absence is
+    silent -- ``spans_junction`` was False on every guide in every real run
+    until that wire was added, so a run reading it from the wrong world looks
+    exactly like the bug that already happened once.
+
+    The fixture puts the variant *first*, because the fallback is
+    ``contexts[0]`` and a reference that happens to be first would pass under
+    either version of the line.
+    """
+
+    def _spans_junction(self) -> int:
+        from cas13guide.contract.enums import Universe
+        from cas13guide.pipeline.orchestrator import DesignContext, run_design
+        from cas13guide.services.calibration import CalibrationService
+        from cas13guide.services.indexes import ExhaustiveScanIndex
+        from cas13guide.services.registry import (
+            HeuristicCas13Model,
+            ModelRegistry,
+            NullAccessibilityModel,
+        )
+        from cas13guide.services.transcriptome import Locus, Transcriptome
+
+        spec = make_spec()  # noqa: F405
+        universes = spec.context.declared_universes
+
+        def context(name: str, junctions: tuple) -> DesignContext:
+            world = Transcriptome("GRCh38", "v44")
+            world.add(Locus("L_T1", SEQ_A, Universe.CODING,  # noqa: F405
+                            gene="TGT", expression=100.0, junctions=junctions))
+            return DesignContext(name, world,
+                                 ExhaustiveScanIndex(world, universes),
+                                 {"L_T1": "t1"})
+
+        rng = random.Random(5)
+        calibration = CalibrationService()
+        for regime in ("mm0", "mm1-2", "mm3+"):
+            key = CalibrationService.stratum_key(
+                spec.profile.effector.value, spec.profile.assay.value, regime)
+            for index in range(150):
+                truth = rng.random()
+                calibration.add_observation(
+                    key, min(1.0, max(0.0, truth + rng.gauss(0, 0.1))), truth,
+                    group=f"T{index % 12:02d}")
+
+        # Only the reference world knows where the exon junction is.
+        variant = context("v1", ())
+        reference = context("reference", (30,))
+        report = run_design(
+            spec, [variant, reference],          # deliberately not first
+            ModelRegistry(HeuristicCas13Model(), NullAccessibilityModel()),
+            calibration, panel_size=2,
+        )
+        return sum(1 for entry in report.ranked
+                   if entry.assessment.candidate.spans_junction)
+
+    def test_the_junction_map_comes_from_the_reference_world(self):
+        self.assertGreater(
+            self._spans_junction(), 0,
+            "no guide was marked as spanning the reference world's junction")
 
 
 if __name__ == "__main__":
