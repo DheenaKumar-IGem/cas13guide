@@ -1050,5 +1050,93 @@ class TestTheSecondBoundaryDefenceHolds(unittest.TestCase):
         self.assertEqual(located, (first.locus_id, first.length - 10))
 
 
+class TestTheOffTargetTableShowsTheWorstHits(unittest.TestCase):
+    """The eighteenth and nineteenth holes, both in the table a validation
+    plan points at.
+
+    ``g_output._off_target_rows`` keeps one row per (guide, locus) carrying the
+    *worst* context, then sorts by hazard descending and truncates to a limit.
+    Two rules, neither pinned:
+
+    * sorting ascending puts the mildest hits at the top, and ``rows[:limit]``
+      then keeps the safest -- discarding exactly the rows the table exists to
+      show;
+    * keeping the mildest hit per locus reports a real off-target at a hazard
+      it does not have, in the column a reader ranks by.
+
+    The comment on that column says it runs the same code path as
+    ``worst_off_target`` "so the column a reviewer eyeballs cannot drift from
+    the metric it reproduces". That was true of the number and not of the
+    ordering, and the README tells a reader to "sequence the top off-target
+    loci from the explorer table" -- so an inverted sort sends them to the
+    wrong bench work while every individual hazard on the page stays correct.
+    """
+
+    def _assessment(self, guide_id, hits):
+        """``hits``: (locus_id, activity_upper) per off-target."""
+        from dataclasses import replace
+
+        from cas13guide.contract.enums import ReasonCode, Verdict
+        from cas13guide.models.evidence import Candidate, GateResult, GuideAssessment
+
+        evidence = []
+        for locus_id, upper in hits:
+            # target_class None is the unannotated case, and `is_intended` is
+            # false for it -- which is what makes these off-targets.
+            one = make_evidence(  # noqa: F405
+                0.0, upper, guide_id=guide_id, locus_id=locus_id,
+                target_id=None, target_class=None,
+            )
+            evidence.append(replace(one, hit=replace(one.hit, target_id=None)))
+        return GuideAssessment(
+            guide_id=guide_id,
+            candidate=Candidate(guide_id=guide_id, spacer="GCAUUGCUGUGGAGCUGAAGUC",
+                                source_target_id="t1", start=0),
+            qc=clean_qc(guide_id),  # noqa: F405
+            metrics=MetricVector(0.5, 0.0, 0.0, 0.0, 0.5, 1.0),
+            gate=GateResult(Verdict.PASS, (ReasonCode.CONSTRAINTS_SATISFIED,)),
+            evidence=tuple(evidence),
+            context_evidence=tuple(evidence),
+        )
+
+    def _rows(self, assessments, limit=50):
+        from cas13guide.pipeline.g_output import _off_target_rows
+
+        return _off_target_rows(assessments, limit=limit)
+
+    def test_rows_are_ordered_worst_hazard_first(self):
+        rows = self._rows([self._assessment(
+            "g1", [("mild", 0.10), ("severe", 0.90), ("middling", 0.50)])])
+        hazards = [r["hazard"] for r in rows]
+        self.assertEqual(hazards, sorted(hazards, reverse=True), rows)
+
+    def test_the_limit_keeps_the_worst_not_the_safest(self):
+        """The two rules compound: an ascending sort plus a truncation drops
+        precisely the rows a reader is told to act on."""
+        rows = self._rows([self._assessment(
+            "g1", [("mild", 0.10), ("severe", 0.90), ("middling", 0.50)])], limit=1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["locus"], "severe")
+
+    def test_one_row_per_locus_carries_its_worst_hit(self):
+        """Two hits on one locus collapse to one row, and it must be the worse
+        of them -- the row stands in for the locus."""
+        rows = self._rows([self._assessment(
+            "g1", [("shared", 0.20), ("shared", 0.80)])])
+        self.assertEqual(len(rows), 1, rows)
+        self.assertAlmostEqual(rows[0]["hazard"],
+                               max(r["hazard"] for r in rows), places=9)
+        self.assertGreater(rows[0]["hazard"], 0.2 * 0.5)
+
+    def test_the_hazard_column_matches_the_metric_it_reproduces(self):
+        """The claim the comment beside that column makes."""
+        from cas13guide.metrics.aggregate import pair_hazard
+
+        assessment = self._assessment("g1", [("only", 0.60)])
+        rows = self._rows([assessment])
+        expected = round(pair_hazard(assessment.off_targets()[0]), 4)
+        self.assertAlmostEqual(rows[0]["hazard"], expected, places=9)
+
+
 if __name__ == "__main__":
     unittest.main()

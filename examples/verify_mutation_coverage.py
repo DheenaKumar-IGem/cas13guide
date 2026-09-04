@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1233 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 64 are
+  survives is re-run against all 1237 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. None of the 66 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **64 mutations, 64 caught, 0 holes.**
+Last measured: **66 mutations, 66 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -492,6 +492,24 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "PRESETS_VERIFIED = True",
      "PRESETS_VERIFIED = False",
      ["test_limitations.py", "test_unproduced_limitations.py", "test_presets.py"]),
+    # pipeline/g_output.py: the off-target explorer. This is the table a
+    # validation plan points at -- "sequence the top off-target loci from the
+    # explorer table" -- so its order is not cosmetic. Sorting ascending puts
+    # the mildest hits at the top and `rows[:limit]` then keeps the safest,
+    # discarding exactly the rows the table exists to show.
+    ("off-target-table-lists-the-mildest-first",
+     "src/cas13guide/pipeline/g_output.py",
+     '    rows = sorted(worst_row.values(), key=lambda r: r["hazard"], reverse=True)',
+     '    rows = sorted(worst_row.values(), key=lambda r: r["hazard"])',
+     ["test_mutation_holes.py", "test_rejection_reporting.py", "test_bugfix_regressions.py", "test_gate.py"]),
+    # The same table's other rule: one row per locus, keeping the *worst* hit
+    # on it. Keeping the mildest instead reports a real off-target at a hazard
+    # it does not have, under a column a reader ranks by.
+    ("off-target-row-keeps-the-mildest-hit",
+     "src/cas13guide/pipeline/g_output.py",
+     '            if previous is None or row["hazard"] > previous["hazard"]:',
+     '            if previous is None or row["hazard"] < previous["hazard"]:',
+     ["test_mutation_holes.py", "test_rejection_reporting.py", "test_bugfix_regressions.py"]),
     # services/benchmark.py: the same all([]) hazard as the acceptance gate,
     # on the property both the `check` CI gate and the "conformal coverage"
     # acceptance criterion read. Found by grepping the package for every all()
