@@ -80,9 +80,6 @@ class Transcriptome:
             junctions=locus.junctions,
         )
 
-    def covered_universes(self) -> frozenset[Universe]:
-        return frozenset(locus.biotype for locus in self.loci.values())
-
     def in_universes(self, universes: frozenset[Universe]):
         return [lo for lo in self.loci.values() if lo.biotype in universes]
 

@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 75 are
+  "hole" is never an artefact of which modules were chosen. None of the 79 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **75 mutations, 75 caught, 0 holes.**
+Last measured: **79 mutations, 79 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -609,6 +609,34 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         "SCAN_SECONDS_PER_MB_PER_QUERY = 0.032",
         "SCAN_SECONDS_PER_MB_PER_QUERY = 0.064",
         ["test_index_selection.py"],
+    ),
+    (
+        "terminal-mismatch-weight-raised",
+        "src/cas13guide/util/duplex.py",
+        "TERMINAL_WEIGHT = 0.25",
+        "TERMINAL_WEIGHT = 0.30",
+        ["test_mutation_holes.py"],
+    ),
+    (
+        "expression-saturation-shifted",
+        "src/cas13guide/services/context.py",
+        "SATURATION_K = 50.0",
+        "SATURATION_K = 60.0",
+        ["test_mutation_holes.py"],
+    ),
+    (
+        "homopolymer-limit-relaxed-by-one",
+        "src/cas13guide/pipeline/b_qc.py",
+        "MAX_HOMOPOLYMER = 4",
+        "MAX_HOMOPOLYMER = 5",
+        ["test_mutation_holes.py"],
+    ),
+    (
+        "disfavoured-pfs-penalty-softened",
+        "src/cas13guide/contract/effectors.py",
+        "DISFAVOURED_PFS_FACTOR = 0.55",
+        "DISFAVOURED_PFS_FACTOR = 0.60",
+        ["test_mutation_holes.py"],
     ),
 ]
 

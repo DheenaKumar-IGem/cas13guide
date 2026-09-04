@@ -153,9 +153,16 @@ def seed_weight(spacer_pos: int, length: int, seed_span: tuple[float, float] = S
     if lo <= frac <= hi:
         return 1.0
     # Linear taper to TERMINAL_WEIGHT at each terminus. Each flank is
-    # normalized by *its own* width, so a mismatch at the last spacer position
-    # is penalized exactly as much as one at the first; normalizing both by
-    # the wider flank would make the taper asymmetric for no stated reason.
+    # normalized by *its own* width, so both bottom out at TERMINAL_WEIGHT at
+    # their own end of the spacer; normalizing both by the wider flank would
+    # leave the narrower one short of it for no stated reason.
+    #
+    # That is symmetry in the *endpoints*, not in the positions. This comment
+    # used to claim a mismatch at the last spacer position is penalized
+    # exactly as much as one at the first, which is false: SEED_SPAN is not
+    # centred, so the flanks are 0.35 and 0.25 wide, and the first and last
+    # positions sit the same distance in from each end but are divided by
+    # different widths. On a 28-mer they weigh 0.2883 and 0.3036.
     if frac < lo:
         travelled = (lo - frac) / lo if lo > 0 else 1.0
     else:

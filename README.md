@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1247 tests
+python -m unittest discover -s tests -t tests    # 1257 tests
 pytest                              # same suite under pytest
 ```
 
@@ -784,7 +784,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1247 tests, run under `unittest` or `pytest` — both discover the same set —
+1257 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -796,8 +796,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1247 tests
-python examples/verify_mutation_coverage.py              # 75 mutations, 75 caught
+pytest                                                   # 1257 tests
+python examples/verify_mutation_coverage.py              # 79 mutations, 79 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -844,7 +844,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 75 are
+against the **whole** suite before being called a hole. None of the 79 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -1001,7 +1001,7 @@ differs.
 
 The fourth was a hole. `SCAN_SECONDS_PER_MB_PER_QUERY` is a measurement, and
 doubling it — which reads like an ordinary re-measurement on another machine
--- moved the point where the FM index starts winning from 100.7 Mb to 46.8 Mb
+— moved the point where the FM index starts winning from 100.7 Mb to 46.8 Mb
 with the whole suite green. Every corpus in between changed which index it
 builds and which one it records having built. The module had a test for the
 crossover, and that test says in its own docstring that `CROSSOVER_BASES` is
@@ -1009,6 +1009,59 @@ derived from the constants rather than independent — so it holds whatever they
 become. The boundary is now bracketed in bases, which pins all three constants
 at once, and a genuine re-measurement is meant to fail it: that is when
 somebody checks the table in the module docstring still describes the machine.
+
+### A second batch, aimed at the constants
+
+Constants are where the first batch's one real hole was, so the second went
+looking for more of them. Thirty-five module-level numbers decide something in
+this package. Twenty-nine of them had never been mutated when this batch was
+written, and twenty-five still have not. Six were picked for
+deciding something a user sees, and each was moved by a plausible amount rather
+than a wild one — the question is whether the suite notices a threshold
+shifting, not whether it notices the code breaking. **All six survived a green
+baseline.**
+
+Four were holes and are pinned now. `TERMINAL_WEIGHT` sets how much less a
+terminal mismatch counts than a central one, and raising it 0.25 → 0.30 moves
+every position-weighted penalty, which moves the discrimination margin and the
+ranking. `SATURATION_K` is the half-saturation point for abundance, and 50 → 60
+reweights every expression-based hazard. `MAX_HOMOPOLYMER` is 4, and the test
+for it used a run of six — flagged whether the limit is 4 or 5, so relaxing it
+by one let a five-base run through to an ordered oligo.
+`DISFAVOURED_PFS_FACTOR` is the size of the PFS bias, and softening it 0.55 →
+0.60 moves one of the six named metrics.
+
+Each of those is now tested with a literal rather than against the constant it
+pins, because an assertion written in terms of the constant holds whatever the
+constant becomes. That is the `CROSSOVER_BASES` trap, and it is easy to walk
+back into while writing the fix for it.
+
+The fifth was not a hole and not a no-op: **the code it guards is not
+reachable.** `STRUCTURED_SITE_THRESHOLD` feeds
+`ViennaRNAAccessibilityModel.is_structured`, and nothing calls that method —
+FR3.4 is implemented a second time in the gate, against the spec's
+`min_accessibility`, which is the path that runs. The constant's own comment
+says it is advisory. So the requirement, the constant and the method are all
+real and the path between them is not, and no test could have caught the
+mutation because there is nothing downstream to catch it in.
+
+That one is the more useful finding, because it names a blind spot rather than
+a gap. `verify_nothing_is_computed_for_nobody.py` exists precisely to find
+values computed for nobody, and it walks dataclass fields and properties — not
+methods. A method is a value computed for somebody just as a field is, and
+nothing about being callable makes it called. Walking methods too turned up
+`is_structured` and `Transcriptome.covered_universes`, which had no caller
+anywhere, not even a test; the second was deleted and the first is recorded
+with the reason it has none.
+
+The sixth, `ZERO_HIT_SUSPICION`, is still unpinned and worth saying so. Raising
+it 0.5 → 0.6 changes whether a run widens its search envelope, and the existing
+test escalates all the way to the budget — a fraction far above either
+threshold, so the boundary is again tested away from the boundary. Pinning it
+needs a run whose zero-hit fraction lands between the two, which needs a
+crafted transcriptome rather than a threshold nudged in a fixture. It is not in
+the mutation set, because a mutation nothing catches would make the sweep
+report a permanent hole and stop meaning anything.
 
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the

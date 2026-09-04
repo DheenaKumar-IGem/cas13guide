@@ -383,6 +383,38 @@ def unresolvable_file_citations() -> list[tuple[str, int]]:
             if name not in known]
 
 
+def numeric_constants() -> tuple[int, int]:
+    """``(module-level numeric constants, how many no mutation touches)``.
+
+    The README states both. The first moves when somebody adds a tuning knob;
+    the second moves whenever a mutation is added, which is exactly what the
+    section around it describes doing -- so it is the figure most likely to be
+    left behind by the work it documents.
+    """
+    import ast as _ast
+
+    sys.path.insert(0, str(ROOT / "examples"))
+    import verify_mutation_coverage
+
+    mutation_text = " ".join(m[2] + " " + m[3] for m in verify_mutation_coverage.MUTATIONS)
+    names = []
+    for path in sorted((ROOT / "src" / "cas13guide").rglob("*.py")):
+        if path.name == "_contrafold_kernel.py":
+            continue
+        for node in _ast.parse(path.read_text(encoding="utf-8")).body:
+            if not isinstance(node, (_ast.Assign, _ast.AnnAssign)):
+                continue
+            targets = node.targets if isinstance(node, _ast.Assign) else [node.target]
+            for target in targets:
+                value = node.value
+                if (isinstance(target, _ast.Name) and target.id.isupper()
+                        and isinstance(value, _ast.Constant)
+                        and isinstance(value.value, (int, float))
+                        and not isinstance(value.value, bool)):
+                    names.append(target.id)
+    return len(names), sum(1 for n in names if n not in mutation_text)
+
+
 def documented_word_counts() -> list[tuple[str, int | None, int]]:
     """``(label, what the README spells out, what the tree holds)``.
 
@@ -403,6 +435,10 @@ def documented_word_counts() -> list[tuple[str, int | None, int]]:
                         r"[^*]*[*][*]([0-9, ]+)[*][*]", readme)
     heading = re.search(r"### What ([a-z]+) review passes found", readme)
     needing = re.search(r"([A-Za-z]+) of them need a miRBase", readme)
+    constants = re.search(
+        r"([A-Za-z-]+) module-level numbers decide something in[^.]*[.][^.]*"
+        r"and ([a-z-]+) still have not", readme, re.S)
+    total_constants, untouched = numeric_constants()
 
     parts = ([int(n) for n in batches.group(2).split(",") if n.strip()]
              if batches else [])
@@ -419,6 +455,10 @@ def documented_word_counts() -> list[tuple[str, int | None, int]]:
         ("tests needing a miRBase file",
          words_to_int(needing.group(1)) if needing else None,
          tests_needing_mirbase()),
+        ("module-level numeric constants",
+         words_to_int(constants.group(1)) if constants else None, total_constants),
+        ("constants no mutation touches",
+         words_to_int(constants.group(2)) if constants else None, untouched),
     ]
 
 

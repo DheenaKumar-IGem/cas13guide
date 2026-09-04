@@ -36,9 +36,13 @@ import unittest
 
 from helpers import *  # noqa: F401,F403
 
-from cas13guide.contract.enums import TargetClass
+from cas13guide.contract.effectors import EFFECTORS
+from cas13guide.contract.enums import Effector, QCFlag, TargetClass
 from cas13guide.contract.spec import TargetSpec
 from cas13guide.models.evidence import MetricVector
+from cas13guide.pipeline.b_qc import qc_candidate
+from cas13guide.services.context import abundance_factor
+from cas13guide.util.duplex import SEED_SPAN, seed_weight
 
 #: Three targets that share no 22-mer, so tiling them produces distinct
 #: spacers. `design_candidates` de-duplicates by spacer, so three copies of one
@@ -1203,6 +1207,113 @@ class TestAWhitespacePasteIsNoSequence(unittest.TestCase):
             "AUGGAUUCCAGGCACUUCUCGAUCAUAGGACUCGGUAAUGCCAUGAGUCGAUGGACUUCAGUGCCAUCGAU"
         )
         self.assertEqual(self._error(sequence_text=f"  {target}  "), "")
+
+
+class TestTheSeedTaperKeepsItsShape(unittest.TestCase):
+    """TERMINAL_WEIGHT is a calibration, and calibrations move quietly.
+
+    Raising it from 0.25 to 0.30 changes every position-weighted penalty --
+    a 28-mer with three mismatches goes from 2.0663 to 2.1286 -- which feeds
+    the discrimination margin and the activity model's penalty term, and so
+    the ranking. The whole suite stayed green.
+
+    Pinning the endpoints alone would not catch it: the taper is *defined* as
+    reaching TERMINAL_WEIGHT at each terminus, so an assertion written in
+    terms of the constant holds whatever the constant becomes. That is the
+    same identity trap as CROSSOVER_BASES. These use literals.
+    """
+
+    def test_a_mismatch_inside_the_seed_carries_full_weight(self):
+        for length in (22, 28, 30):
+            with self.subTest(length=length):
+                self.assertEqual(seed_weight(length // 2, length), 1.0)
+
+    def test_the_flanks_taper_to_the_documented_floor(self):
+        """Both flanks bottom out at 0.25, which is what own-width buys."""
+        lo, hi = SEED_SPAN
+        for frac, flank in ((0.0, "5'"), (1.0, "3'")):
+            with self.subTest(flank=flank):
+                # Position that lands exactly on the terminus in frac space.
+                length = 1000
+                pos = frac * length + 0.5
+                self.assertAlmostEqual(seed_weight(pos, length), 0.25, places=6)
+
+    def test_the_first_and_last_positions_are_not_equally_weighted(self):
+        """The taper is symmetric in its endpoints, not in its positions.
+
+        SEED_SPAN is not centred -- the flanks are 0.35 and 0.25 wide -- so
+        the first and last positions sit the same distance in from each end
+        and are divided by different widths. The comment in seed_weight
+        claimed they were penalized exactly alike, which they are not.
+        """
+        first, last = seed_weight(1, 28), seed_weight(28, 28)
+        self.assertNotEqual(first, last)
+        self.assertAlmostEqual(first, 0.288265, places=6)
+        self.assertAlmostEqual(last, 0.303571, places=6)
+
+
+class TestAbundanceHalfSaturatesWhereItSaysItDoes(unittest.TestCase):
+    """SATURATION_K is the half-saturation point, in TPM-like units.
+
+    Shifting it 50 -> 60 moves every abundance factor -- 0.500 to 0.455 at
+    50 TPM -- which reweights every expression-based hazard, and nothing
+    failed. The literal is the point: `abundance_factor(SATURATION_K)` is
+    0.5 whatever SATURATION_K is.
+    """
+
+    def test_fifty_tpm_is_the_half_way_point(self):
+        self.assertAlmostEqual(abundance_factor(50.0), 0.5, places=12)
+
+    def test_the_shape_is_saturating_either_side_of_it(self):
+        self.assertAlmostEqual(abundance_factor(0.0), 0.0, places=12)
+        self.assertLess(abundance_factor(5.0), 0.1)
+        self.assertGreater(abundance_factor(500.0), 0.9)
+
+
+class TestTheHomopolymerLimitFiresAtItsStatedLength(unittest.TestCase):
+    """MAX_HOMOPOLYMER is 4, and the existing test used a run of six.
+
+    Six is flagged whether the limit is 4 or 5, so relaxing the limit by one
+    -- which reads like an ordinary loosening -- passed the whole suite while
+    letting a five-base run through to an ordered oligo. The boundary tested
+    away from the boundary, again.
+    """
+
+    def test_a_run_of_four_is_allowed(self):
+        cand = Candidate("g", "GCAUUGCUGGGGCUGAAGUCAU", "t1", 0)
+        self.assertNotIn(QCFlag.HOMOPOLYMER_RUN,
+                         qc_candidate(cand, make_spec()).flags)
+
+    def test_a_run_of_five_is_flagged(self):
+        cand = Candidate("g", "GCAUUGCUGGGGGCUGAAGUCA", "t1", 0)
+        self.assertIn(QCFlag.HOMOPOLYMER_RUN,
+                      qc_candidate(cand, make_spec()).flags)
+
+
+class TestADisfavouredPfsCostsWhatItSaysItCosts(unittest.TestCase):
+    """DISFAVOURED_PFS_FACTOR is a bias, and its size is the claim.
+
+    Softening it 0.55 -> 0.60 moves the pfs_preference metric -- one of the
+    six named metrics, and an input to the ranking -- for every candidate
+    with a disfavoured flanking base, with the suite green. Only LwaCas13a
+    publishes a preferred set (3' A/U/C), so exactly one flank is reachable.
+    """
+
+    def _policy(self):
+        return EFFECTORS[Effector.LWA_CAS13A].pfs
+
+    def test_a_preferred_flank_costs_nothing(self):
+        self.assertEqual(self._policy().preference(None, "A"), 1.0)
+
+    def test_a_disfavoured_flank_costs_the_documented_factor(self):
+        self.assertAlmostEqual(self._policy().preference(None, "G"), 0.55,
+                               places=12)
+
+    def test_an_unread_flank_is_not_a_disfavoured_one(self):
+        """Absence of evidence is not a disfavoured base -- the docstring."""
+        for flank in (None, "N"):
+            with self.subTest(flank=flank):
+                self.assertEqual(self._policy().preference(None, flank), 1.0)
 
 
 if __name__ == "__main__":

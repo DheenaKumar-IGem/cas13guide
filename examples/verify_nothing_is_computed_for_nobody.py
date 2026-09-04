@@ -62,6 +62,9 @@ TESTS = ROOT / "tests"
 #: that adding to this list is a decision somebody made rather than a way to
 #: quiet the check.
 ALLOWED: dict[str, str] = {
+    "do_GET": "dispatched by name from BaseHTTPRequestHandler, so the caller is in the standard library and no walk over src/ can see it. `do_POST` escapes this list only because a docstring happens to name it, which is the string-constant over-report this file documents",
+    "log_message": "same: BaseHTTPRequestHandler calls it for every request. Overridden here to keep the access log off stdout, so having no caller in src/ is the point of it",
+    "is_structured": "FR3.4 has two implementations and only one path. The gate reads Thresholds.min_accessibility, a spec decision defaulting to off; this reads STRUCTURED_SITE_THRESHOLD, whose own comment calls itself advisory. Kept because the requirement is real and this is its reporting form, but nothing in the package reports it, and the constant exists only to feed this method",
     "collateral_active": (
         "a biological fact about the ortholog, true for all three shipped "
         "effectors. It documents the assumption `predicted_signal` rests on; "
@@ -86,7 +89,7 @@ ALLOWED: dict[str, str] = {
 
 
 def _declared() -> dict[str, list[str]]:
-    """Dataclass fields, and the properties beside them.
+    """Dataclass fields, the properties beside them, and the plain methods.
 
     Fields only, at first. That missed `SignalPrediction.saturated` -- computed
     on every prediction, read by one test and nothing in the package, while the
@@ -94,6 +97,15 @@ def _declared() -> dict[str, list[str]]:
     saturating assay may rank. A property is exactly the shape a
     computed-but-unread *guard* takes, and guards are what this codebase
     accumulates: the standard fix for two surfaces disagreeing is to add one.
+
+    Methods came third, and found two more. A method is a value computed for
+    somebody just as a field is, and nothing about being callable makes it
+    called: ``ViennaRNAAccessibilityModel.is_structured`` implements FR3.4
+    against a module constant that exists only to feed it, while the gate
+    implements FR3.4 separately against the spec threshold -- so the
+    constant, the method and the requirement they name are all real, and the
+    path between them is not. ``Transcriptome.covered_universes`` had no
+    caller anywhere, not even a test.
     """
     found: dict[str, list[str]] = collections.defaultdict(list)
     for path in SRC.rglob("*.py"):
@@ -108,9 +120,7 @@ def _declared() -> dict[str, list[str]]:
                 if (is_dataclass and isinstance(stmt, ast.AnnAssign)
                         and isinstance(stmt.target, ast.Name)):
                     name = stmt.target.id
-                elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
-                    ast.unparse(d) == "property" for d in stmt.decorator_list
-                ):
+                elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     name = stmt.name
                 else:
                     continue
@@ -146,7 +156,7 @@ def main() -> int:
             continue
         (tests_only if name in in_tests else unread).append((name, owners))
 
-    print(f"{len(declared)} public fields and properties declared")
+    print(f"{len(declared)} public fields, properties and methods declared")
 
     # A scraped inventory can come back empty, and this file's whole result is
     # a statement about what is *missing* from it: with nothing declared,
