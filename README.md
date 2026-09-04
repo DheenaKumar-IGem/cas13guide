@@ -784,7 +784,7 @@ worth.
 
 ```bash
 pytest                                                   # 1211 tests
-python examples/verify_mutation_coverage.py              # 45 mutations, 45 caught
+python examples/verify_mutation_coverage.py              # 47 mutations, 47 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -831,7 +831,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole — Three of the 45 are
+against the **whole** suite before being called a hole — Four of the 47 are
 caught only by the full run, so a screening subset would have reported that many
 holes that are not there. It mutates the LCB/UCB asymmetry, the six named
 metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
@@ -889,7 +889,7 @@ duplicate-column refusal in `ingest.py`, inverting which runs get the collateral
 warning, dropping transcriptome records from the export header, and grouping the
 survivors instead of the failures into the rejection table.
 
-Three smaller repairs came with it. A mutation whose anchor no longer matches is
+Four smaller repairs came with it. A mutation whose anchor no longer matches is
 now a **failure** rather than a silent skip — `distinct-sites-best-becomes-worst`
 had stopped running when its code moved and the sweep still reported success.
 An anchor that matches more than once is a failure too: `wobble-rule-dropped`
@@ -898,6 +898,14 @@ rename and therefore a no-op, and it only ever passed because two other modules
 import that name and the suite died of an `ImportError`. And the sweep now
 refuses to run at all from a red baseline, which is what surfaced the original
 problem.
+
+The fourth is the same shape as the first three and was found by typing two
+module names that did not exist. Each mutation names the test modules that
+ought to catch it, and `pytest tests/nope.py` exits 4 — which the sweep read as
+"the suite went red", reporting the mutation caught without ever judging it. A
+stale hint would therefore convert a mutation into a permanent, silent false
+pass. The other 45 hints were checked and all resolve, so nothing historical
+rests on it; a missing module is now a failure like a missing anchor.
 
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the

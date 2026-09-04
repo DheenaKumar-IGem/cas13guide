@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1211 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Three of the 45 are
+  "hole" is never an artefact of which modules were chosen. Four of the 47 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **45 mutations, 45 caught, 0 holes.**
+Last measured: **47 mutations, 47 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -302,6 +302,26 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "if header.count(name) > 1}",
      "if header.count(name) > 2}",
      ["test_bugfix_hunt_round12.py", "test_ingest.py"]),
+    # services/workflow.py: the duplicate-name guard on --background. Comparing
+    # the id against the wrong collection is always False, so the guard stops
+    # dropping repeats -- and a world keys loci by name, so the *last* copy
+    # silently overwrites the first. The note still says only the first was
+    # searched. Round four fixed this; nothing has mutated the module since.
+    ("background-dedup-tests-the-wrong-collection",
+     "src/cas13guide/services/workflow.py",
+     "        if locus.locus_id in seen_background:",
+     "        if locus.locus_id in accepted_background:",
+     ["test_bugfix_regressions_round4.py", "test_the_input_doors_agree.py"]),
+    # services/fasta.py: where a record's name comes from. Splitting the header
+    # on the wrong character renames every locus containing that character --
+    # ">ENST00000_1" becomes "ENST00000" -- so provenance, off-target rows and
+    # the target map all name something that was never in the file. Nothing
+    # crashes; the identifiers are simply not the ones the user supplied.
+    ("fasta-splits-the-header-on-the-wrong-character",
+     "src/cas13guide/services/fasta.py",
+     'name, _, description = header.partition(" ")',
+     'name, _, description = header.partition("_")',
+     ["test_the_input_doors_agree.py", "test_bugfix_regressions.py"]),
 ]
 
 
@@ -386,6 +406,20 @@ def main() -> int:
             # printed "Every mutation was caught" and exited 0. An instrument
             # whose job is finding unpinned behaviour must not quietly stop
             # testing something and call that success.
+            # A screening module that does not exist is worse than a wrong
+            # one. `pytest tests/nope.py` exits 4, the sweep reads any non-zero
+            # exit as "the suite went red", and the mutation is reported caught
+            # without ever having been judged. A stale hint would therefore
+            # convert a mutation into a guaranteed false pass, silently and
+            # permanently. Found by typing two module names that did not exist;
+            # the other 45 hints were checked and all resolve.
+            absent = [m for m in modules if not (root / "tests" / m).is_file()]
+            if absent:
+                reason = f"screening module(s) not found: {', '.join(absent)}"
+                print(f"[BROKEN] {name}: {reason}")
+                broken.append(f"{name} ({reason})")
+                continue
+
             occurrences = before.count(original_code)
             if occurrences != 1:
                 reason = ("anchor no longer present -- has the code moved?"
@@ -416,8 +450,9 @@ def main() -> int:
     print(f"{checked} of {len(MUTATIONS)} mutation(s) applied, {len(holes)} survived.")
     if broken:
         print()
-        print("Anchors that no longer identify one place -- these mutations did")
-        print("NOT run, so nothing below is evidence about what they guard:")
+        print("These mutations did NOT run -- an anchor that no longer")
+        print("identifies exactly one place, or a screening module that is not")
+        print("there. Nothing above is evidence about what they guard:")
         for item in broken:
             print(f"  {item}")
     if holes:
