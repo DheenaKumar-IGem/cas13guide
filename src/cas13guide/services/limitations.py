@@ -417,9 +417,10 @@ def limitations_for_run(
                 "cover: " + ", ".join(sorted(u.value for u in universe_gaps))
                 + ". A missing universe does not produce a warning-shaped result, "
                 "it produces a suspiciously clean one. Load sequences from it "
-                "with --background and say what they are with "
-                "--background-biotype; a universe with no sequence in the "
-                "corpus is not searched, whatever the run declares.",
+                "with --background, labelling each record in its FASTA header "
+                "(>id biotype=rrna) or the whole file with --background-biotype; "
+                "a universe with no sequence in the corpus is not searched, "
+                "whatever the run declares.",
             )
         )
 

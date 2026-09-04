@@ -478,5 +478,105 @@ class TestTheBackgroundSaysWhatItIs(unittest.TestCase):
         self.assertGreater(worst_rrna, worst_coding)
 
 
+class TestOneBackgroundFileCanHoldSeveralUniverses(unittest.TestCase):
+    """``biotype=`` in a FASTA header, so a corpus can cover what an assay needs.
+
+    ``--background-biotype`` labels the whole file, which caps a corpus at two
+    universes: the target's and the background's. ``cell_culture_knockdown`` is
+    exposed to five, so through this door the adequacy gate was unsatisfiable
+    however the user labelled the file -- and the limitation that fires told
+    them to reach for the flag that cannot get there.
+    """
+
+    ASSAY = "cell_culture_knockdown"
+
+    @classmethod
+    def setUpClass(cls):
+        import random
+
+        rng = random.Random(23)
+        cls._directory = tempfile.TemporaryDirectory()
+        cls.home = Path(cls._directory.name)
+        eol = chr(10)
+
+        def seq(n):
+            return "".join(rng.choice("ACGU") for _ in range(n))
+
+        (cls.home / "t.fa").write_text(
+            ">TGT1" + eol + seq(300) + eol, encoding="utf-8")
+        labelled = []
+        for name, biotype in (("RN18S1", "rrna"), ("MT-CO1", "mito"),
+                              ("LINC01", "ncrna"), ("PREM1", "pre_mrna")):
+            labelled += [">" + name + " biotype=" + biotype, seq(400)]
+        (cls.home / "mixed.fa").write_text(
+            eol.join(labelled) + eol, encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._directory.cleanup()
+
+    def _run(self, background="mixed.fa", **extra):
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        return run_request(DesignRequest(
+            fasta_path=str(self.home / "t.fa"),
+            background_path=str(self.home / background),
+            task="knockdown", assay=self.ASSAY, effector="RfxCas13d",
+            use_structure=False, use_signal=False, **extra,
+        )).report
+
+    def test_each_record_lands_in_the_universe_its_header_names(self):
+        report = self._run()
+        by_locus = {row["locus"]: row["biotype"] for row in report["off_targets"]}
+        # Only loci that produced a hit appear, so assert over what is there.
+        for locus, biotype in by_locus.items():
+            expected = {"RN18S1": "rrna", "MT-CO1": "mito",
+                        "LINC01": "ncrna", "PREM1": "pre_mrna"}.get(locus)
+            if expected:
+                self.assertEqual(biotype, expected, locus)
+
+    def test_the_corpus_now_covers_what_the_assay_is_exposed_to(self):
+        """The whole point: this assay could not reach PASS before."""
+        from cas13guide.contract.enums import ASSAY_REQUIRED_UNIVERSES, AssayType
+
+        report = self._run()
+        required = ASSAY_REQUIRED_UNIVERSES[AssayType(self.ASSAY)]
+        searched = {
+            item["text"] for item in report["limitations"]
+            if item["id"] == "search-scope-is-what-you-loaded"
+        }
+        [sentence] = searched
+        for universe in required:
+            self.assertIn(universe.value, sentence)
+        self.assertFalse(
+            [item for item in report["limitations"] if item["id"] == "universe-gap"],
+            "a corpus covering every required universe still reported a gap",
+        )
+        self.assertGreater(report["verdict_counts"]["PASS"], 0)
+
+    def test_an_unlabelled_record_takes_the_files_default(self):
+        eol = chr(10)
+        (self.home / "plain.fa").write_text(
+            ">BG1" + eol + ("AAGAAC" * 60) + eol, encoding="utf-8")
+        report = self._run(background="plain.fa", background_biotype="rrna")
+        for row in report["off_targets"]:
+            if row["locus"] == "BG1":
+                self.assertEqual(row["biotype"], "rrna")
+
+    def test_an_unknown_biotype_names_the_flag_and_the_valid_values(self):
+        from cas13guide.services.workflow import DesignRequestError
+
+        eol = chr(10)
+        (self.home / "bad.fa").write_text(
+            ">BG1 biotype=ribosomal" + eol + ("AAGAAC" * 60) + eol,
+            encoding="utf-8")
+        with self.assertRaises(DesignRequestError) as caught:
+            self._run(background="bad.fa")
+        message = str(caught.exception)
+        self.assertIn("--background", message)
+        self.assertIn("ribosomal", message)
+        self.assertIn("rrna", message)
+
+
 if __name__ == "__main__":
     unittest.main()

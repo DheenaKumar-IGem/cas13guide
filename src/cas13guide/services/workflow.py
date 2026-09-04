@@ -242,6 +242,30 @@ def _resolve_spacer_length(
     return length
 
 
+def _record_biotype(record, default: Universe, flag: str) -> Universe:
+    """The universe one supplied record belongs to.
+
+    ``biotype=`` in the FASTA description labels a single record, so one file
+    can hold the several universes an assay is exposed to; ``default`` is what
+    the caller said about the file as a whole. Without this a corpus could
+    cover at most two universes -- the target's and the background's -- and
+    cell_culture_knockdown is exposed to five, so the adequacy gate was
+    unsatisfiable through this door however the user labelled the file.
+    """
+    for token in record.description.split():
+        key, sep, value = token.partition("=")
+        if sep and key.lower() == "biotype":
+            try:
+                return Universe(value.strip().lower())
+            except ValueError:
+                raise DesignRequestError(
+                    f"{flag} record {record.name!r} carries "
+                    f"biotype={value!r}, which is not a universe. Use one of: "
+                    + ", ".join(sorted(u.value for u in Universe))
+                ) from None
+    return default
+
+
 def _target_biotype(request: DesignRequest) -> Universe:
     """What the target records are, as the user said or as the run can tell."""
     if request.target_biotype:
@@ -594,9 +618,13 @@ def run_request(request: DesignRequest) -> DesignOutcome:
     background_biotype = Universe(request.background_biotype)
     if request.background_path:
         for record in _read_fasta_or_fail(request.background_path, "--background"):
-            background_loci.append(Locus(record.name, record.sequence,
-                                         background_biotype,
-                                         gene=record.name, expression=None))
+            background_loci.append(Locus(
+                record.name, record.sequence,
+                # Per record, so one pulled corpus can hold the rRNA, mito and
+                # ncRNA the assay is exposed to rather than one universe at a
+                # time. See `_record_biotype`.
+                _record_biotype(record, background_biotype, "--background"),
+                gene=record.name, expression=None))
     # Captured before the loop, because the loop grows `world`: testing
     # membership against it made the *second* of two background records sharing
     # a name take the target-collision branch, which silently dropped a locus
