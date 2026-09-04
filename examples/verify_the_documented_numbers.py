@@ -240,6 +240,35 @@ def measured_flip_rate(seed: int = 12345, n: int = 20_000) -> float:
 #: designability note beside it was still exact, so the risk is real and
 #: unevenly distributed, which is the argument for checking rather than
 #: reading.
+def vocabulary_size() -> int:
+    """How many distinct things this package can say to a user.
+
+    The four vocabularies `verify_vocabulary_coverage.py` reports on, counted
+    without running the suite: three enums and the limitation ids scraped from
+    the source. The README quotes "52 of 52 things it can say", and the
+    denominator is the half that drifts -- adding a reason code or a limitation
+    moves it, and nothing about writing one prompts you to update a figure two
+    files away. The numerator needs a whole suite run to establish and stays
+    the instrument's job.
+    """
+    import ast
+
+    from cas13guide.contract.enums import QCFlag, ReasonCode, ReviewTier
+
+    tree = ast.parse(
+        (ROOT / "src/cas13guide/services/limitations.py").read_text(encoding="utf-8"))
+    limitations = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "Limitation"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    }
+    return len(ReasonCode) + len(limitations) + len(QCFlag) + len(ReviewTier)
+
+
 def quoted_tool_messages() -> list[tuple[str, str, str]]:
     """``(label, what the README says, what the package says)``."""
     from cas13guide.contract.enums import Effector
@@ -424,7 +453,23 @@ def main() -> int:
                  f"prose says {claimed}, the block lists {actual}"):
         failures.append("the README miscounts its own verification commands")
 
-    # ---- 4. messages the README quotes as the package's own output -------
+    # ---- 4. how many things the package can say --------------------------
+    print()
+    print("the size of the vocabulary the README quotes")
+    stated = re.search(r"verify_vocabulary_coverage\.py\s+#\s*(\d+) of (\d+) things",
+                       README.read_text(encoding="utf-8"))
+    size = vocabulary_size()
+    if not check(f"the denominator is the vocabulary's size ({size})",
+                 bool(stated) and int(stated.group(2)) == size,
+                 f"README says {stated.group(2) if stated else '(not found)'}, "
+                 f"the package can say {size} things"):
+        failures.append("the documented vocabulary size is stale")
+    if not check("and it does not claim more produced than exist",
+                 bool(stated) and int(stated.group(1)) <= size,
+                 f"claims {stated.group(1) if stated else '?'} of {size}"):
+        failures.append("the documented vocabulary coverage exceeds the vocabulary")
+
+    # ---- 5. messages the README quotes as the package's own output -------
     print()
     print("messages the README quotes as output")
     for label, quoted, actual in quoted_tool_messages():
@@ -434,7 +479,7 @@ def main() -> int:
                      f"  ||  package: {actual[:90]}"):
             failures.append(f"the README misquotes the {label}")
 
-    # ---- 5. the size of the mutation set -------------------------------
+    # ---- 6. the size of the mutation set -------------------------------
     print()
     print("the mutation sweep's size, wherever the documents state it")
     size = mutation_set_size()
@@ -463,7 +508,7 @@ def main() -> int:
                  f"claims {sorted(set(caught.values()))} caught of {size}"):
         failures.append("more mutations are claimed caught than the sweep carries")
 
-    # ---- 6. the most-repeated figure in the repository -------------------
+    # ---- 7. the most-repeated figure in the repository -------------------
     print()
     print("the DR-interaction flip rate, stated in four files")
     stated = stated_flip_rates()
@@ -487,7 +532,7 @@ def main() -> int:
                      f"documents say {claimed}%, re-measured {measured:.2f}%"):
             failures.append("the stated flip rate is stale")
 
-    # ---- 7. the defect count is a count of something -------------------
+    # ---- 8. the defect count is a count of something -------------------
     print()
     print("the defect count the page closes on")
     stated = re.search(r"have fixed (\d+) defects", PAGE.read_text(encoding="utf-8"))
@@ -498,7 +543,7 @@ def main() -> int:
                  f"the tree holds {counted}"):
         failures.append("the stated defect count is not what the tree holds")
 
-    # ---- 8. the worked example re-derives --------------------------------
+    # ---- 9. the worked example re-derives --------------------------------
     print()
     print("the worked example the page invites a reader to check by hand")
     from cas13guide.util.seq import revcomp
