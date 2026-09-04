@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1212 tests, run under `unittest` or `pytest` — both discover the same set —
+1215 tests, run under `unittest` or `pytest` — both discover the same set —
 and 91% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -783,8 +783,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1212 tests
-python examples/verify_mutation_coverage.py              # 49 mutations, 49 caught
+pytest                                                   # 1215 tests
+python examples/verify_mutation_coverage.py              # 51 mutations, 51 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -831,7 +831,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole — Four of the 49 are
+against the **whole** suite before being called a hole — Four of the 51 are
 caught only by the full run, so a screening subset would have reported that many
 holes that are not there. It mutates the LCB/UCB asymmetry, the six named
 metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
@@ -903,6 +903,37 @@ the world the non-targeting controls are screened against. The junction map is
 the one whose absence is silent — `spans_junction` was False on every guide in
 every real run until that wire was added — so a run reading it from the wrong
 world looks exactly like the bug that already happened once. Pinned there.
+
+A twelfth, in `cli.py`, guarded a fix that had already been made once. `rows`
+is the display list — through the distinct-site filter and `--top` — while
+`all_rows` is what the run produced, and the branch telling them apart reads
+`elif all_rows:`. Reading `rows` instead prints "no guide cleared the gate"
+whenever a display limit empties the table, beside exports carrying every one
+of those guides. The comment on that line records the defect; nothing pinned
+the correction, so any refactor mistaking the two names could have reverted it
+in silence.
+
+The fifth way it could report success without measuring anything turned up
+while closing that twelfth hole, and it is the largest of them. cas13guide is
+installed editable, and an editable install points at the *real* `src/`.
+`tests/helpers.py` puts the copy's `src` first on `sys.path`, so tests running
+in-process do exercise the mutated code — but any test that shells out
+(`python -m cas13guide.cli …`) starts a fresh interpreter, which resolves the
+package through the editable install and imports the **unmutated original**.
+
+Every subprocess-based test was therefore contributing nothing to mutation
+coverage, and doing it silently: it passed under the mutation because it never
+ran the mutation. That is most of the coverage of the terminal door, the demo,
+and the checks that caveats reach every surface. It was caught because a
+`cli.py` mutation that a subprocess-driven test catches in the real tree came
+back from the sweep as a hole. `PYTHONPATH` takes precedence over the editable
+install's finder and children inherit it, so the sweep now puts the copy in
+front for the whole process tree.
+
+Five ways, then, in which this instrument could say "0 holes" without having
+asked: a red baseline, a missing anchor, an ambiguous anchor, a screening
+module that does not exist, and a subprocess importing the code it was
+supposed to be testing a mutation of. All five now fail loudly.
 
 Four smaller repairs came with it. A mutation whose anchor no longer matches is
 now a **failure** rather than a silent skip — `distinct-sites-best-becomes-worst`

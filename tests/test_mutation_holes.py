@@ -664,5 +664,79 @@ class TestTheReferenceContextIsTheReferenceOne(unittest.TestCase):
             "no guide was marked as spanning the reference world's junction")
 
 
+class TestAnEmptyTableIsNotAnEmptyRun(unittest.TestCase):
+    """A twelfth hole, in ``cli.py``, guarding a fix nothing had pinned.
+
+    ``rows`` is the *display* list: it has been through the distinct-site
+    filter and ``--top``. ``all_rows`` is what the run produced. The branch
+    that distinguishes them reads ``elif all_rows:``, and reading ``rows``
+    instead prints "no guide cleared the gate" whenever a display limit
+    empties the table -- next to exports carrying every one of those guides.
+
+    The comment beside that line records this as a defect that was already
+    found and fixed once. Nothing pinned the fix, so it could have been
+    reverted by any refactor that mistook the two names for each other.
+
+    Driven through the terminal rather than by calling the function, because
+    the defect is in what a user reads.
+    """
+
+    TARGET = (
+        "GGACAUCGAAUCGCGGAACUUGGCAUCAAGCUAGCUAGGCAUCGAUCGAUCAGCUAGCAUCGAUCGGAUCC"
+        "AUGGAUUCCAGGCACUUCUCGAUCAUAGGACUCGGUAAUGCCAUGAGUCGAUGGACUUCAGUGCCAUCGAU"
+    )
+
+    def _run(self, *extra):
+        import pathlib as _pathlib
+        import subprocess
+        import sys
+        import tempfile
+
+        root = _pathlib.Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as directory:
+            fasta = _pathlib.Path(directory) / "t.fa"
+            newline = chr(10)
+            fasta.write_text(f">T1{newline}{self.TARGET}{newline}",
+                             encoding="utf-8")
+            done = subprocess.run(
+                [sys.executable, "-m", "cas13guide.cli", "design",
+                 "--fasta", str(fasta), "--task", "knockdown",
+                 "--assay", "cell_culture_knockdown", "--no-signal",
+                 "--out", str(_pathlib.Path(directory) / "out"), "--stem", "d",
+                 *extra],
+                cwd=root, capture_output=True, text=True, timeout=900,
+            )
+        return done.stdout
+
+    def test_a_display_limit_does_not_report_an_empty_run(self):
+        """--top 0 empties the table while the run ranked guides."""
+        out = self._run("--top", "0")
+        self.assertIn("none displayed", out)
+        self.assertNotIn("no guide cleared the gate", out)
+
+    def test_it_counts_what_the_run_produced_not_what_was_shown(self):
+        """`all_rows`, not `shown`: the count must not move with --all-sites,
+        a display flag, in the one sentence that says what the run produced."""
+        import re
+
+        plain = re.search(r"(\d+) guide\(s\) ranked, none displayed",
+                          self._run("--top", "0"))
+        every = re.search(r"(\d+) guide\(s\) ranked, none displayed",
+                          self._run("--top", "0", "--all-sites"))
+        self.assertIsNotNone(plain)
+        self.assertIsNotNone(every)
+        self.assertEqual(plain.group(1), every.group(1))
+
+    def test_a_run_that_shows_its_table_says_neither(self):
+        """The complement, on a fixture that is known to rank guides: when the
+        table prints, neither empty-run message may appear. Without this the
+        first two tests would pass on a build that printed the "none
+        displayed" line unconditionally."""
+        out = self._run("--top", "5")
+        self.assertIn("rank", out)
+        self.assertNotIn("none displayed", out)
+        self.assertNotIn("no guide cleared the gate", out)
+
+
 if __name__ == "__main__":
     unittest.main()

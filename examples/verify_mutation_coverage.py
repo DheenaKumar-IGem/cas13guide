@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1212 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Four of the 49 are
+  survives is re-run against all 1215 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. Four of the 51 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,11 +36,12 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **49 mutations, 49 caught, 0 holes.**
+Last measured: **51 mutations, 51 caught, 0 holes.**
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -343,6 +344,25 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "    required_coverage_min: Fraction = 0.50",
      "    required_coverage_min: Fraction = 0.40",
      ["test_gate.py", "test_mutation_holes.py", "test_decision_order.py"]),
+    # services/blast.py: the honesty flag on a seeded search. BLAST cannot say
+    # it looked everywhere -- a site whose differences leave no exact word
+    # intact is never found -- and the gate turns exhaustive=False into an R2
+    # REVIEW. Claiming True lets guides PASS on a search that did not cover
+    # what a PASS implies it covered, and nothing else about the run changes.
+    ("blast-claims-it-searched-everywhere",
+     "src/cas13guide/services/blast.py",
+     "            exhaustive=False,",
+     "            exhaustive=True,",
+     ["test_blast.py", "test_search.py", "test_gate.py"]),
+    # cli.py: "no guide cleared the gate" against "a display filter emptied the
+    # list". `rows` has been through the distinct-site filter and --top; only
+    # `all_rows` says what the run actually produced. Reading the display list
+    # prints something false about the run, next to exports carrying every one
+    # of those guides -- which is the defect the comment beside it records.
+    ("cli-reports-the-display-filter-as-an-empty-run",
+     "src/cas13guide/cli.py",
+     "    elif all_rows:", "    elif rows:",
+     ["test_mutation_holes.py", "test_subcommands_end_to_end.py", "test_module_entry_point.py"]),
 ]
 
 
@@ -350,7 +370,25 @@ def _run(root: Path, modules: list[str] | None) -> tuple[bool, str]:
     command = [sys.executable, "-m", "pytest", "-q", "-x", "--no-header",
                "-p", "no:cacheprovider"]
     command += [f"tests/{name}" for name in modules] if modules else ["tests"]
-    done = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=3600)
+    # PYTHONPATH, or the sweep cannot see half of what it thinks it tests.
+    #
+    # cas13guide is installed editable, and an editable install points at the
+    # *real* src/. `tests/helpers.py` puts the copy's src first on sys.path, so
+    # tests running in-process do import the mutated code -- but any test that
+    # shells out (`python -m cas13guide.cli ...`) starts a fresh interpreter,
+    # which resolves the package through the editable install and imports the
+    # unmutated original. Every subprocess-based test therefore contributed
+    # nothing to mutation coverage, silently: it passed under the mutation
+    # because it never ran the mutation.
+    #
+    # Measured on a mutation in `cli.py` that a subprocess-driven test catches
+    # in the real tree and the sweep called a hole. PYTHONPATH takes precedence
+    # over the editable install's finder, and children inherit it, so this puts
+    # the copy in front for the whole process tree.
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(root / "src")
+    done = subprocess.run(command, cwd=root, env=environment,
+                          capture_output=True, text=True, timeout=3600)
     return done.returncode == 0, (done.stdout.strip().splitlines() or [""])[-1]
 
 
