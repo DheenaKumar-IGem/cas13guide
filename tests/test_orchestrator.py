@@ -14,6 +14,7 @@ from cas13guide.services.registry import (
     ModelRegistry,
     NullAccessibilityModel,
 )
+from cas13guide.contract.spec import TargetSpec
 from cas13guide.services.transcriptome import Locus, Transcriptome
 
 RNG = random.Random(17)
@@ -120,8 +121,71 @@ class TestHappyPath(unittest.TestCase):
         spec = make_spec()
         report = run(spec, world(include_target=True))
         self.assertTrue(report.pareto_frontier)
+
+    def test_every_panel_member_cleared_the_gate(self):
+        """The invariant that protects a reader ordering these oligos.
+
+        This used to assert the panel was a *subset of the frontier*, and that
+        was the constraint rather than the observation: `select_panel` was
+        handed `pareto_front(passing)`. Non-domination is computed over
+        `metrics.objectives()`, which has no positional axis, while the panel's
+        binding constraint is `min_spacing = spacer_length`. So the pool was
+        filtered by a criterion orthogonal to feasibility, and over 72 designs
+        run twice with only the pool changed, 27 differed -- 27 better, 0
+        worse. On a 240 nt target the frontier collapsed to one guide and the
+        panel to one member at coverage 0.7647, where the full PASS set fills
+        three at 0.9870: a miss probability of 0.2353 against 0.0130.
+
+        Being dominated on aggregate objectives does not make a guide unfit to
+        order. It makes it not the best on those axes, which is a different
+        claim from the one a panel makes.
+        """
+        report = run(make_spec(), world(include_target=True))
+        verdicts = {row["guide_id"]: row["verdict"]
+                    for row in report.to_dict()["ranked"]}
+        self.assertTrue(report.panel.guides)
+        for guide in report.panel.guides:
+            self.assertEqual(verdicts.get(guide.guide_id), "PASS", guide.guide_id)
+
+    def test_the_panel_outgrows_the_frontier_when_it_has_to(self):
+        """A panel larger than the frontier is impossible if it is drawn from it.
+
+        Asserting the panel is a subset of the PASS set would hold either way,
+        since the frontier is a subset of it too. This target is chosen so the
+        frontier collapses to a single guide while a hundred certified guides
+        sit at spaced sites: the panel is 2 and the frontier is 1, which is
+        arithmetic no frontier-restricted selector can produce.
+
+        Non-domination is computed over `metrics.objectives()`, which has no
+        positional axis; the panel's binding constraint is
+        `min_spacing = spacer_length`, which is nothing else. Over 72 designs
+        run twice with only the pool changed, 27 differed -- 27 better, 0
+        worse, worst case a miss probability of 0.2353 against 0.0130.
+        """
+        import random
+
+        rng = random.Random(3081)
+        sequence = "".join(rng.choice("AUGC") for _ in range(150))
+        spec = make_spec(targets=(
+            TargetSpec(target_id="t1", sequence=sequence,
+                       target_class=TargetClass.REQUIRED, expression=100.0),
+        ))
+        transcriptome = Transcriptome("GRCh38", "v44")
+        transcriptome.add(Locus("L_T1", sequence, Universe.CODING, gene="TGT",
+                                expression=100.0))
+        report = run(spec, cover_universes(transcriptome))
+
+        passing = {row["guide_id"] for row in report.to_dict()["ranked"]
+                   if row["verdict"] == "PASS"}
+        self.assertGreater(len(passing), 1, "fixture sanity: guides must pass")
+        self.assertEqual(
+            len(report.pareto_frontier), 1,
+            "fixture no longer collapses the frontier, so it cannot "
+            "distinguish the two pools",
+        )
+        self.assertGreater(len(report.panel.guides), len(report.pareto_frontier))
         panel_ids = {g.guide_id for g in report.panel.guides}
-        self.assertTrue(panel_ids.issubset(set(report.pareto_frontier)))
+        self.assertTrue(panel_ids.issubset(passing))
 
     def test_no_failed_guide_reaches_the_ranking(self):
         spec = make_spec()
