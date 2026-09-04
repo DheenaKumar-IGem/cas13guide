@@ -35,11 +35,16 @@ import verify_the_documented_numbers as documents  # noqa: E402
 
 
 class TestTheTestCountIsStatedOnce(unittest.TestCase):
-    """Three places say how many tests there are. They must be one number."""
+    """Four places say how many tests there are. They must be one number.
+
+    It was three until a fourth turned up stating 930 -- the ``unittest
+    discover`` line, which the scraper's pytest-anchored pattern never saw,
+    four lines above prose promising that both runners discover the same set.
+    """
 
     def test_every_document_states_it(self):
         counts = documents.documented_test_counts()
-        self.assertEqual(len(counts), 3, f"found {sorted(counts)}")
+        self.assertEqual(len(counts), 4, f"found {sorted(counts)}")
 
     def test_they_agree_with_each_other(self):
         counts = documents.documented_test_counts()

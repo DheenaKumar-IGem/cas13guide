@@ -87,6 +87,16 @@ def documented_test_counts() -> dict[str, int]:
     block = re.search(r"^pytest\s+#\s*(\d{3,5}) tests", readme, re.M)
     if block:
         found["README command block"] = int(block.group(1))
+    # A fourth statement, in a different block, which stated 930 while the
+    # other three said 1,247. It was never in this comparison: the pattern
+    # above is anchored on `pytest`, and this line runs unittest. The prose
+    # four lines below it says both runners discover the same set, so the two
+    # numbers cannot both be right -- and the one nothing checked was the one
+    # that rotted.
+    discover = re.search(r"^python -m unittest discover[^#]*#\s*(\d{3,5}) tests",
+                         readme, re.M)
+    if discover:
+        found["README unittest line"] = int(discover.group(1))
     cell = re.search(r'<td class="est">([\d,]+) tests', page)
     if cell:
         found["landing page"] = int(cell.group(1).replace(",", ""))
@@ -602,7 +612,7 @@ def main() -> int:
     counts = documented_test_counts()
     for where, value in sorted(counts.items()):
         print(f"          {where}: {value}")
-    if not check("every document states a count", len(counts) == 3,
+    if not check("every document states a count", len(counts) == 4,
                  f"found {sorted(counts)}"):
         failures.append("a document stopped stating the count")
     elif not check("they agree with each other", len(set(counts.values())) == 1,
