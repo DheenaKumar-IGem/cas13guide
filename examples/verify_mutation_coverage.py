@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 70 are
+  "hole" is never an artefact of which modules were chosen. None of the 72 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **70 mutations, 70 caught, 0 holes.**
+Last measured: **72 mutations, 72 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -552,6 +552,25 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "    if request.sequence_text and request.sequence_text.strip():",
      "    if request.sequence_text is not None:",
      ["test_mutation_holes.py", "test_the_input_doors_agree.py", "test_webapp.py", "test_subcommands_end_to_end.py"]),
+    # The third text door, guarded the same way and found by looking for
+    # siblings of the one that turned out to be unpinned. A whitespace
+    # --variants box would become a variant world of nothing, and a run that
+    # believes it has variant contexts computes robustness across them --
+    # a number about a comparison that never happened.
+    ("variants-door-treats-whitespace-as-variants",
+     "src/cas13guide/services/workflow.py",
+     "    elif request.variants_text and request.variants_text.strip():",
+     "    elif request.variants_text is not None:",
+     ["test_the_input_doors_agree.py", "test_context_evidence.py",
+      "test_subcommands_end_to_end.py"]),
+    # services/fasta.py: the parser's own empty check, one layer below those
+    # doors. It is the message a user sees when nothing above caught it, and
+    # it names both ways in: paste a sequence, or a FASTA record starting ">".
+    ("fasta-parses-an-empty-input-instead-of-refusing",
+     "src/cas13guide/services/fasta.py",
+     "    if not text or not text.strip():",
+     "    if text is None:",
+     ["test_the_input_doors_agree.py", "test_bugfix_regressions.py"]),
     # services/benchmark.py: the same all([]) hazard as the acceptance gate,
     # on the property both the `check` CI gate and the "conformal coverage"
     # acceptance criterion read. Found by grepping the package for every all()
