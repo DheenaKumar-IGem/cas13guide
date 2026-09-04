@@ -876,9 +876,10 @@ against the whole suite — green means hole, red means caught. With the baselin
 permanently red the whole-suite run was never green, so `holes` could never be
 non-empty. **"0 holes" was true by construction rather than by measurement.**
 
-Ten distinct ways it could report success or failure without measuring have
-turned up. Eight came from the audit that followed the first one. The
-last two were caught in the act, hiding two real holes between them:
+Eleven distinct ways it could answer without measuring have turned up: ten
+that report a verdict nothing established, and one that reports nothing at
+all. Eight came from the audit that followed the first. The last three were
+caught in the act, two of them hiding real holes:
 
 | The mechanism | What it did |
 |---|---|
@@ -892,10 +893,12 @@ last two were caught in the act, hiding two real holes between them:
 | An unhandled hang | `TimeoutExpired` ended the sweep and lost every verdict after it |
 | A red suite nobody attributed | The full-suite stage read *any* failure as proof the mutation caused it, so one unrelated flake turned a hole into a “caught” |
 | Bytecode outliving its source | A same-length mutation restored inside one second left a `.pyc` Python still considered valid, so the mutation stayed live in every later run |
+| A timeout that could not fire | The hang handler captured the suite through a pipe, and waited on it after killing the child — so a stalled grandchild holding that pipe was exactly what stopped the handler for stalls |
 
-All nine now fail loudly. Two of the first eight were found only because fixing
-an earlier one exposed the next, which is the argument for treating an
-instrument's own failure modes as the first thing to audit.
+All eleven now fail loudly, or in the last case fail at all. Two of the first
+eight were found only because fixing an earlier one exposed the next, which is
+the argument for treating an instrument's own failure modes as the first thing
+to audit.
 
 The ninth is worth the detail, because it is the only one that was observed
 hiding something rather than reasoned about. Two mutations — a blank paste
