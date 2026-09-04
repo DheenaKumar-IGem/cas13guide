@@ -192,5 +192,53 @@ class TestAmpliconPathRestoresNormalDesign(unittest.TestCase):
         self.assertNotIn("T", target.sequence)
 
 
+class TestBothWaysToATargetStillAgree(unittest.TestCase):
+    """``to_target_spec`` is a second path, and it agrees by coincidence.
+
+    Production never calls it. ``--preset`` builds a ``SequenceRecord`` and
+    goes through the same record-to-target conversion a FASTA does, which
+    takes ``gene`` from the record name and hardcodes ``biotype`` to NCRNA.
+    The preset carries its own ``display_name`` and ``biotype``, so the two
+    paths agree only because every shipped preset happens to have
+    ``display_name == preset_id`` and an NCRNA biotype.
+
+    That matters because the tests use ``to_target_spec``:
+    ``test_preset_provenance`` builds its spec with it. A preset whose display
+    name or biotype differed would hand those tests a target production never
+    produces, and nothing would say so. This repository has removed one second
+    path already -- ``fasta.records_to_target_specs``, in the commit that
+    ``test_how_records_become_targets`` is named for -- and the method is kept
+    here because a library caller has a use for it. What is not kept is the
+    coincidence being unwatched.
+
+    Compared against a real run rather than against a copy of the production
+    construction, because a copy is a third path and would drift on its own.
+    """
+
+    def _designed_target(self, preset_id: str):
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        outcome = run_request(DesignRequest(
+            preset=preset_id, task="knockdown",
+            assay="cell_culture_knockdown", effector="RfxCas13d",
+        ))
+        return outcome.spec.contract.targets[0]
+
+    def test_every_shipped_preset_converts_the_same_either_way(self):
+        fields = ("target_id", "sequence", "target_class", "gene", "biotype",
+                  "expression")
+        for preset_id, preset in MIRNA_PRESETS.items():
+            with self.subTest(preset=preset_id):
+                designed = self._designed_target(preset_id)
+                stated = preset.to_target_spec()
+                for field in fields:
+                    self.assertEqual(
+                        getattr(designed, field), getattr(stated, field),
+                        f"{preset_id}.{field}: a run and to_target_spec disagree, "
+                        "so the tests that use to_target_spec are describing a "
+                        "target no run produces",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
