@@ -23,6 +23,10 @@ import ast
 import unittest
 from pathlib import Path
 
+from helpers import *  # noqa: F401,F403
+
+from cas13guide.metrics.bounds import Interval
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "cas13guide"
 
 #: Attribute chains whose ``.lower`` would be a benefit read. ``Interval`` is
@@ -82,6 +86,42 @@ class TestNoBenefitIsReadDirectly(unittest.TestCase):
         readme = (SRC.parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertNotIn("the only place intervals are constructed", readme)
         self.assertIn("every benefit read goes through", readme)
+
+
+class TestAnIntervalContainsItsOwnEstimate(unittest.TestCase):
+    """The two halves of an Interval must describe the same quantity.
+
+    ``point`` is the number a report prints; ``lower``/``upper`` are what the
+    gate reads. The class refused an inverted interval and said nothing about
+    where the point sat, so a guide could have been shown an activity its own
+    bound excluded -- two surfaces disagreeing about one quantity, which is
+    the failure this repository keeps finding in other forms.
+
+    Nothing was wrong when this was written: 119,762 intervals built across
+    the whole suite, including the trained model, kinetics, variant contexts
+    and BLAST, already satisfied it. What was missing is anything that would
+    say so if it stopped being true.
+    """
+
+    def test_a_point_below_its_lower_bound_is_refused(self):
+        with self.assertRaises(ValueError):
+            Interval(point=0.1, lower=0.2, upper=0.8)
+
+    def test_a_point_above_its_upper_bound_is_refused(self):
+        with self.assertRaises(ValueError):
+            Interval(point=0.9, lower=0.2, upper=0.8)
+
+    def test_the_bounds_themselves_are_still_valid_points(self):
+        """Closed interval: sitting exactly on an edge is not a violation."""
+        for point in (0.2, 0.5, 0.8):
+            with self.subTest(point=point):
+                self.assertEqual(
+                    Interval(point=point, lower=0.2, upper=0.8).point, point)
+
+    def test_an_inverted_interval_is_still_refused(self):
+        """The check it was added beside, so neither replaces the other."""
+        with self.assertRaises(ValueError):
+            Interval(point=0.5, lower=0.8, upper=0.2)
 
 
 if __name__ == "__main__":

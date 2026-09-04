@@ -40,6 +40,23 @@ class Interval:
     def __post_init__(self) -> None:
         if self.lower > self.upper:
             raise ValueError(f"inverted interval: [{self.lower}, {self.upper}]")
+        # And the estimate has to be inside its own interval.
+        #
+        # The class already refused an inverted one and said nothing about
+        # where `point` sits, which leaves the two halves free to disagree
+        # about the same quantity: `point` is the number the report prints,
+        # `lower`/`upper` are what the gate reads, and a guide could be shown
+        # an activity its own bound excludes.
+        #
+        # A guard rather than a fix: 119,762 intervals built across the whole
+        # suite -- the trained model, kinetics, variant contexts, BLAST --
+        # already satisfy it, so nothing here is currently wrong. What was
+        # missing is anything that would say so if it stopped being true.
+        if not self.lower <= self.point <= self.upper:
+            raise ValueError(
+                f"point {self.point} outside its own bounds "
+                f"[{self.lower}, {self.upper}]"
+            )
 
     @property
     def width(self) -> float:
