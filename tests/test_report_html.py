@@ -285,5 +285,78 @@ class TestTheOffTargetTableSaysHowMuchOfItThereIs(unittest.TestCase):
         self.assertIn("All 4 off-target loci found", page)
 
 
+class TestThePlanAndThePageAgreeAboutTheTable(unittest.TestCase):
+    """The plan may only send a reader somewhere the page actually goes.
+
+    `report_html` renders the explorer `if off_targets`, and the comment
+    beside it says why the table was added at all: "A page that instructs a
+    reader to consult a table it does not contain is worse than one that says
+    nothing, because the reader goes looking." That fixed the case where rows
+    existed and nothing rendered them. With no rows there is still no table,
+    and the plan said "Sequence the top off-target loci from the explorer
+    table" regardless.
+
+    Driven through `build_report`, because the defect is the agreement between
+    two functions and calling either alone cannot see it.
+    """
+
+    @staticmethod
+    def _page(with_rows: bool):
+        report = dict(REPORT)
+        rows = [
+            {"guide_id": "g_one", "locus": "L1", "gene": "GENE1",
+             "biotype": "coding", "target_class": "unannotated",
+             "mismatches": 2, "wobbles": 0, "cigar": "MMM",
+             "ucb_activity": 0.4, "ucb_expression": 0.5, "hazard_weight": 0.6,
+             "hazard": 0.12, "expression_unknown": False, "ood": False,
+             "context": "reference"}
+        ]
+        report["off_targets"] = rows if with_rows else []
+        report["off_target_total"] = len(report["off_targets"])
+        report["validation_plan"] = [
+            "Sequence the top off-target loci from the explorer table; "
+            "prioritize rows with high UCB(activity) whose expression is "
+            "currently unknown."
+            if with_rows else
+            "There is no off-target explorer on this page: no site was found "
+            "in the sequences this run was given."
+        ]
+        return render_report(report)
+
+    def test_with_rows_the_table_is_there_to_be_read(self):
+        page = self._page(with_rows=True)
+        self.assertIn("Off-target explorer", page)
+        self.assertIn("Sequence the top off-target loci", page)
+
+    def test_without_rows_nothing_sends_the_reader_looking(self):
+        page = self._page(with_rows=False)
+        self.assertNotIn("Off-target explorer", page)
+        self.assertNotIn("Sequence the top off-target loci", page)
+
+
+class TestAnEmptyExplorerIsNotACleanOne(unittest.TestCase):
+    """What the plan says instead must not read as a specificity result.
+
+    An empty off-target table is the shape of a good answer and the substance
+    of no answer: a run given one sequence finds nothing because there was
+    nothing loaded to find. That is the failure this whole package is built
+    against, so the sentence that replaces the missing-table line has to name
+    it rather than leave a blank.
+    """
+
+    def test_the_plan_says_why_the_table_is_missing(self):
+        from cas13guide.pipeline.g_output import _validation_plan
+        from cas13guide.pipeline.optimizer import Panel
+
+        panel = Panel(guides=(), coverage={}, objective=0.0, guarantee="none")
+        plan = _validation_plan(panel, (), make_spec(), off_target_rows=())
+        # "off-target homology" appears in the collateral step too.
+        [line] = [step for step in plan if "off-target explorer" in step]
+        self.assertIn("no site was found", line)
+        self.assertIn("about the corpus", line)
+        self.assertIn("background", line)
+        self.assertNotIn("explorer table;", line)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -418,7 +418,12 @@ def _off_target_total(assessments: list[GuideAssessment]) -> int:
     })
 
 
-def _validation_plan(panel: Panel, controls: tuple[ControlGuide, ...], spec: ResolvedDesignSpec) -> tuple[str, ...]:
+def _validation_plan(
+    panel: Panel,
+    controls: tuple[ControlGuide, ...],
+    spec: ResolvedDesignSpec,
+    off_target_rows: tuple[dict, ...] = (),
+) -> tuple[str, ...]:
     plan = [
         f"Transfect the {panel.size}-guide panel alongside "
         f"{len(controls)} composition-matched non-targeting controls.",
@@ -431,10 +436,24 @@ def _validation_plan(panel: Panel, controls: tuple[ControlGuide, ...], spec: Res
             "high-abundance bystander transcript. Collateral scales with "
             "target abundance, not with off-target homology."
         )
-    plan.append(
-        "Sequence the top off-target loci from the explorer table; prioritize "
-        "rows with high UCB(activity) whose expression is currently unknown."
-    )
+    if off_target_rows:
+        plan.append(
+            "Sequence the top off-target loci from the explorer table; "
+            "prioritize rows with high UCB(activity) whose expression is "
+            "currently unknown."
+        )
+    else:
+        # The explorer only renders when there are rows, so with none this
+        # line used to send a reader to a table that was not on the page.
+        # What replaces it does not let an empty table read as a clean one:
+        # nothing was found because nothing was loaded to find.
+        plan.append(
+            "There is no off-target explorer on this page: no site was found "
+            "in the sequences this run was given. That is a fact about the "
+            "corpus, not about these guides -- load a background covering the "
+            "universes the assay is exposed to before reading an empty table "
+            "as a specificity result."
+        )
     plan.append(
         "Feed every measured outcome back to the calibration service "
         "(services.benchmark.record_wetlab_result) so the bounds tighten."
@@ -515,7 +534,9 @@ def build_report(
         off_target_rows=_off_target_rows(assessments),
         off_target_total=_off_target_total(assessments),
         provenance=ledger.to_dict(),
-        validation_plan=_validation_plan(panel, controls, spec),
+        validation_plan=_validation_plan(
+            panel, controls, spec, _off_target_rows(assessments)
+        ),
         pareto_frontier=pareto_frontier,
         shortfalls=shortfalls,
         rejected=_rejection_rows(assessments),
