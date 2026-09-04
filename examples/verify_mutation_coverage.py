@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1233 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Five of the 60 are
+  "hole" is never an artefact of which modules were chosen. Five of the 62 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **60 mutations, 60 caught, 0 holes.**
+Last measured: **62 mutations, 62 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -436,6 +436,26 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "    is_independent_evidence: bool = False",
      "    is_independent_evidence: bool = True",
      ["test_structure_and_signal.py", "test_bound_asymmetry.py"]),
+    # pipeline/c_search.py: the universe-adequacy gate reads what the index
+    # *proved* it searched, not what the spec declared. Trusting the
+    # declaration was a measured hole -- the same spec and transcriptome went
+    # from 42 FAIL to 42 PASS with zero off-target rows purely by narrowing the
+    # index, because rRNA hits at 5000 TPM simply ceased to exist. This
+    # restores it.
+    ("search-gaps-trust-the-declaration-not-the-index",
+     "src/cas13guide/pipeline/c_search.py",
+     "    return frozenset((required | spec.context.declared_universes) - bound.universes)",
+     "    return frozenset(required - spec.context.declared_universes)",
+     ["test_search.py", "test_gate.py", "test_bugfix_regressions.py"]),
+    # services/webapp.py: the page renders user-supplied sequence names. They
+    # are escaped on the way in and this header is the belt to that pair of
+    # braces, so loosening it removes a defence that only matters when the
+    # other one has already failed.
+    ("webapp-content-security-policy-allows-anything",
+     "src/cas13guide/services/webapp.py",
+     "default-src 'none'",
+     "default-src *",
+     ["test_webapp.py"]),
     # services/benchmark.py: the same all([]) hazard as the acceptance gate,
     # on the property both the `check` CI gate and the "conformal coverage"
     # acceptance criterion read. Found by grepping the package for every all()
