@@ -174,6 +174,45 @@ def main(argv: list[str]) -> int:
         and isinstance(node.args[0].value, str)
     })
 
+    # The three enum vocabularies cannot come out empty; this one can. It is
+    # scraped from the source by looking for `Limitation("id", ...)` calls, so
+    # moving that construction behind a helper -- an ordinary refactor, and one
+    # this repository has done to other call sites -- leaves the walk finding
+    # nothing. The report would then read "0/0 limitations produced by the
+    # suite", show no missing entries, and exit 0 with the entire limitation
+    # vocabulary unchecked.
+    #
+    # Two guards, neither of them an arbitrary floor. The set must not be
+    # empty, and every limitation the *run* emitted must appear in it: an id
+    # observed coming out of the package that the scraper did not find is
+    # proof the scraper is looking in the wrong place.
+    if not limitation_ids:
+        print("FAIL: no Limitation(...) construction found in limitations.py.")
+        print("The scraper is looking for `Limitation(\"id\", ...)` calls. If")
+        print("they now go through a helper, this check has been reporting")
+        print("0/0 and passing. Fix the scraper before trusting the result.")
+        return 1
+
+    # Anchored on the four the product's premise rests on rather than on
+    # everything the suite emitted: test fixtures build Limitation("a", ...)
+    # and friends, so comparing against the whole observed set says the
+    # scraper is broken every time somebody writes a fixture.
+    load_bearing = {
+        "synthetic-calibration",
+        "heuristic-activity-model",
+        "collateral-not-predicted",
+        "search-scope-is-what-you-loaded",
+    }
+    unscraped = sorted(load_bearing - set(limitation_ids))
+    if unscraped:
+        print("FAIL: the scraper did not find limitations that must exist:")
+        for name in unscraped:
+            print(f"    {name}")
+        print("These are the CRITICAL caveats every run prints. If the walk")
+        print("cannot see them it is looking in the wrong place, and the count")
+        print("below is of a smaller vocabulary than the package really has.")
+        return 1
+
     vocabularies = {
         "reason code": [code.value for code in ReasonCode],
         "limitation": [f"limitation:{name}" for name in limitation_ids],
