@@ -345,6 +345,11 @@ def ranked_rows(report_dict: dict) -> list[dict]:
         row = {column: entry.get(column) for column in RANKED_COLUMNS}
         metrics = entry.get("metrics") or {}
         row["required_coverage"] = metrics.get("required_coverage")
+        # The CSV is the file oligos are ordered from, and it carried the
+        # reference coverage while omitting the minimum across contexts. A
+        # guide that reaches no site in a supplied variant was indistinguishable
+        # in it from one that reaches every site.
+        row["robustness"] = metrics.get("robustness")
         row["worst_off_target"] = metrics.get("worst_off_target")
         row["cumulative_burden"] = metrics.get("cumulative_burden")
         for key in ("reasons", "qc_warnings", "detail"):
@@ -481,6 +486,7 @@ def ranked_to_csv(
     rows = ranked_rows(report_dict)
     columns = list(RANKED_COLUMNS) + [
         "required_coverage",
+        "robustness",
         "worst_off_target",
         "cumulative_burden",
     ]

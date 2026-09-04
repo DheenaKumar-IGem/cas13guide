@@ -131,6 +131,19 @@ class ReasonCode(str, Enum):
     DUPLEX_ENERGY_OUT_OF_RANGE = "duplex_energy_out_of_range"
 
     # --- PASS ---
+    #: The guide clears the floor on the reference and falls below it in some
+    #: other evaluated context -- a variant supplied with ``--variants``.
+    #: FR7.2's flag, which the README and ``services/conservation.py`` both say
+    #: *is* the robustness metric: "flagging a guide that loses activity
+    #: against one variant is already the pipeline's robustness metric".
+    #:
+    #: It was a number and nothing else. The gate never read it, so a guide
+    #: with robustness 0.000 -- reaching no site at all in a variant the user
+    #: supplied -- was certified PASS with "all constraints satisfied with
+    #: adequate evidence", sat on the Pareto frontier, and was selected into
+    #: the panel whose detection interval rests on reference coverage alone.
+    #: A PASS is the opposite of a flag.
+    VARIANT_COVERAGE_LOST = "variant_coverage_lost"
     CONSTRAINTS_SATISFIED = "constraints_satisfied"
 
     # --- pipeline shortfalls (control flow, fix #5) ---

@@ -181,8 +181,8 @@ class TestExport(unittest.TestCase):
                 "accessibility": 0.48, "duplex_dg_per_nt": -1.9,
                 "predicted_signal": 0.13,
                 "reasons": ["expression_unknown"], "qc_warnings": ["pfs_disfavoured"],
-                "metrics": {"required_coverage": 0.67, "worst_off_target": 0.0,
-                            "cumulative_burden": 0.0},
+                "metrics": {"required_coverage": 0.67, "robustness": 0.12,
+                            "worst_off_target": 0.0, "cumulative_burden": 0.0},
             }
         ],
         "controls": [
@@ -199,6 +199,22 @@ class TestExport(unittest.TestCase):
         for column in RANKED_COLUMNS:
             self.assertIn(column, header)
         self.assertIn("required_coverage", header)
+
+    def test_csv_carries_the_across_context_coverage(self):
+        """The CSV is the file oligos are ordered from, and it carried the
+        reference coverage while omitting the minimum across contexts.
+
+        A guide that reaches no site in a variant the user supplied was
+        indistinguishable in this file from one that reaches every site: the
+        verdict said PASS, `required_coverage` said 0.76, and `robustness`
+        -- the number that knew better -- was in the JSON report and nowhere
+        a person ordering oligos would look.
+        """
+        text = ranked_to_csv(self.REPORT)
+        header = data_lines(text)[0].split(",")
+        self.assertIn("robustness", header)
+        row = data_lines(text)[1].split(",")
+        self.assertEqual(row[header.index("robustness")], "0.12")
 
     def test_csv_carries_the_verdict_and_tier(self):
         """A REVIEW row must be identifiable as one in the exported file."""

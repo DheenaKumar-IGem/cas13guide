@@ -192,6 +192,23 @@ def gate(
              f"{len(unknown_loci)} locus/loci with no expression evidence")
         )
 
+    # Robustness is the minimum required coverage across every evaluated
+    # context; with only the reference it *is* required_coverage, so this
+    # cannot fire unless the user supplied --variants. Against the same floor
+    # that FAILs a guide on the reference, because a guide is not more
+    # acceptable for missing its target in an isoform than in the reference --
+    # it is only less certain which one the user cares about, and that is a
+    # judgement for a human, which is what REVIEW means.
+    if metrics.robustness < t.required_coverage_min:
+        review.append(
+            (
+                ReviewTier.R1,
+                ReasonCode.VARIANT_COVERAGE_LOST,
+                f"robustness {metrics.robustness:.3f} < "
+                f"{t.required_coverage_min:.3f} in some supplied context",
+            )
+        )
+
     if metrics.required_coverage < t.required_coverage_min + t.borderline_band:
         review.append(
             (

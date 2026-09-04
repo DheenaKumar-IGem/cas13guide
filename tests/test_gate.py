@@ -221,6 +221,47 @@ class TestReviewGrading(unittest.TestCase):
         self.assertIn(ReasonCode.EXPRESSION_UNKNOWN, result.reasons)
         self.assertIn("1 locus/loci", " ".join(result.detail))
 
+    def test_a_guide_that_loses_a_supplied_variant_is_not_certified(self):
+        """FR7.2's flag has to reach the verdict, not just the metric vector.
+
+        README and services/conservation.py both say FR7.2 -- "flagging a
+        guide that loses activity against one variant" -- *is* the robustness
+        metric. It was a number and nothing else: the gate never read it, so a
+        guide with robustness 0.000, reaching no site at all in a variant the
+        user supplied, was certified PASS with "all constraints satisfied with
+        adequate evidence", sat on the Pareto frontier and was selected into
+        the panel. A PASS is the opposite of a flag.
+
+        R1, the least severe REVIEW: the guide meets every requirement on the
+        primary target, and what needs a human is whether that variant matters
+        to them.
+        """
+        spec = make_spec()
+        reference = (strong_required(),)
+        variant = (make_evidence(0.0, 0.05, target_id="t1",
+                                 target_class=TargetClass.REQUIRED),)
+        metrics = build_metric_vector(
+            {"reference": reference, "variant": variant}, clean_qc(), spec)
+        self.assertGreaterEqual(metrics.required_coverage,
+                                spec.thresholds.required_coverage_min)
+        self.assertLess(metrics.robustness, spec.thresholds.required_coverage_min)
+
+        result = gate(metrics, clean_qc(), reference, exhaustive_bound(),
+                      frozenset(), spec)
+        self.assertIs(result.verdict, Verdict.REVIEW)
+        self.assertIn(ReasonCode.VARIANT_COVERAGE_LOST, result.reasons)
+
+    def test_a_guide_that_holds_across_contexts_is_still_certified(self):
+        """Or the rule above would just refuse everything with --variants."""
+        spec = make_spec()
+        reference = (strong_required(),)
+        metrics = build_metric_vector(
+            {"reference": reference, "variant": reference}, clean_qc(), spec)
+        result = gate(metrics, clean_qc(), reference, exhaustive_bound(),
+                      frozenset(), spec)
+        self.assertNotIn(ReasonCode.VARIANT_COVERAGE_LOST, result.reasons)
+        self.assertIs(result.verdict, Verdict.PASS)
+
     def test_r1_borderline_coverage(self):
         spec = make_spec()
         borderline = make_evidence(
