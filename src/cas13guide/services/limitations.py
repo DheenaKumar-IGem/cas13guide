@@ -100,6 +100,7 @@ def limitations_for_run(
     calibration: Any = None,
     bound: ExhaustivenessBound | None = None,
     universe_gaps: frozenset | None = None,
+    self_identical_loci: frozenset | None = None,
     panel_size: int = 0,
     panel_confidence: Any = None,
     provenance: Any = None,
@@ -408,6 +409,29 @@ def limitations_for_run(
                 "invisible: a guide is specific *against what you gave it*.",
             )
         )
+    if self_identical_loci:
+        found.append(
+            Limitation(
+                "off-target-may-be-the-target",
+                Severity.CRITICAL,
+                "The off-target search reached a corpus this run did not "
+                "assemble, and "
+                + ", ".join(sorted(self_identical_loci)[:5])
+                + (" and others" if len(self_identical_loci) > 5 else "")
+                + (" match" if len(self_identical_loci) > 1 else " matches")
+                + " a site in the target exactly. A transcript database "
+                "contains the target's own transcript, and its accession "
+                "cannot be matched to the record you supplied, so the site the "
+                "guide was designed to bind is scored here as a perfect "
+                "off-target. Those rows are either your target or a paralog "
+                "identical to it across the whole site, and nothing in this "
+                "run can tell which -- so the hazard is left counted, which "
+                "overstates it, rather than dropped, which would hide a real "
+                "off-target. worst_off_target and cumulative_burden are "
+                "inflated by an unknown amount for every guide.",
+            )
+        )
+
     if universe_gaps:
         found.append(
             Limitation(

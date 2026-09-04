@@ -787,6 +787,7 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         calibration=calibration_service,
         bound=weakest_bound,
         universe_gaps=gaps,
+        self_identical_loci=report.self_identical_loci,
         panel_size=len(data.get("panel", {}).get("guides", ())),
         panel_confidence=report.panel_confidence,
         provenance=data.get("provenance"),

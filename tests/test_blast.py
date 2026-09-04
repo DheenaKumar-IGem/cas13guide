@@ -313,5 +313,141 @@ class TestItIsReachableFromTheCli(unittest.TestCase):
                 DesignRequest(blast_db="/db", blast_universes="  "), world
             )
 
+class TestTheDatabaseHoldsTheTargetToo(unittest.TestCase):
+    """A transcript database contains the target, and BLAST cannot say so.
+
+    `annotate_hit` names a hit by looking its locus id up in
+    `locus_to_target`, which is keyed on the records this run assembled. A
+    BLAST subject id is an accession from someone else's database, so the
+    target's own transcript comes back as an unannotated, zero-mismatch,
+    full-length hit -- the site the guide was designed to bind, scored as the
+    strongest off-target evidence there is.
+
+    `_reference_index` already unions BLAST with the local scan so the
+    *on-target* evidence survives; its comment says exactly why. This is the
+    other half, and it is not fixed by reclassifying: a site identical to the
+    target's is either the target or a paralog identical across the whole
+    site, and nothing in the run can tell which. Dropping it would hide a real
+    off-target, so the hazard stays counted and the run says what it cannot
+    distinguish.
+
+    Measured against a control database that does not hold the target,
+    identical in every other respect: worst_off_target moves from a median of
+    0.000 to 0.600 for every guide and all fifty rows of the off-target
+    explorer become the guide's own target -- the exact row the validation
+    plan tells a reader to prioritise for sequencing.
+    """
+
+    @classmethod
+    def _stub_self_hit(cls, directory: Path) -> Path:
+        """A blastn that answers every query with a perfect hit on itself."""
+        script = Path(directory) / "selfhit.py"
+        script.write_text(
+            "import sys" + chr(10)
+            + "argv = sys.argv[1:]" + chr(10)
+            + 'q = argv[argv.index("-query") + 1]' + chr(10)
+            + 'text = open(q, encoding="utf-8").read().split()' + chr(10)
+            + 'seq = "".join(x for x in text if not x.startswith(">"))' + chr(10)
+            + "n = len(seq)" + chr(10)
+            + 'row = ["query", "NM_000546.6", "100.000", str(n), "0", "0",'
+            + ' "1", str(n), "101", str(100 + n), "1e-05", "44.1", "plus", seq]'
+            + chr(10)
+            + 'sys.stdout.write(chr(9).join(row) + chr(10))' + chr(10),
+            encoding="utf-8",
+        )
+        if os.name == "nt":
+            launcher = Path(directory) / "blastn.bat"
+            launcher.write_text(
+                "@echo off" + chr(13) + chr(10)
+                + '"' + sys.executable + '" "' + str(script) + '" %*'
+                + chr(13) + chr(10),
+                encoding="utf-8")
+        else:
+            launcher = Path(directory) / "blastn"
+            launcher.write_text(
+                "#!/bin/sh" + chr(10)
+                + 'exec "' + sys.executable + '" "' + str(script) + '" "$@"'
+                + chr(10),
+                encoding="utf-8")
+            launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+        return launcher
+
+    @classmethod
+    def setUpClass(cls):
+        import random
+
+        from cas13guide.services import blast as blast_module
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        rng = random.Random(31)
+
+        def seq(n):
+            return "".join(rng.choice("ACGU") for _ in range(n))
+
+        cls._directory = tempfile.TemporaryDirectory()
+        home = Path(cls._directory.name)
+        eol = chr(10)
+        (home / "t.fa").write_text(">TGT1" + eol + seq(300) + eol,
+                                   encoding="utf-8")
+        rows = []
+        for name, biotype in (("RN18S1", "rrna"), ("MT-CO1", "mito"),
+                              ("LINC01", "ncrna"), ("PREM1", "pre_mrna")):
+            rows += [">" + name + " biotype=" + biotype, seq(300)]
+        (home / "bg.fa").write_text(eol.join(rows) + eol, encoding="utf-8")
+
+        launcher = cls._stub_self_hit(home)
+        original = blast_module.BlastOffTargetIndex
+        blast_module.BlastOffTargetIndex = (
+            lambda **kwargs: original(executable=str(launcher), **kwargs)
+        )
+        try:
+            cls.outcome = run_request(DesignRequest(
+                fasta_path=str(home / "t.fa"),
+                background_path=str(home / "bg.fa"),
+                task="knockdown", assay="cell_culture_knockdown",
+                effector="RfxCas13d", use_structure=False, use_signal=False,
+                blast_db="pretend.nsq", blast_universes="coding",
+            ))
+        finally:
+            blast_module.BlastOffTargetIndex = original
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._directory.cleanup()
+
+    def test_the_fixture_really_produced_a_perfect_unmatched_hit(self):
+        """Or everything below would hold over a run that had no such hit."""
+        perfect = [row for row in self.outcome.report["off_targets"]
+                   if row["mismatches"] == 0]
+        self.assertTrue(perfect)
+        self.assertEqual({row["locus"] for row in perfect}, {"NM_000546.6"})
+        self.assertEqual({row["target_class"] for row in perfect},
+                         {"unannotated"})
+
+    def test_the_run_names_the_locus_it_cannot_tell_apart(self):
+        self.assertIn("NM_000546.6", self.outcome.report["self_identical_loci"])
+
+    def test_the_reader_is_told_before_they_act_on_the_table(self):
+        texts = [item["text"] for item in self.outcome.report["limitations"]
+                 if item["id"] == "off-target-may-be-the-target"]
+        self.assertEqual(len(texts), 1)
+        [text] = texts
+        self.assertIn("NM_000546.6", text)
+        self.assertIn("matches", text)          # one locus, not "match"
+        self.assertIn("worst_off_target", text)
+        self.assertEqual(
+            [item["severity"] for item in self.outcome.report["limitations"]
+             if item["id"] == "off-target-may-be-the-target"],
+            ["critical"],
+        )
+
+    def test_the_hazard_is_left_counted_rather_than_dropped(self):
+        """Overstating is the safe direction; hiding a paralog is not."""
+        worst = [row["metrics"]["worst_off_target"]
+                 for row in self.outcome.report["ranked"]]
+        self.assertTrue(worst)
+        self.assertGreater(min(worst), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

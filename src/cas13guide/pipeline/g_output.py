@@ -226,6 +226,11 @@ class DesignReport:
     #: not have to parse a sentence back into facts.
     search_bound: "ExhaustivenessBound | None" = None
     universe_gaps: frozenset = frozenset()
+    #: Off-target loci whose site is a site in this run's own target. Only a
+    #: search over a corpus this run did not assemble can produce one, and
+    #: what it means is that the guide's intended site is being scored as a
+    #: perfect off-target under an accession nothing can match.
+    self_identical_loci: frozenset = frozenset()
     #: Why the guides that failed the gate failed it, grouped by reason code
     #: with a few worked examples. ``ranked`` deliberately holds no FAIL rows
     #: -- a refusal is not a recommendation and does not belong in a table
@@ -343,6 +348,9 @@ class DesignReport:
             },
             "off_targets": list(self.off_target_rows),
             "pareto_frontier": list(self.pareto_frontier),
+            # Sorted, so the machine-readable report is byte-identical across
+            # runs; a frozenset's iteration order is not.
+            "self_identical_loci": sorted(self.self_identical_loci),
             "provenance": self.provenance,
             "validation_plan": list(self.validation_plan),
             "shortfalls": list(self.shortfalls),
@@ -459,6 +467,7 @@ def build_report(
     pareto_frontier: tuple[str, ...] = (),
     search_bound: ExhaustivenessBound | None = None,
     universe_gaps: frozenset = frozenset(),
+    self_identical_loci: frozenset = frozenset(),
     panel_confidence: "PanelConfidence | None" = None,
 ) -> DesignReport:
     counts = {v.value: 0 for v in Verdict}
@@ -492,5 +501,6 @@ def build_report(
         rejected=_rejection_rows(assessments),
         search_bound=search_bound,
         universe_gaps=universe_gaps,
+        self_identical_loci=self_identical_loci,
         panel_confidence=panel_confidence,
     )

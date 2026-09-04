@@ -239,6 +239,7 @@ def run_design(
     frontier_ids: tuple[str, ...] = ()
     bound: ExhaustivenessBound | None = None
     universe_gaps: frozenset[Universe] = frozenset()
+    self_identical: frozenset[str] = frozenset()
 
     # Stages A and B depend only on ``step``, and the C self-loop re-enters the
     # while-body with ``step`` unchanged -- so every search escalation used to
@@ -317,6 +318,7 @@ def run_design(
         # universes leaves exactly the same hole, and reading the reference
         # context alone would not see it.
         universe_gaps = outcome.universe_gaps
+        self_identical = outcome.self_identical_loci
 
         for ctx in contexts:
             ctx_outcome = (
@@ -327,6 +329,7 @@ def run_design(
             if is_weaker(ctx_outcome.bound, weakest_bound):
                 weakest_bound = ctx_outcome.bound
             universe_gaps |= ctx_outcome.universe_gaps
+            self_identical |= ctx_outcome.self_identical_loci
             evidence = build_pair_evidence(
                 ctx_outcome.hits_by_guide, spacers, spec, registry, calibration,
                 ctx.transcriptome, ctx.expression_source(), context=ctx.name,
@@ -445,5 +448,6 @@ def run_design(
         pareto_frontier=frontier_ids,
         search_bound=bound,
         universe_gaps=universe_gaps,
+        self_identical_loci=self_identical,
         panel_confidence=confidence,
     )
