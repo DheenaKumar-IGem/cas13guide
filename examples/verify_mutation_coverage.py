@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1237 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 66 are
+  "hole" is never an artefact of which modules were chosen. None of the 68 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **66 mutations, 66 caught, 0 holes.**
+Last measured: **68 mutations, 68 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -510,6 +510,26 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      '            if previous is None or row["hazard"] > previous["hazard"]:',
      '            if previous is None or row["hazard"] < previous["hazard"]:',
      ["test_mutation_holes.py", "test_rejection_reporting.py", "test_bugfix_regressions.py"]),
+    # pipeline/f_decide.py: the REVIEW tier a guide is filed under when more
+    # than one thing is borderline. It takes the *most* severe of them, because
+    # the tier tells a reader how much of a human this needs. Taking the
+    # mildest files a guide that wants a full review as one wanting a glance,
+    # while every reason code beside it stays correct and complete -- the same
+    # shape as the off-target table: the page is consistent and the emphasis
+    # is inverted.
+    ("review-tier-reports-the-mildest-concern",
+     "src/cas13guide/pipeline/f_decide.py",
+     "        tier = max((r[0] for r in review), key=lambda x: SEVERITY[x.value])",
+     "        tier = min((r[0] for r in review), key=lambda x: SEVERITY[x.value])",
+     ["test_gate.py", "test_decision_order.py", "test_bugfix_regressions.py"]),
+    # The ranking itself, which is the headline output: the ordered list a
+    # reader takes the top of. Inverting it puts the worst guides at rank 1
+    # with every score on the page unchanged.
+    ("ranking-puts-the-worst-guides-first",
+     "src/cas13guide/pipeline/f_decide.py",
+     "    scored.sort(key=lambda row: row[0], reverse=True)",
+     "    scored.sort(key=lambda row: row[0])",
+     ["test_decision_order.py", "test_gate.py"]),
     # services/benchmark.py: the same all([]) hazard as the acceptance gate,
     # on the property both the `check` CI gate and the "conformal coverage"
     # acceptance criterion read. Found by grepping the package for every all()
