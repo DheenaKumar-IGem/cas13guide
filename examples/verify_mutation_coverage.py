@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 72 are
+  "hole" is never an artefact of which modules were chosen. None of the 74 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **72 mutations, 72 caught, 0 holes.**
+Last measured: **74 mutations, 74 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -571,6 +571,24 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "    if not text or not text.strip():",
      "    if text is None:",
      ["test_the_input_doors_agree.py", "test_bugfix_regressions.py"]),
+    # A class not probed before: an arithmetic constant, rather than a bound
+    # direction or a boundary. PRIOR_A is the Jeffreys prior on a binomial
+    # rate, chosen over Beta(1, 1) because a uniform prior on a rate is not
+    # uninformative under reparameterisation. Swapping it to 1.0 moves every
+    # posterior and every credible interval this package reports, by a little,
+    # in a way no shape or range check can see -- the numbers stay in [0, 1]
+    # and stay ordered.
+    ("panel-prior-becomes-uniform", "src/cas13guide/services/panel_confidence.py",
+     "PRIOR_A = 0.5", "PRIOR_A = 1.0",
+     ["test_panel_confidence.py", "test_bugfix_hunt_round11.py"]),
+    # And the reported precision, which is not the same thing as the value. The
+    # exported GC is rounded to four places; at one, distinct guides collapse
+    # into ties and the column a reader sorts by stops separating them, while
+    # every underlying number is unchanged.
+    ("export-rounds-gc-to-one-place", "src/cas13guide/pipeline/g_output.py",
+     '"gc": round(r.assessment.qc.gc, 4),',
+     '"gc": round(r.assessment.qc.gc, 1),',
+     ["test_rejection_reporting.py", "test_bugfix_regressions.py"]),
     # services/benchmark.py: the same all([]) hazard as the acceptance gate,
     # on the property both the `check` CI gate and the "conformal coverage"
     # acceptance criterion read. Found by grepping the package for every all()
