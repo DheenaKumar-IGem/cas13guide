@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1208 tests, run under `unittest` or `pytest` — both discover the same set —
+1211 tests, run under `unittest` or `pytest` — both discover the same set —
 and 91% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -783,8 +783,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1208 tests
-python examples/verify_mutation_coverage.py              # 42 mutations, 42 caught
+pytest                                                   # 1211 tests
+python examples/verify_mutation_coverage.py              # 45 mutations, 45 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -831,7 +831,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole — Four of the 42 are
+against the **whole** suite before being called a hole — Three of the 45 are
 caught only by the full run, so a screening subset would have reported that many
 holes that are not there. It mutates the LCB/UCB asymmetry, the six named
 metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
@@ -874,6 +874,20 @@ none asserted the severity it reached them at — and severity is not decoration
 here, it also sets the order, so a demotion moves that sentence below the notes
 a reader is meant to skim. That is a ninth hole, now pinned along with the
 other three CRITICAL caveats and the rule that nothing else may claim the mark.
+
+A tenth followed immediately, and it is the ninth one surface further out.
+Fixing the severity at the source pinned what `limitations_for_run` returns; it
+did not pin what the served page does with it. The HTML report decides a note is
+critical by testing its text, and changing that test renders every CRITICAL as
+an ordinary note — same words, same position, no mark — with the suite still
+green. A caveat has to survive every surface it crosses, and each surface is a
+separate place to lose its severity. Both are pinned now.
+
+The other probes into never-mutated modules were caught: a grouped-split
+off-by-one that would have trained on its own held-out folds, the
+duplicate-column refusal in `ingest.py`, inverting which runs get the collateral
+warning, dropping transcriptome records from the export header, and grouping the
+survivors instead of the failures into the rejection table.
 
 Three smaller repairs came with it. A mutation whose anchor no longer matches is
 now a **failure** rather than a silent skip — `distinct-sites-best-becomes-worst`

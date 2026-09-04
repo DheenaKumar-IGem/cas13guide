@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1208 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Four of the 42 are
+  survives is re-run against all 1211 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. Three of the 45 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **42 mutations, 42 caught, 0 holes.**
+Last measured: **45 mutations, 45 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -259,7 +259,7 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "src/cas13guide/services/limitations.py",
      'Severity.CRITICAL,\n                "Conformal bounds were calibrated',
      'Severity.WARNING,\n                "Conformal bounds were calibrated',
-     ["test_caveats_reach_every_surface.py", "test_limitations.py",
+     ["test_mutation_holes.py", "test_caveats_reach_every_surface.py", "test_limitations.py",
       "test_bugfix_regressions.py"]),
     ("collateral-warning-goes-to-the-wrong-runs",
      "src/cas13guide/services/limitations.py",
@@ -276,6 +276,32 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "        if a.gate.verdict is not Verdict.FAIL:",
      "        if a.gate.verdict is Verdict.FAIL:",
      ["test_bugfix_regressions.py"]),
+    # services/training.py: the grouped split, which is the whole reason this
+    # module claims its cross-validation means anything. An off-by-one in the
+    # train complement leaves the held-out groups *in* the training set: the
+    # fold still has a train and a test list of plausible sizes, every number
+    # it reports goes up, and the estimate is of a question nobody asked.
+    ("group-kfold-trains-on-its-own-test-set",
+     "src/cas13guide/services/training.py",
+     "        train = [i for i, g in enumerate(groups) if assignment[g] != fold]",
+     "        train = [i for i, g in enumerate(groups) if assignment[g] != fold + 1]",
+     ["test_training.py", "test_trained_end_to_end.py"]),
+    # services/report_html.py: the severity mark on the served report. The
+    # limitation text is unchanged and still first on the page; only the rule
+    # that colours it critical stops matching, so the caveat renders as an
+    # ordinary note. Same shape as the demotion above, one surface further out.
+    ("html-report-stops-marking-critical-notes",
+     "src/cas13guide/services/report_html.py",
+     'if n.upper().startswith("CRITICAL")',
+     'if n.upper().startswith("WARNING")',
+     ["test_mutation_holes.py", "test_caveats_reach_every_surface.py", "test_report_html.py"]),
+    # services/ingest.py: the duplicate-column refusal round twelve added,
+    # because csv.DictReader keeps the last column of a repeated name and a
+    # stray second `activity` inverts every training label in silence.
+    ("ingest-allows-a-duplicate-column", "src/cas13guide/services/ingest.py",
+     "if header.count(name) > 1}",
+     "if header.count(name) > 2}",
+     ["test_bugfix_hunt_round12.py", "test_ingest.py"]),
 ]
 
 

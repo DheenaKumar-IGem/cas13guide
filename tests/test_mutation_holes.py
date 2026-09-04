@@ -524,5 +524,63 @@ class TestTheCriticalCaveatsStayCritical(unittest.TestCase):
                          "limitations are not ordered by severity")
 
 
+class TestTheHtmlReportMarksItsCriticalNotes(unittest.TestCase):
+    """The tenth hole, and the ninth one surface further out.
+
+    Fixing the severity at the source pinned what ``limitations_for_run``
+    returns. It did not pin what the served page does with it. The report marks
+    a note critical by testing its text::
+
+        f'<div class="note{" crit" if n.upper().startswith("CRITICAL") else ""}">'
+
+    Change that prefix and every CRITICAL renders as an ordinary note: same
+    words, same position, no mark. The suite stayed green, because the tests
+    that read the page look for the *text* -- which is exactly the assumption
+    that let the source-level demotion through.
+
+    Worth stating as its own class rather than folding into the one above: a
+    caveat has to survive every surface it crosses, and each surface is a
+    separate place for it to lose its severity.
+    """
+
+    CRITICAL_NOTE = (
+        "CRITICAL: Conformal bounds were calibrated on SYNTHETIC data. Every "
+        "interval, and therefore every PASS, is exercisable rather than earned."
+    )
+    ORDINARY_NOTE = "INFO: Every score on this page is a prediction."
+
+    def _page(self):
+        from cas13guide.services.report_html import render_report
+
+        return render_report({"verdict_counts": {}, "ranked": []},
+                             title="T", subtitle="S",
+                             notes=[self.CRITICAL_NOTE, self.ORDINARY_NOTE])
+
+    def test_a_critical_note_carries_the_critical_class(self):
+        import re
+
+        page = self._page()
+        marked = re.findall(r'<div class="note crit">(.*?)</div>', page, re.S)
+        self.assertTrue(marked, "no note rendered with the critical mark")
+        self.assertTrue(any("SYNTHETIC" in block for block in marked),
+                        "the CRITICAL note is not the one carrying the mark")
+
+    def test_an_ordinary_note_does_not(self):
+        """Both directions. A mark every note carries marks nothing."""
+        import re
+
+        page = self._page()
+        marked = re.findall(r'<div class="note crit">(.*?)</div>', page, re.S)
+        self.assertFalse(any("prediction" in block for block in marked),
+                         "an INFO note was rendered as critical")
+
+    def test_both_notes_still_reach_the_page(self):
+        """The mark is the thing under test, not whether the text arrives --
+        and a test that only checked arrival is what missed this."""
+        page = self._page()
+        self.assertIn("SYNTHETIC", page)
+        self.assertIn("prediction", page)
+
+
 if __name__ == "__main__":
     unittest.main()
