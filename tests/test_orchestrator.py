@@ -133,6 +133,42 @@ class TestBacktrackLoops(unittest.TestCase):
         self.assertEqual(len(escalations), spec.budget.max_search_escalations)
         self.assertTrue(any("budget exhausted" in s for s in report.shortfalls))
 
+    def _partial_world(self, keep: int) -> Transcriptome:
+        """A world holding only the first ``keep`` bases of the target.
+
+        Candidates tiling inside the kept prefix find a hit; the rest do not,
+        so the zero-hit fraction is a dial. 42 candidates are tiled, and each
+        extra base kept converts exactly one zero-hit candidate into a hit.
+        """
+        t = Transcriptome("GRCh38", "v44")
+        t.add(Locus("L_T1", SEQ_A[:keep], Universe.CODING, gene="TGT",
+                    expression=100.0))
+        return t
+
+    def test_escalation_fires_just_above_its_threshold(self):
+        """ZERO_HIT_SUSPICION is 0.5, and the test above sits at 1.0.
+
+        A fraction of 1.0 escalates whatever the threshold is, so raising it
+        to 0.6 -- an ordinary-looking re-tune -- left the whole suite green
+        while changing whether a run widens its envelope. 38 kept bases put
+        25 of 42 candidates at zero hits, which is 0.5952: above 0.5 and
+        below 0.6, so this fails if the threshold moves that far.
+        """
+        events: list[str] = []
+        run(make_spec(), self._partial_world(38), events=events)
+        self.assertTrue(any("escalating envelope" in e for e in events))
+
+    def test_and_not_at_it(self):
+        """42 kept bases give exactly 21 of 42, and the comparison is `>`.
+
+        Half the candidates finding nothing is not yet suspicious. Pinning
+        this is what stops the threshold drifting to `>=` as well as what
+        stops it drifting in value.
+        """
+        events: list[str] = []
+        run(make_spec(), self._partial_world(42), events=events)
+        self.assertFalse(any("escalating envelope" in e for e in events))
+
     def test_shortfall_is_reported_not_silently_swallowed(self):
         spec = make_spec()
         report = run(spec, world(include_target=False))

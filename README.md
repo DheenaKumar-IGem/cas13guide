@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1257 tests
+python -m unittest discover -s tests -t tests    # 1263 tests
 pytest                              # same suite under pytest
 ```
 
@@ -784,7 +784,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1257 tests, run under `unittest` or `pytest` — both discover the same set —
+1263 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -796,8 +796,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1257 tests
-python examples/verify_mutation_coverage.py              # 79 mutations, 79 caught
+pytest                                                   # 1263 tests
+python examples/verify_mutation_coverage.py              # 80 mutations, 80 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -844,7 +844,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 79 are
+against the **whole** suite before being called a hole. None of the 80 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -876,8 +876,9 @@ against the whole suite — green means hole, red means caught. With the baselin
 permanently red the whole-suite run was never green, so `holes` could never be
 non-empty. **"0 holes" was true by construction rather than by measurement.**
 
-Eight distinct ways it could report success or failure without measuring turned
-up once that one was found. Five were live and three were latent:
+Ten distinct ways it could report success or failure without measuring have
+turned up. Eight came from the audit that followed the first one. The
+last two were caught in the act, hiding two real holes between them:
 
 | The mechanism | What it did |
 |---|---|
@@ -889,10 +890,75 @@ up once that one was found. Five were live and three were latent:
 | A no-op mutation | Identical to the code it replaces, so a guaranteed false *hole* |
 | Stale bytecode | `__pycache__` carried into a tree whose whole purpose is to have its source edited |
 | An unhandled hang | `TimeoutExpired` ended the sweep and lost every verdict after it |
+| A red suite nobody attributed | The full-suite stage read *any* failure as proof the mutation caused it, so one unrelated flake turned a hole into a “caught” |
+| Bytecode outliving its source | A same-length mutation restored inside one second left a `.pyc` Python still considered valid, so the mutation stayed live in every later run |
 
-All eight now fail loudly. Two of them were found only because fixing an
-earlier one exposed the next, which is the argument for treating an instrument's
-own failure modes as the first thing to audit.
+All nine now fail loudly. Two of the first eight were found only because fixing
+an earlier one exposed the next, which is the argument for treating an
+instrument's own failure modes as the first thing to audit.
+
+The ninth is worth the detail, because it is the only one that was observed
+hiding something rather than reasoned about. Two mutations — a blank paste
+accepted as a sequence, and a blank `--variants` box parsed as variants — were
+reported **caught by the full suite** in one run and **holes** in the next,
+from the same source. A worktree at the earlier commit settles which was right:
+the suite is green under both mutations there, so both were holes all along.
+
+What differed was the bytecode. Python validates a timestamp-based `.pyc`
+against its source's mtime truncated to whole *seconds*, plus its size. Ten of
+the mutations preserve length — `max` for `min`, `0.05` for `0.10` — so when
+one is screened by a module that runs in under a second, the restore lands in
+the same second as the write it undoes and the two files are indistinguishable
+to that check. The mutated bytecode stays valid, the restored source is never
+recompiled, and the mutation is live in every later run in that tree.
+
+Measured directly, with no sleeps: write a same-length mutation, compile it,
+restore the file, import it again — **11 of 12 imports returned code that was
+not on disk**. That is the whole drift. A mutation that lost this race reddened
+the suite for whatever was tested next, and under the old rule a red suite
+*was* the catch, so the two input-door holes were reported caught for as long
+as some neighbour kept losing it. It is intermittent because it is a sub-second
+race, which is why six consecutive full-suite runs — three in the tree, three
+in a fresh copy — were identical and green while the sweep's own verdicts
+moved.
+
+The instrument had already called carried-in bytecode a hazard with no upside
+and stopped copying `__pycache__`. Generating it inside the copy is the same
+hazard, and that half was left open. Every source write now deletes the
+bytecode compiled from the file it replaces — one file's cache, not the whole
+run's. The blunt version, `PYTHONDONTWRITEBYTECODE` for every subprocess, was
+tried first and left a three-minute suite still running after an hour, which is
+its own lesson: an instrument nobody can afford to run documents drift instead
+of preventing it.
+
+The attribution guard stays, because it is what turned an invisible fault into
+a visible one. It is also the general case: this particular cause is fixed, and
+the next reason a suite goes red for something other than the mutation will not
+be.
+
+So the failure is now attributed. When the full suite goes red the sweep
+restores the file and runs the suite again. Green means the red was the
+mutation's doing and the mutation is caught; red means it was not, and neither
+verdict is available — the run prints `[UNATTRIBUTED]`, names what failed, and
+exits non-zero rather than printing that every mutation was caught.
+
+The control has to be the *same* command, and getting that wrong is the
+instructive part. The first version re-ran only the tests that had failed,
+which is cheaper and looks equivalent. It is not: a subset of a suite is a
+different experiment. Tests share module-level state and fixture ordering, so
+the subset re-run produced failures that neither the whole suite nor the test
+alone produces — it named a different innocent test on each run
+(`test_acceptance`, then `test_gate`, then `test_metrics`, each of which passes
+on its own) and would have called every full-suite catch unattributable. A
+control that differs from the experiment in any way but the one under test is
+not a control.
+
+The guard is verified the way everything else here is: by making it fire. One
+existing test was rewritten to pass on its first invocation and fail afterwards
+— a flake, as the sweep sees one — and the run reported `[UNATTRIBUTED]`, named
+the test, and exited non-zero. It printed "every mutation was caught" on the
+first attempt, which is how an unattributed verdict came to count against the
+run rather than past it.
 
 ### What was behind them
 
@@ -1015,13 +1081,13 @@ somebody checks the table in the module docstring still describes the machine.
 Constants are where the first batch's one real hole was, so the second went
 looking for more of them. Thirty-five module-level numbers decide something in
 this package. Twenty-nine of them had never been mutated when this batch was
-written, and twenty-five still have not. Six were picked for
+written, and twenty-four still have not. Six were picked for
 deciding something a user sees, and each was moved by a plausible amount rather
 than a wild one — the question is whether the suite notices a threshold
 shifting, not whether it notices the code breaking. **All six survived a green
 baseline.**
 
-Four were holes and are pinned now. `TERMINAL_WEIGHT` sets how much less a
+Four were holes of one kind, and are pinned now. `TERMINAL_WEIGHT` sets how much less a
 terminal mismatch counts than a central one, and raising it 0.25 → 0.30 moves
 every position-weighted penalty, which moves the discrimination margin and the
 ranking. `SATURATION_K` is the half-saturation point for abundance, and 50 → 60
@@ -1054,14 +1120,16 @@ nothing about being callable makes it called. Walking methods too turned up
 anywhere, not even a test; the second was deleted and the first is recorded
 with the reason it has none.
 
-The sixth, `ZERO_HIT_SUSPICION`, is still unpinned and worth saying so. Raising
-it 0.5 → 0.6 changes whether a run widens its search envelope, and the existing
-test escalates all the way to the budget — a fraction far above either
-threshold, so the boundary is again tested away from the boundary. Pinning it
-needs a run whose zero-hit fraction lands between the two, which needs a
-crafted transcriptome rather than a threshold nudged in a fixture. It is not in
-the mutation set, because a mutation nothing catches would make the sweep
-report a permanent hole and stop meaning anything.
+The sixth, `ZERO_HIT_SUSPICION`, took a fixture rather than an assertion.
+Raising it 0.5 → 0.6 changes whether a run widens its search envelope, and the
+existing test escalates all the way to the budget — a zero-hit fraction of 1.0,
+which escalates whatever the threshold is. The dial turned out to be the world:
+give the search a locus holding only the first *k* bases of the target and each
+extra base converts exactly one zero-hit candidate into a hit. 38 bases put 25
+of 42 candidates at zero hits — 0.5952, above 0.5 and below 0.6 — and 42 bases
+give exactly 21 of 42, which does not escalate because the comparison is `>`.
+Both are pinned, and the pair catches the value moving and the operator
+loosening to `>=`.
 
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the

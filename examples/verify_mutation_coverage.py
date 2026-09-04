@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 79 are
+  "hole" is never an artefact of which modules were chosen. None of the 80 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,12 +38,13 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **79 mutations, 79 caught, 0 holes.**
+Last measured: **80 mutations, 80 caught, 0 holes.**
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -638,12 +639,54 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         "DISFAVOURED_PFS_FACTOR = 0.60",
         ["test_mutation_holes.py"],
     ),
+    (
+        "zero-hit-suspicion-raised",
+        "src/cas13guide/pipeline/orchestrator.py",
+        "ZERO_HIT_SUSPICION = 0.5",
+        "ZERO_HIT_SUSPICION = 0.6",
+        ["test_orchestrator.py"],
+    ),
 ]
 
 
-def _run(root: Path, modules: list[str] | None) -> tuple[bool, str]:
-    command = [sys.executable, "-m", "pytest", "-q", "-x", "--no-header",
+def _write_source(path: Path, text: str) -> None:
+    """Write a source file and drop any bytecode compiled from the old one.
+
+    Python validates a timestamp-based ``.pyc`` against its source's mtime
+    truncated to whole *seconds*, plus its size. Ten of the mutations above
+    preserve length -- ``max`` for ``min``, ``0.05`` for ``0.10`` -- so when
+    one is screened by a module that runs in under a second, the restore lands
+    in the same second as the write it undoes, and the two files are
+    indistinguishable to that check. The mutated bytecode stays valid, the
+    restored source is never recompiled, and the mutation is live in every
+    later run in this tree.
+
+    Measured directly, with no sleeps: same-length write, compile, restore,
+    import -- 11 of 12 imports returned code that was not on disk.
+
+    That is what made this instrument's verdicts drift. A mutation losing that
+    race reddens the suite for whatever is tested next, and the full-suite
+    stage read a red suite as the catch, so two real holes were reported
+    caught for as long as some neighbour kept losing it.
+
+    The module docstring already calls carried-in bytecode a hazard with no
+    upside and stops copying ``__pycache__``. Generating it inside the copy is
+    the same hazard; this closes that half. One file's cache rather than
+    PYTHONDONTWRITEBYTECODE for the whole run, deliberately: the blunt version
+    left a three-minute suite still running after an hour, and an instrument
+    nobody can afford to run documents drift instead of preventing it.
+    """
+    path.write_text(text, encoding="utf-8")
+    cache = path.parent / "__pycache__"
+    if cache.is_dir():
+        for compiled in cache.glob(f"{path.stem}.*.pyc"):
+            compiled.unlink(missing_ok=True)
+
+
+def _run(root: Path, modules: list[str] | None) -> tuple[bool, str, list[str]]:
+    command = [sys.executable, "-m", "pytest", "-q", "--no-header",
                "-p", "no:cacheprovider"]
+    command.append("-x")
     command += [f"tests/{name}" for name in modules] if modules else ["tests"]
     # PYTHONPATH, or the sweep cannot see half of what it thinks it tests.
     #
@@ -670,14 +713,39 @@ def _run(root: Path, modules: list[str] | None) -> tuple[bool, str]:
         # suite would report if it ever finished. Reported as such rather than
         # raised, because an unhandled TimeoutExpired ends the sweep and loses
         # every verdict after it.
-        return False, "TIMED OUT after 3600s"
-    return done.returncode == 0, (done.stdout.strip().splitlines() or [""])[-1]
+        return False, "TIMED OUT after 3600s", []
+    return (done.returncode == 0,
+            (done.stdout.strip().splitlines() or [""])[-1],
+            _failed_ids(done.stdout))
+
+
+#: A pytest short-summary line, whatever kind of failure it reports.
+#:
+#: `SUBFAILED` is the one that matters and the one first written out of this
+#: pattern. pytest-subtests reports a failing subtest as
+#: `SUBFAILED(count='...') tests/x.py::C::t`, and `-x` does not stop on it --
+#: so a mutation caught only by subtests produced a red suite and *no*
+#: extractable ids. The empty list then reached pytest as "no paths given",
+#: which collects everything: the attribution step silently re-ran the whole
+#: suite and answered a question nobody asked.
+_SUMMARY_LINE = re.compile(r"^(?:FAILED|ERROR|SUBFAILED)(?:\([^)]*\))?\s+(\S+)")
+
+
+def _failed_ids(output: str) -> list[str]:
+    """Test ids pytest reported as failing, in short-summary form."""
+    ids = []
+    for line in output.splitlines():
+        found = _SUMMARY_LINE.match(line)
+        if found:
+            ids.append(found.group(1))
+    return list(dict.fromkeys(ids))
 
 
 def main() -> int:
     wanted = sys.argv[1] if len(sys.argv) > 1 else None
     holes: list[str] = []
     broken: list[str] = []
+    unattributed: list[str] = []
     checked = 0
 
     with tempfile.TemporaryDirectory(prefix="cas13guide-mutation-") as scratch:
@@ -721,7 +789,7 @@ def main() -> int:
         # and the cost is one suite run against an instrument whose only value
         # is being trustworthy.
         print("checking the unmutated tree first ...")
-        green, tail = _run(root, None)
+        green, tail, _ = _run(root, None)
         if not green:
             print()
             print("[ABORT] the tree does not pass its own suite unmutated.")
@@ -785,24 +853,72 @@ def main() -> int:
                 broken.append(f"{name} ({reason})")
                 continue
             checked += 1
-            path.write_text(before.replace(original_code, mutated_code), encoding="utf-8")
+            _write_source(path, before.replace(original_code, mutated_code))
             try:
-                screened, _ = _run(root, modules)
+                screened, _, _ = _run(root, modules)
                 if not screened:
                     print(f"[caught] {name}")
                     continue
                 # Screened green: only the full suite can call this a hole.
-                whole, tail = _run(root, None)
+                whole, tail, failed = _run(root, None)
                 if whole:
                     holes.append(name)
                     print(f"[HOLE  ] {name} -- full suite still green: {tail}")
+                    continue
+
+                # A red suite is not by itself evidence about the mutation.
+                #
+                # This is the ninth way this instrument found to report
+                # "caught" without measuring, and the only one caught in the
+                # act: two mutations were reported caught by the full suite in
+                # one run and reported as holes in the next, from the same
+                # code. A worktree at the earlier commit settles it -- the
+                # suite is green under both mutations there, so they were holes
+                # all along and the red came from somewhere else. The likely
+                # somewhere is load: those runs shared the machine with another
+                # suite and a type check, and this file's own screening step
+                # was green both times, which is the signature of a failure the
+                # mutation did not cause.
+                #
+                # So the failure has to be attributed: restore the file and
+                # run the suite again. Green means the red was the mutation's
+                # doing and the mutation is caught. Red means it was not, and
+                # neither verdict is available.
+                #
+                # The control has to be the *same* command, and getting that
+                # wrong is instructive. The first version re-ran only the
+                # tests that had failed, which is cheaper and looks
+                # equivalent. It is not: a subset of a suite is a different
+                # experiment. Tests share module-level state and fixture
+                # ordering, so a subset re-run reported failures that neither
+                # the whole suite nor the test alone produces -- it named a
+                # different innocent test on each run, and would have called
+                # every full-suite catch unattributable. A control that
+                # differs from the experiment in any way but the one under
+                # test is not a control.
+                _write_source(path, before)
+                clean, clean_tail, clean_failed = _run(root, None)
+                _write_source(path, before.replace(original_code, mutated_code))
+                if clean:
+                    print(f"[caught] {name} (by the full suite, not the "
+                          f"screening modules)")
                 else:
-                    print(f"[caught] {name} (by the full suite, not the screening modules)")
+                    named = ", ".join(clean_failed[:3]) or clean_tail
+                    reason = f"the suite is red without the mutation too: {named}"
+                    print(f"[UNATTRIBUTED] {name}: {reason}")
+                    unattributed.append(f"{name} ({reason})")
             finally:
-                path.write_text(before, encoding="utf-8")
+                _write_source(path, before)
 
     print()
     print(f"{checked} of {len(MUTATIONS)} mutation(s) applied, {len(holes)} survived.")
+    if unattributed:
+        print()
+        print("These went red on tests that fail without the mutation too, so")
+        print("nothing here is evidence that the behaviour is pinned. Re-run")
+        print("them on a quiet machine before believing either verdict:")
+        for item in unattributed:
+            print(f"  {item}")
     if broken:
         print()
         print("These mutations did NOT run -- an anchor that no longer")
@@ -817,6 +933,12 @@ def main() -> int:
             print(f"  {name}")
         return 1
     if broken:
+        return 1
+    # An unattributed verdict is not a catch. Exiting 0 here would restate the
+    # very claim the attribution guard exists to stop -- "every mutation was
+    # caught" over a run that could not show this one was -- so it counts
+    # against the run exactly as a broken anchor does.
+    if unattributed:
         return 1
     print("Every mutation was caught: the invariants above are pinned, not merely asserted.")
     return 0

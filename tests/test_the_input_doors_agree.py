@@ -111,5 +111,83 @@ class TestARawPasteIsStillADesign(unittest.TestCase):
         )
 
 
+class TestAnEmptyPasteIsRefusedAtEveryDoor(unittest.TestCase):
+    """Nothing is not a sequence, and whitespace is nothing.
+
+    ``parse_sequence_input`` guards this with ``if not text or not
+    text.strip()``, and the guard was unpinned: replacing it with ``if text is
+    None`` left the whole suite green.
+
+    What the guard protects is the *message*, not the refusal. A blank paste
+    is refused either way, because the comment-stripping stage downstream
+    also finds nothing left -- so the first version of this test asserted the
+    exception type and the words "no sequence supplied", and both messages
+    carry those. It passed under the mutation it was written for.
+
+    What actually changes is what the user is told to do. Refused at the
+    guard: "Paste a sequence, or a FASTA record starting with >". Refused
+    downstream: "the input is only comment lines", which is false about an
+    empty box and tells nobody anything. That instruction is the assertion.
+
+    The sibling case, a whitespace paste arriving through ``_read_records``,
+    was found earlier and is pinned in test_mutation_holes.py. This is the
+    same rule at the door underneath it.
+    """
+
+    BLANKS = ("", "   ", chr(10),
+              " " + chr(9) + chr(10) + "  " + chr(13) + chr(10),
+              chr(65279))
+
+    def test_every_blank_paste_is_refused(self):
+        from cas13guide.services.fasta import SequenceInputError, parse_sequence_input
+
+        for blank in self.BLANKS:
+            with self.subTest(paste=repr(blank)):
+                with self.assertRaises(SequenceInputError):
+                    parse_sequence_input(blank)
+
+    def test_and_is_told_what_to_do_about_it(self):
+        """The instruction is what the guard exists to produce."""
+        from cas13guide.services.fasta import SequenceInputError, parse_sequence_input
+
+        for blank in self.BLANKS:
+            with self.subTest(paste=repr(blank)):
+                with self.assertRaises(SequenceInputError) as caught:
+                    parse_sequence_input(blank)
+                message = str(caught.exception)
+                self.assertIn("Paste a sequence", message)
+                self.assertNotIn("comment lines", message)
+
+
+class TestAnEmptyVariantsFieldIsNotVariants(unittest.TestCase):
+    """The variants door takes the same rule as the sequence door.
+
+    ``run_request`` reads ``--variants`` text only when it has content:
+    ``request.variants_text and request.variants_text.strip()``. Weakening
+    that to ``is not None`` left the suite green, and turns an untouched
+    textarea into a hard error -- the web form sends the field whether or not
+    anybody typed in it, so a form POST would fail with "variants: no sequence
+    supplied" for a box the user never filled.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        rng = random.Random(11)
+        cls.sequence = "".join(rng.choice("ACGU") for _ in range(300))
+
+    def test_a_blank_variants_field_is_ignored_not_parsed(self):
+        for blank in ("", "   ", chr(10) + chr(9) + " "):
+            with self.subTest(variants=repr(blank)):
+                report = _run(sequence_text=self.sequence, variants_text=blank)
+                self.assertTrue(report["ranked"])
+
+    def test_a_real_variants_field_is_still_read(self):
+        """Or the test above would pass with the door nailed shut."""
+        variant = self.sequence[:150] + "A" + self.sequence[151:]
+        text = ">v1" + chr(10) + variant + chr(10)
+        report = _run(sequence_text=self.sequence, variants_text=text)
+        self.assertTrue(report["ranked"])
+
+
 if __name__ == "__main__":
     unittest.main()
