@@ -838,208 +838,130 @@ same module, and where they differ the difference is worth seeing. That also
 took the sweep from about thirty minutes to five, and an instrument nobody runs
 documents drift instead of preventing it. The second stage stays: it is what
 makes "hole" a claim about the whole suite rather than about which modules
-somebody chose. It mutates the LCB/UCB asymmetry, the six named
-metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
-the candidate budget, the out-of-domain substitution, the conformal quantile,
-the search-bound algebra, the FR6.3 posterior and its Fréchet floor, the
-kinetics stability guard, the wobble rule, the expression bound, the PFS
-exemption for an unread base, the spacer:DR pairing rule with its threshold, the
-shared binding-site rule, and the world digest.
+somebody chose.
 
-**And it was wrong about itself until recently, which is worth reading before
-believing the paragraph above.** The sweep mutates a *copy* of the tree, and the
-copy held `src`, `tests` and `pyproject.toml` — while eight tests read
-`README.md` or `examples/`. So the copied tree failed six tests with two
-collection errors before any mutation was applied. Its logic is: screen a
-mutation, and if it survives, confirm against the whole suite — green means
-hole, red means caught. With the baseline permanently red the whole-suite run
-was never green, so `holes` could never be non-empty. "0 holes" was true by
-construction rather than by measurement, and the sweep was **structurally
-incapable of reporting one**.
+It mutates the LCB/UCB asymmetry, the six named metrics, every FAIL branch in
+the gate, the QC checks, the panel constraints, the candidate budget, the
+out-of-domain substitution, the conformal quantile, the search-bound algebra,
+the FR6.3 posterior and its Fréchet floor, the kinetics stability guard, the
+wobble rule, the expression bound, the PFS exemption for an unread base, the
+spacer:DR pairing rule with its threshold, the shared binding-site rule, the
+world digest, the exit codes, the off-target table's ordering, a Jeffreys prior
+and a reported precision.
 
-Ten mutations had taken that path. With the copy fixed, eight of them were
-genuine holes — the gate's coverage boundary, the discrimination margin's
-`max` over forbidden hits, the desired-target weighting, the panel's lower-bound
-read, the candidate budget's remainder, the conformal group-adequacy minimum,
-the coverage slack, and the Fréchet floor. Each could have been reverted without
-a single test noticing. Most were the same failure of imagination: a fixture
-with one element, where `max` and `min` agree; a weight of 1.0, where dropping
-the weight changes nothing; a threshold exercised far from the boundary that
-moved. They are pinned in `tests/test_mutation_holes.py`, each verified to fail
-against the mutation it closes.
+### It could not report a hole, and twenty were hiding
 
-Then the obvious next question: if eight of ten unverified verdicts were holes,
-what is in the modules nothing has *ever* mutated? The first probe went into
-`services/limitations.py` — 390 lines carrying this tool's central promise, and
-never mutated once. Its most important caveat, *"Conformal bounds were
-calibrated on SYNTHETIC data. Every interval, and therefore every PASS, is
-exercisable rather than earned"*, could be demoted from CRITICAL to WARNING
-with the whole suite green. Every test asserted the text reached its surface;
-none asserted the severity it reached them at — and severity is not decoration
-here, it also sets the order, so a demotion moves that sentence below the notes
-a reader is meant to skim. That is a ninth hole, now pinned along with the
-other three CRITICAL caveats and the rule that nothing else may claim the mark.
+This is the part worth reading before believing the paragraph above, because
+for most of this repository's life the sweep was **structurally incapable of
+finding anything**.
 
-A tenth followed immediately, and it is the ninth one surface further out.
-Fixing the severity at the source pinned what `limitations_for_run` returns; it
-did not pin what the served page does with it. The HTML report decides a note is
-critical by testing its text, and changing that test renders every CRITICAL as
-an ordinary note — same words, same position, no mark — with the suite still
-green. A caveat has to survive every surface it crosses, and each surface is a
-separate place to lose its severity. Both are pinned now.
+It mutates a *copy* of the tree, and the copy held `src`, `tests` and
+`pyproject.toml` — while eight tests read `README.md` or `examples/`. So the
+copied tree failed six tests with two collection errors before a single mutation
+was applied. Its logic is: screen a mutation, and if it survives, confirm
+against the whole suite — green means hole, red means caught. With the baseline
+permanently red the whole-suite run was never green, so `holes` could never be
+non-empty. **"0 holes" was true by construction rather than by measurement.**
 
-The other probes into never-mutated modules were caught: a grouped-split
-off-by-one that would have trained on its own held-out folds, the
-duplicate-column refusal in `ingest.py`, inverting which runs get the collateral
-warning, dropping transcriptome records from the export header, and grouping the
-survivors instead of the failures into the rejection table.
+Eight distinct ways it could report success or failure without measuring turned
+up once that one was found. Five were live and three were latent:
 
-An eleventh came from `pipeline/orchestrator.py`, and working out what it
-actually broke was the instructive part. One line picks which context is *the*
-reference; invert it and a variant is chosen, with the suite green. But each
-context searches its own index either way — the reference only decides which
-one reuses the already-computed search — so the per-context evidence is
-identical, and a test written against the evidence sees nothing. That is what
-the first attempt here did.
+| The mechanism | What it did |
+|---|---|
+| A red baseline | Every mutation "caught", because the suite was already failing |
+| A missing anchor | `distinct-sites-best-becomes-worst` stopped running when its code moved, and the sweep still printed success |
+| An ambiguous anchor | `wobble-rule-dropped` renamed a constant appearing twice — a *consistent* rename, so a no-op — and passed only because two other modules import that name and the suite died of an `ImportError` |
+| A missing screening module | `pytest tests/nope.py` exits 4, which reads as "the suite went red", so a stale hint is a permanent silent false pass |
+| A subprocess importing unmutated code | An editable install points at the real `src/`, so every test that shells out was passing under mutations it never ran |
+| A no-op mutation | Identical to the code it replaces, so a guaranteed false *hole* |
+| Stale bytecode | `__pycache__` carried into a tree whose whole purpose is to have its source edited |
+| An unhandled hang | `TimeoutExpired` ended the sweep and lost every verdict after it |
 
-What the choice really decides is read from the reference's transcriptome
-directly: the exon-junction map handed to tiling, the envelope escalation, and
-the world the non-targeting controls are screened against. The junction map is
-the one whose absence is silent — `spans_junction` was False on every guide in
-every real run until that wire was added — so a run reading it from the wrong
-world looks exactly like the bug that already happened once. Pinned there.
+All eight now fail loudly. Two of them were found only because fixing an
+earlier one exposed the next, which is the argument for treating an instrument's
+own failure modes as the first thing to audit.
 
-A twelfth, in `cli.py`, guarded a fix that had already been made once. `rows`
-is the display list — through the distinct-site filter and `--top` — while
-`all_rows` is what the run produced, and the branch telling them apart reads
-`elif all_rows:`. Reading `rows` instead prints "no guide cleared the gate"
-whenever a display limit empties the table, beside exports carrying every one
-of those guides. The comment on that line records the defect; nothing pinned
-the correction, so any refactor mistaking the two names could have reverted it
-in silence.
+### What was behind them
 
-The fifth way it could report success without measuring anything turned up
-while closing that twelfth hole, and it is the largest of them. cas13guide is
-installed editable, and an editable install points at the *real* `src/`.
-`tests/helpers.py` puts the copy's `src` first on `sys.path`, so tests running
-in-process do exercise the mutated code — but any test that shells out
-(`python -m cas13guide.cli …`) starts a fresh interpreter, which resolves the
-package through the editable install and imports the **unmutated original**.
+Twenty behaviours that could each be reverted without a single test noticing.
+Grouped by what went wrong rather than by the order they turned up, because the
+kinds repeat and the order does not mean anything.
 
-Every subprocess-based test was therefore contributing nothing to mutation
-coverage, and doing it silently: it passed under the mutation because it never
-ran the mutation. That is most of the coverage of the terminal door, the demo,
-and the checks that caveats reach every surface. It was caught because a
-`cli.py` mutation that a subprocess-driven test catches in the real tree came
-back from the sweep as a hole. `PYTHONPATH` takes precedence over the editable
-install's finder and children inherit it, so the sweep now puts the copy in
-front for the whole process tree.
+**A fixture too small to see the difference.** The discrimination margin's `max`
+over forbidden hits could become a `min` — the fixtures carry one forbidden
+target, and over one element they are the same function. Desired-target
+weighting could be dropped entirely, because every fixture used weight 1.0. The
+panel's coverage could read the upper bound instead of the lower, which needs
+two hits on one target to be visible at all: with one, the comparison is against
+0.0 and both bounds clear it.
 
-Closing that blind spot immediately produced a thirteenth and fourteenth hole,
-which is the argument for having closed it. Both CLI exit-code contracts were
-unpinned: `train` could always report success while the acceptance gate
-rejected the dataset, and `design` could always report success while nothing
-ranked. A status code is the part of a CLI another program reads, and a wrapper
-cannot tell a lie in it from the truth. The existing tests asserted 0 for
-success and 2 for a usage error; nothing asserted **1**, the status that says
-the run completed and its answer was "no". Both were invisible before, because
-an exit code is only observable through a subprocess.
+**A boundary tested away from the boundary.** The gate's coverage floor could
+move by 0.05, because every gate test sat clear of it. The conformal
+group-adequacy minimum could go off by one, so "one fewer than too few" would
+certify. The coverage slack could double. The candidate budget's remainder could
+go unspent, turning ten slots over three targets into nine.
 
-Two probes after that found something different again, and worth naming
-separately: a mutation the suite cannot catch is not always a hole. The FM
-index documents *two* independent defences against a match spanning two loci —
-the separator is excluded from the walk alphabet, and `_locate` rejects any
-window running off the end of its locus — and says the redundancy is
-deliberate. So changing the second defence is invisible, because while the
-first stands the walk never produces an offset for it to reject. Neither guard
-can be observed failing through the search, which is what defence in depth
-means. The answer was not to remove it but to test it directly, at the offset
-that separates a correct guard from one loosened by an off-by-one, so the
-redundancy is verified rather than assumed. A probe into `features.py` turned
-out to be the same shape with no such payoff — its guard only matters at a
-spacer length of 1, and the contract admits 22 to 30 — so that one was removed
-and the reasoning left in its place.
+**A claim about nothing, accepted as a claim.** `all([])` is `True`, so the
+acceptance gate's own guard against an empty report — the clause standing
+between "we checked six things and they passed" and "we checked nothing" — was
+unpinned. Asking where else that idiom ran over a possibly-empty collection
+found the same defect in the package rather than the tests:
+`BenchmarkReport.coverage_ok` had **no** guard, so a benchmark that evaluated no
+cases answered "yes, the bounds mean what they claim" — and two gates read it,
+including `cas13guide check`, whose entire job is conformal coverage.
 
-A twentieth sits at the door a browser user is most likely to arrive at by
-accident. Each text input door is guarded with `.strip()`, so a box containing
-only spaces or newlines counts as empty and falls through to *"No sequence
-supplied. Paste a sequence, upload a FASTA file, or pick a built-in target"*.
-Without the guard the whitespace is treated as input and the reader gets a parse
-failure about a sequence they did not knowingly give — an error naming a symptom
-instead of naming what to do next, which is the distinction this package draws
-everywhere else.
+**An identity that was not one.** The Fréchet floor could become a mean,
+reporting a panel as weaker than a guide it contains — not a bound at all. The
+provenance ledger digest could depend on the order a caller wrote keyword
+arguments, so two runs recording the same facts disagreed.
 
-An eighteenth and nineteenth came once the sweep was fast enough to be worth
-running often — five minutes rather than thirty — and both are in the off-target
-explorer, which is the table the validation plan points at: *"sequence the top
-off-target loci from the explorer table"*. It keeps one row per locus carrying
-the worst hit, then sorts by hazard descending and truncates. Neither rule was
-pinned. Sorting ascending puts the mildest hits at the top and the truncation
-then keeps the safest, discarding exactly the rows the table exists to show; and
-keeping the mildest hit per locus reports a real off-target at a hazard it does
-not have. The comment on that column says it runs the same code path as
-`worst_off_target` "so the column a reviewer eyeballs cannot drift from the
-metric it reproduces" — which was true of the number and not of the ordering, so
-every hazard on the page stays correct while the page sends a reader to the
-wrong bench work.
+**A caveat that kept its words and lost its mark.** The synthetic-calibration
+CRITICAL could be demoted to a warning at the source, and — separately, one
+surface further out — the HTML report could stop marking CRITICAL notes at all.
+Same text, same position, no mark; every test looked for the words. Severity is
+not decoration here: it also sets the order, so a demotion moves that sentence
+below the notes a reader is meant to skim.
 
-A seventeenth came from generalising rather than probing, which is the first
-time that has worked here. Having found the acceptance gate's guard unpinned,
-the question was where else an `all()` runs over a collection that can be
-empty. Seven places in the package: four already guarded, one correct to answer
-True on nothing (a panel with no required targets is trivially feasible), one
-whose criteria are built two lines above it — and `BenchmarkReport.coverage_ok`,
-which had no guard at all. Its coverage tuple is built per stratum from the
-benchmark cases, so a run that evaluated none built none, and the property
-answered *"yes, the bounds mean what they claim"* having measured nothing. Two
-gates read it: `cas13guide check` exits 0 on it, and it is the "conformal
-coverage" criterion in the acceptance report. A defect in the package, not just
-in its tests, found by taking a pattern seriously.
+**A page that is internally consistent and points the wrong way.** The
+off-target explorer keeps one row per locus carrying its worst hit, then sorts
+by hazard descending and truncates. Neither rule was pinned. Sorting ascending
+puts the mildest first and the truncation keeps the safest, discarding exactly
+the rows the table exists to show — while every individual hazard on the page
+stays correct. The README tells a reader to "sequence the top off-target loci
+from the explorer table".
 
-Two more holes came from `acceptance.py` and `provenance.py`, neither ever
-probed. `AcceptanceReport.accepted` reads `bool(self.criteria) and all(...)`,
-and the first clause is there because `all([])` is True — a report that
-evaluated nothing would otherwise certify. That is the same vacuous pass found
-in four of the instruments, guarded here in the package itself, and **nothing
-pinned the guard**: dropping it left the suite green, so a refactor tidying the
-expression could have removed the one clause standing between "we checked six
-things and they passed" and "we checked nothing". The ledger digest had the
-matching problem — `sort_keys=True` is what makes it a function of content
-rather than of the order a caller happened to write keyword arguments in, and
-an identity that changes for no visible reason is worse than none.
+**A status nothing asserted.** Both CLI exit codes could lie: `train` reporting
+success while the gate rejected the dataset, `design` while nothing ranked. The
+tests asserted 0 for success and 2 for a usage error; nothing asserted **1**,
+the status meaning "completed, and the answer is no". Both were unreachable by
+the sweep until the subprocess blind spot was closed, which is the clearest
+argument that closing it was worth it.
 
-Three further ways it could misreport were closed without waiting for one to
-bite: a mutation identical to the code it replaces (a guaranteed false *hole*
-rather than a false pass, and nothing checked for it); compiled bytecode copied
-into a tree whose whole purpose is to have its source edited, where Python's
-mtime-and-size invalidation *should* save you and "should" is the word that
-starts every other entry in this list; and a mutation that hangs, which raised
-an unhandled `TimeoutExpired` and ended the sweep, losing every verdict after
-it. A hang is now reported as caught, since an infinite loop is a failure the
-suite would report if it ever finished.
+**The wrong world, and the wrong reading of an empty one.** With `--variants`, a
+variant context could be chosen as *the* reference — which decides the
+exon-junction map handed to tiling. And a whitespace-only paste could be treated
+as a supplied sequence, so a user pasting spaces got a parse failure about a
+sequence they did not knowingly give, instead of "No sequence supplied. Paste a
+sequence, upload a FASTA file, or pick a built-in target."
 
-Five ways, then, in which this instrument could say "0 holes" without having
-asked: a red baseline, a missing anchor, an ambiguous anchor, a screening
-module that does not exist, and a subprocess importing the code it was
-supposed to be testing a mutation of. All five now fail loudly.
+All twenty are pinned in `tests/test_mutation_holes.py`, each verified to fail
+against the mutation it closes. Where the fix was mine, that verification caught
+me twice: a test asserting the wrong offset passed under the mutation it was
+written for, and a first attempt at the reference-context test asserted against
+evidence the choice does not actually affect.
 
-Four smaller repairs came with it. A mutation whose anchor no longer matches is
-now a **failure** rather than a silent skip — `distinct-sites-best-becomes-worst`
-had stopped running when its code moved and the sweep still reported success.
-An anchor that matches more than once is a failure too: `wobble-rule-dropped`
-renamed a constant that appears twice in its module, which is a *consistent*
-rename and therefore a no-op, and it only ever passed because two other modules
-import that name and the suite died of an `ImportError`. And the sweep now
-refuses to run at all from a red baseline, which is what surfaced the original
-problem.
+### Two things it found that were not holes
 
-The fourth is the same shape as the first three and was found by typing two
-module names that did not exist. Each mutation names the test modules that
-ought to catch it, and `pytest tests/nope.py` exits 4 — which the sweep read as
-"the suite went red", reporting the mutation caught without ever judging it. A
-stale hint would therefore convert a mutation into a permanent, silent false
-pass. The other 45 hints were checked and all resolve, so nothing historical
-rests on it; a missing module is now a failure like a missing anchor.
+A mutation the suite cannot catch is not always a gap. The FM index documents
+two independent defences against a match spanning two loci — the separator is
+excluded from the walk alphabet, and `_locate` rejects a window running off the
+end of its locus — and says the redundancy is deliberate. Neither is
+individually mutable while the other stands, which is what defence in depth
+means. The answer was to test `_locate` directly, at the offset that separates a
+correct guard from one loosened by an off-by-one, so the redundancy is verified
+rather than assumed. A probe into `features.py` was the same shape with no such
+payoff — its guard only matters at a spacer length of 1 and the contract admits
+22 to 30 — so it was removed and the reasoning left in its place.
 
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the
