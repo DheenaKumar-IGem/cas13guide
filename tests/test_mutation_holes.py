@@ -845,5 +845,93 @@ class TestTheExitCodesMeanWhatTheySay(unittest.TestCase):
         self.assertEqual(done.returncode, 2, done.stdout[-400:])
 
 
+class TestAnEmptyReportDoesNotCertify(unittest.TestCase):
+    """The fifteenth hole, and the one that names the pattern.
+
+    ``AcceptanceReport.accepted`` reads::
+
+        return bool(self.criteria) and all(c.passed for c in self.criteria)
+
+    The ``bool(self.criteria)`` is there because ``all([])`` is True: a report
+    that evaluated nothing would otherwise certify. That is the vacuous pass
+    this repository has now found in four separate instruments -- an empty case
+    list clearing a tolerance, an empty vocabulary reporting 0/0, an empty
+    inventory reporting no dead values, a document dropping out of a
+    comparison. Here it is guarded in the package itself.
+
+    And nothing pinned the guard. Dropping it left the suite green, so a
+    refactor tidying the expression could have removed the one clause standing
+    between "we checked six things and they passed" and "we checked nothing".
+    """
+
+    def _report(self, criteria):
+        from cas13guide.services.acceptance import AcceptanceReport
+
+        return AcceptanceReport(criteria=tuple(criteria))
+
+    def _criterion(self, passed: bool):
+        from cas13guide.services.acceptance import Criterion
+
+        return Criterion("rows", passed, 100.0, 50.0)
+
+    def test_a_report_with_no_criteria_is_not_accepted(self):
+        self.assertFalse(self._report([]).accepted)
+
+    def test_a_report_whose_criteria_all_pass_is_accepted(self):
+        """The complement, so "never accept" would not pass as readily."""
+        self.assertTrue(self._report([self._criterion(True),
+                                      self._criterion(True)]).accepted)
+
+    def test_one_failing_criterion_is_enough_to_refuse(self):
+        """`all`, not `any`: the gate asks whether every check passed."""
+        self.assertFalse(self._report([self._criterion(True),
+                                       self._criterion(False)]).accepted)
+
+    def test_the_summary_agrees_with_the_verdict(self):
+        """The word a reader sees and the boolean a caller switches on are one
+        decision, and this file has already found two places where two
+        descriptions of one thing drifted apart."""
+        self.assertIn("REJECTED", self._report([]).summary())
+        self.assertIn("ACCEPTED",
+                      self._report([self._criterion(True)]).summary())
+
+
+class TestTheLedgerDigestIsAContentIdentity(unittest.TestCase):
+    """The sixteenth hole, in ``services/provenance.py``.
+
+    The digest exists so two runs can be compared. ``json.dumps(...,
+    sort_keys=True)`` is what makes it a function of the *content*: a record's
+    ``detail`` is built from keyword arguments, so its key order follows
+    whatever order the caller happened to write them in. Without the sort, two
+    runs recording the same facts in a different argument order get different
+    digests.
+
+    An identity that changes for no visible reason is worse than none -- the
+    same lesson ``Transcriptome.digest`` carries about load order, which *is*
+    pinned. This one was not.
+    """
+
+    def _ledger(self, **detail):
+        from cas13guide.services.provenance import ProvenanceLedger
+
+        ledger = ProvenanceLedger("spec-fingerprint")
+        ledger.record("model", "activity", "act/v1", **detail)
+        return ledger
+
+    def test_argument_order_does_not_change_the_digest(self):
+        first = self._ledger(alpha=1, beta=2, gamma=3)
+        second = self._ledger(gamma=3, alpha=1, beta=2)
+        self.assertEqual(first.digest(), second.digest())
+
+    def test_but_the_content_does(self):
+        """Or a digest that ignored everything would pass the first test."""
+        self.assertNotEqual(self._ledger(alpha=1).digest(),
+                            self._ledger(alpha=2).digest())
+
+    def test_it_is_stable_across_repeated_calls(self):
+        ledger = self._ledger(alpha=1, beta=2)
+        self.assertEqual(ledger.digest(), ledger.digest())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1220 tests, run under `unittest` or `pytest` — both discover the same set —
+1227 tests, run under `unittest` or `pytest` — both discover the same set —
 and 91% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -783,8 +783,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1220 tests
-python examples/verify_mutation_coverage.py              # 53 mutations, 53 caught
+pytest                                                   # 1227 tests
+python examples/verify_mutation_coverage.py              # 56 mutations, 56 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -831,7 +831,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole — Four of the 53 are
+against the **whole** suite before being called a hole — Four of the 56 are
 caught only by the full run, so a screening subset would have reported that many
 holes that are not there. It mutates the LCB/UCB asymmetry, the six named
 metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
@@ -939,6 +939,18 @@ cannot tell a lie in it from the truth. The existing tests asserted 0 for
 success and 2 for a usage error; nothing asserted **1**, the status that says
 the run completed and its answer was "no". Both were invisible before, because
 an exit code is only observable through a subprocess.
+
+Two more holes came from `acceptance.py` and `provenance.py`, neither ever
+probed. `AcceptanceReport.accepted` reads `bool(self.criteria) and all(...)`,
+and the first clause is there because `all([])` is True — a report that
+evaluated nothing would otherwise certify. That is the same vacuous pass found
+in four of the instruments, guarded here in the package itself, and **nothing
+pinned the guard**: dropping it left the suite green, so a refactor tidying the
+expression could have removed the one clause standing between "we checked six
+things and they passed" and "we checked nothing". The ledger digest had the
+matching problem — `sort_keys=True` is what makes it a function of content
+rather than of the order a caller happened to write keyword arguments in, and
+an identity that changes for no visible reason is worse than none.
 
 Three further ways it could misreport were closed without waiting for one to
 bite: a mutation identical to the code it replaces (a guaranteed false *hole*

@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1220 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Four of the 53 are
+  survives is re-run against all 1227 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. Four of the 56 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **53 mutations, 53 caught, 0 holes.**
+Last measured: **56 mutations, 56 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -376,6 +376,33 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "    return 0 if all_rows else 1",
      "    return 0",
      ["test_mutation_holes.py", "test_subcommands_end_to_end.py", "test_module_entry_point.py"]),
+    # services/acceptance.py: the gate that decides whether a fitted model is
+    # certifiable at all. Never mutated.
+    ("acceptance-certifies-on-any-one-criterion",
+     "src/cas13guide/services/acceptance.py",
+     "        return bool(self.criteria) and all(c.passed for c in self.criteria)",
+     "        return bool(self.criteria) and any(c.passed for c in self.criteria)",
+     ["test_acceptance.py", "test_trained_end_to_end.py"]),
+    # The same line's other half, and the reason it is written that way: an
+    # empty criteria list makes `all()` True, so a report that evaluated
+    # nothing would certify. That is the vacuous pass this repository has now
+    # found in four separate instruments, guarded here in the package itself --
+    # and a guard nothing pins is a guard that can be dropped by a refactor.
+    ("acceptance-certifies-an-empty-report",
+     "src/cas13guide/services/acceptance.py",
+     "        return bool(self.criteria) and all(c.passed for c in self.criteria)",
+     "        return all(c.passed for c in self.criteria)",
+     ["test_mutation_holes.py", "test_acceptance.py"]),
+    # services/provenance.py: the ledger digest is the identity two runs are
+    # compared by. Unsorted keys make it depend on dict insertion order, so two
+    # runs with identical content can disagree -- an identity that changes for
+    # no reason is worse than none, which is the lesson the world digest in
+    # transcriptome.py already carries.
+    ("provenance-digest-depends-on-key-order",
+     "src/cas13guide/services/provenance.py",
+     "        payload = json.dumps(self.to_dict(), sort_keys=True, default=str)",
+     "        payload = json.dumps(self.to_dict(), sort_keys=False, default=str)",
+     ["test_mutation_holes.py", "test_reproducible_across_processes.py", "test_bugfix_regressions.py"]),
 ]
 
 
