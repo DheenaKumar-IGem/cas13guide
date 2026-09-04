@@ -986,5 +986,69 @@ class TestCoverageIsNotCertifiedUnmeasured(unittest.TestCase):
                                        self._stratum(False)]).coverage_ok)
 
 
+class TestTheSecondBoundaryDefenceHolds(unittest.TestCase):
+    """Not a hole -- a redundant guard, which is a different thing.
+
+    ``fmindex.py`` documents two independent defences against a match spanning
+    two loci: the separator is excluded from the walk alphabet, and ``_locate``
+    rejects any offset whose window would run off the end of its locus. The
+    comment says the redundancy is intentional, "a cross-locus hit is an
+    invented off-target, and it would be reported as a real one".
+
+    So the sweep reports the second defence as unpinned, and it is right that
+    nothing catches a change to it -- while the first defence stands, the walk
+    never produces an offset for it to reject. Neither guard can be observed
+    failing through the search, which is what defence in depth means.
+
+    That makes it worth testing *directly* rather than worth removing. These
+    call ``_locate`` with the offsets the walk is not supposed to be able to
+    produce, so the redundancy is verified rather than assumed -- and if the
+    separator defence is ever weakened, this one is known to work.
+    """
+
+    def _index(self):
+        from cas13guide.contract.enums import Universe
+        from cas13guide.services.fmindex import FMIndexSearchIndex
+        from cas13guide.services.transcriptome import Locus, Transcriptome
+
+        world = Transcriptome("GRCh38", "v44")
+        world.add(Locus("L_A", "ACGU" * 10, Universe.CODING, expression=1.0))
+        world.add(Locus("L_B", "GGCC" * 10, Universe.CODING, expression=1.0))
+        return FMIndexSearchIndex(world, frozenset({Universe.CODING}))
+
+    def _spans(self, index):
+        return getattr(index, "_spans", None) or index._index._spans
+
+    def test_a_window_inside_a_locus_is_located(self):
+        index = self._index()
+        spans = self._spans(index)
+        first = spans[0]
+        self.assertEqual(index._locate(first.start, 10), (first.locus_id, 0))
+
+    def test_a_window_running_past_the_end_of_its_locus_is_refused(self):
+        """The offset the separator is supposed to make unreachable. If the
+        walk ever produces one, this is what stops it becoming an off-target
+        row naming a site that exists in the concatenated text and in no
+        molecule."""
+        index = self._index()
+        spans = self._spans(index)
+        first = spans[0]
+        # Exactly one base past the end, which is the case that separates a
+        # correct guard from one loosened by an off-by-one: a window starting
+        # further back is refused either way and proves nothing about where
+        # the line sits.
+        overshoot_by_one = first.start + first.length - 10 + 1
+        self.assertIsNone(index._locate(overshoot_by_one, 10))
+
+    def test_the_last_window_that_fits_is_still_accepted(self):
+        """The boundary itself, so the guard cannot be tightened into
+        discarding real hits either."""
+        index = self._index()
+        spans = self._spans(index)
+        first = spans[0]
+        located = index._locate(first.start + first.length - 10, 10)
+        self.assertEqual(located, (first.locus_id, first.length - 10))
+
+
 if __name__ == "__main__":
     unittest.main()

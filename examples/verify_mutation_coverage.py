@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1230 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Four of the 57 are
+  survives is re-run against all 1233 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. Five of the 58 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **57 mutations, 57 caught, 0 holes.**
+Last measured: **58 mutations, 58 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -398,6 +398,23 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     # runs with identical content can disagree -- an identity that changes for
     # no reason is worse than none, which is the lesson the world digest in
     # transcriptome.py already carries.
+    # services/fmindex.py: 292 lines, never mutated. The second boundary
+    # defence, which rejects a walk result that would run off the end of its
+    # locus. Loosening it invents an off-target spanning two transcripts --
+    # a site that exists in the concatenated text and in no molecule.
+    ("fmindex-accepts-a-hit-across-a-locus-boundary",
+     "src/cas13guide/services/fmindex.py",
+     "        if local < 0 or local + length > span.length:",
+     "        if local < 0 or local + length > span.length + 1:",
+     ["test_fmindex.py", "test_search.py", "test_properties.py"]),
+    # Tried and removed: models/features.py's `max(seed_lo + 1, ...)`, which
+    # keeps the seed window non-empty. With SEED_SPAN = (0.35, 0.75) the guard
+    # only does anything at a spacer length of 1 -- at 2 the window is already
+    # [0, 1) -- and the effector contract admits 22 to 30. So the mutation is
+    # unobservable, the suite stays green, and the sweep calls it a hole when
+    # what it has found is a line defending against an input that cannot
+    # arrive. A probe that cannot fail is not a probe, and recording that here
+    # is cheaper than someone rediscovering it.
     # services/benchmark.py: the same all([]) hazard as the acceptance gate,
     # on the property both the `check` CI gate and the "conformal coverage"
     # acceptance criterion read. Found by grepping the package for every all()
