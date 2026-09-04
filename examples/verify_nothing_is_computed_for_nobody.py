@@ -145,6 +145,97 @@ def _mentions(root: Path) -> set[str]:
     return seen
 
 
+#: Module constants nobody reads, and why that is allowed.
+ALLOWED_CONSTANTS: dict[str, str] = {
+    "DEFAULT_DG_PER_NT_RANGE": (
+        "the assay-specific default a spec may adopt. The package does not "
+        "invent a range -- `summarize` derives an empirical one from the "
+        "candidate set instead -- so this is offered to a spec author and "
+        "used by nothing here on purpose"
+    ),
+    "STANDING_CAVEATS": (
+        "deliberately empty, and kept as the module's public name for callers "
+        "that imported it. The caveats a run carries are derived from that "
+        "run now; a fixed banner kept warning about placeholder constants "
+        "after real ones were supplied, and stayed silent about a heuristic "
+        "index nobody remembered to add a line for"
+    ),
+}
+
+
+def _declared_constants() -> dict[str, str]:
+    """Public module-level constants, by the file that declares them."""
+    found: dict[str, str] = {}
+    for path in SRC.rglob("*.py"):
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if (isinstance(target, ast.Name) and target.id.isupper()
+                        and not target.id.startswith("_")):
+                    found.setdefault(target.id, str(path.relative_to(SRC)))
+    return found
+
+
+def _constant_reads(root: Path) -> set[str]:
+    """Names actually *used* as code, rather than named in prose.
+
+    Deliberately not ``_mentions``: that counts attribute reads and string
+    constants, which is right for a field and wrong here twice over. A
+    constant is referenced as a bare name, so attributes would miss every
+    real use; and its own docstring names it, so strings would call every
+    constant read. ``SOFT_QC_FLAGS`` was invisible for exactly that reason --
+    a set describing which QC findings only warn, consulted by nothing, whose
+    comment called it a single source of truth.
+    """
+    seen: set[str] = set()
+    for path in root.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                seen.add(node.id)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    seen.add(alias.asname or alias.name)
+    return seen
+
+
+def _report_constants() -> int:
+    """Print the constant half. Returns the number that are not allowed."""
+    declared = _declared_constants()
+    in_src = _constant_reads(SRC)
+    in_tests = _constant_reads(ROOT / "tests") | _constant_reads(ROOT / "examples")
+
+    unread = sorted(n for n in declared if n not in in_src)
+    tests_only = [n for n in unread if n in in_tests]
+    nowhere = [n for n in unread if n not in in_tests]
+    flagged = [n for n in nowhere if n not in ALLOWED_CONSTANTS]
+    excused = [n for n in nowhere if n in ALLOWED_CONSTANTS]
+
+    print()
+    print(f"{len(declared)} public module constants declared")
+    if tests_only:
+        print(f"read only by tests, never by the package -- {len(tests_only)}:")
+        for name in tests_only:
+            print(f"    {name:24} {declared[name]}")
+    if excused:
+        print(f"read nowhere, and allowed -- {len(excused)}:")
+        for name in excused:
+            print(f"    {name:24} {ALLOWED_CONSTANTS[name]}")
+    if flagged:
+        print(f"read NOWHERE and not allowed -- {len(flagged)}:")
+        for name in flagged:
+            print(f"    {name:24} {declared[name]}")
+        print("Each is a constant this package states and never consults.")
+        print("Either give it a reader, or add it to ALLOWED_CONSTANTS with")
+        print("the reason it has none.")
+    return len(flagged)
+
+
 def main() -> int:
     declared = _declared()
     in_src = _mentions(SRC)
@@ -207,6 +298,11 @@ def main() -> int:
         print("a reader, or add it to ALLOWED with the reason it has none.")
         return 1
 
+    stranded = _report_constants()
+    if stranded:
+        return 1
+
+    print()
     print("Every value this package computes reaches something.")
     return 0
 
