@@ -768,18 +768,36 @@ def _run(root: Path, modules: list[str] | None) -> tuple[bool, str, list[str]]:
     # the copy in front for the whole process tree.
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(root / "src")
-    try:
-        done = subprocess.run(command, cwd=root, env=environment,
-                              capture_output=True, text=True, timeout=3600)
-    except subprocess.TimeoutExpired:
-        # A mutation that hangs is caught -- an infinite loop is a failure the
-        # suite would report if it ever finished. Reported as such rather than
-        # raised, because an unhandled TimeoutExpired ends the sweep and loses
-        # every verdict after it.
-        return False, "TIMED OUT after 3600s", []
+    # To a file, not a pipe, or the timeout below cannot fire.
+    #
+    # `capture_output=True` gives the child a pipe; on a timeout,
+    # `subprocess.run` kills that child and then blocks in `communicate()`
+    # until the pipe closes. This suite's *grandchildren* inherit it -- the
+    # CLI shell-outs, and the threaded server `serve` tests start -- so one
+    # stalled grandchild holds the pipe open and the handler written for
+    # hangs is the one thing a hang prevents from running. Measured twice on
+    # an identical harness: over an hour each on a suite that takes three
+    # minutes, against a 600s timeout that never fired.
+    #
+    # Outside `root`, so the tree the suite runs in is exactly the tree that
+    # was copied.
+    log = root.parent / "run.log"
+    with open(log, "w", encoding="utf-8") as handle:
+        try:
+            done = subprocess.run(command, cwd=root, env=environment,
+                                  stdout=handle, stderr=subprocess.STDOUT,
+                                  timeout=3600)
+        except subprocess.TimeoutExpired:
+            # A mutation that hangs is caught -- an infinite loop is a failure
+            # the suite would report if it ever finished. Reported as such
+            # rather than raised, because an unhandled TimeoutExpired ends the
+            # sweep and loses every verdict after it.
+            return False, "TIMED OUT after 3600s", []
+    output = log.read_text(encoding="utf-8", errors="replace")
+    lines = [line for line in output.splitlines() if line.strip()]
     return (done.returncode == 0,
-            (done.stdout.strip().splitlines() or [""])[-1],
-            _failed_ids(done.stdout))
+            (lines or [""])[-1],
+            _failed_ids(output))
 
 
 #: A pytest short-summary line, whatever kind of failure it reports.
