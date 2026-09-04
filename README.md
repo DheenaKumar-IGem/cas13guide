@@ -1170,6 +1170,15 @@ itself, after `CROSSOVER_BASES` and the two sample-size minimums — enough
 repetitions to call it a habit rather than an accident. **When the value is the
 claim, the test has to say the number.**
 
+So the rest were looked for rather than waited for. Eighteen assertions across
+the suite name a numeric constant imported from the package, and every one is
+backed by something that is not circular — a mutation in the set above, or a
+boundary stated in units. The two that only a wider check reached are the index
+planner's: `BUILD_SECONDS_PER_MB` is pinned by the crossover bracket, which
+moves if any of the three cost constants moves, and `FM_FLAT_ABOVE_BASES` by
+the rationale string the landing page quotes. The habit is real and currently
+has no live instances.
+
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the
 gate says and what a caller switches on; `Limitation`, what the run admits it
