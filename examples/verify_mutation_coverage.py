@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1233 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Five of the 62 are
+  "hole" is never an artefact of which modules were chosen. Six of the 64 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **62 mutations, 62 caught, 0 holes.**
+Last measured: **64 mutations, 64 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -456,6 +456,27 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "default-src 'none'",
      "default-src *",
      ["test_webapp.py"]),
+    # services/registry.py: the domain boundary. A model is asked only about
+    # inputs it was validated on; beyond that the pipeline marks the answer
+    # out-of-domain and refuses to narrow the interval. Loosening the mismatch
+    # bound by one asks a trained model about a hit it never saw and then
+    # believes the reply, which is the failure the whole domain check exists
+    # to prevent.
+    ("registry-domain-extends-past-what-the-model-saw",
+     "src/cas13guide/services/registry.py",
+     "            and n_mismatch <= self.max_mismatches",
+     "            and n_mismatch <= self.max_mismatches + 1",
+     ["test_trained_end_to_end.py", "test_bugfix_regressions.py", "test_gate.py"]),
+    # contract/presets.py: whether the bundled miRNA presets have been checked
+    # against a downloaded miRBase. The flag decides which of two limitations a
+    # preset run states -- "these were verified against release N" or "these
+    # have not been checked" -- and getting it backwards tells a user the
+    # opposite of the truth about where their target sequence came from.
+    ("presets-claim-the-wrong-verification-state",
+     "src/cas13guide/contract/presets.py",
+     "PRESETS_VERIFIED = True",
+     "PRESETS_VERIFIED = False",
+     ["test_limitations.py", "test_unproduced_limitations.py", "test_presets.py"]),
     # services/benchmark.py: the same all([]) hazard as the acceptance gate,
     # on the property both the `check` CI gate and the "conformal coverage"
     # acceptance criterion read. Found by grepping the package for every all()
