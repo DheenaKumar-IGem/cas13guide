@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1233 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Five of the 58 are
+  "hole" is never an artefact of which modules were chosen. Five of the 60 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **58 mutations, 58 caught, 0 holes.**
+Last measured: **60 mutations, 60 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -415,6 +415,27 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     # what it has found is a line defending against an input that cannot
     # arrive. A probe that cannot fail is not a probe, and recording that here
     # is cheaper than someone rediscovering it.
+    # pipeline/e_aggregate.py: which context's evidence an assessment carries.
+    # `is None`, not `or` -- an empty reference tuple is falsy but is still the
+    # reference, and falling through to a variant means the ranked row and the
+    # off-target explorer describe a context the metrics were not computed
+    # from. The comment beside it says so; nothing pinned it.
+    ("aggregate-empty-reference-falls-through-to-a-variant",
+     "src/cas13guide/pipeline/e_aggregate.py",
+     "        if reference is None:",
+     "        if not reference:",
+     ["test_aggregate_stage.py", "test_context_evidence.py"]),
+    # services/accessibility.py: whether a fold may tighten a calibrated bound.
+    # Accessibility is independent evidence only when it comes from a source
+    # the activity model did not already see -- SHAPE, DMS-seq, icSHAPE -- and
+    # never from the thermodynamic fold, which the model used as a feature.
+    # Flipping the default lets a run narrow its own interval using a number it
+    # already counted, which is the one direction a bound must never move.
+    ("accessibility-claims-to-be-independent-evidence",
+     "src/cas13guide/services/accessibility.py",
+     "    is_independent_evidence: bool = False",
+     "    is_independent_evidence: bool = True",
+     ["test_structure_and_signal.py", "test_bound_asymmetry.py"]),
     # services/benchmark.py: the same all([]) hazard as the acceptance gate,
     # on the property both the `check` CI gate and the "conformal coverage"
     # acceptance criterion read. Found by grepping the package for every all()
