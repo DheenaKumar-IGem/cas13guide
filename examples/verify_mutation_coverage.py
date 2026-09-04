@@ -23,9 +23,10 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1233 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Six of the 64 are
-  caught *only* by the full suite, which is why that second stage is not
-  optional.
+  "hole" is never an artefact of which modules were chosen. None of the 64 are
+  caught *only* by the full suite today -- each hint names the module measured
+  to catch it -- but the stage stays, because that is what makes a survivor a
+  statement about the suite rather than about a chosen subset.
 
 Run it::
 
@@ -33,8 +34,9 @@ Run it::
     python examples/verify_mutation_coverage.py conformal  # matching subset
 
 It copies the tree to a temporary directory and mutates the copy, so the
-repository is never modified. Expect it to take a while: a surviving mutation
-costs a full suite run.
+repository is never modified. About five minutes as it stands; a surviving
+mutation costs a whole extra suite run, so a hole is expensive and a hint that
+names the wrong module is expensive too.
 
 Last measured: **64 mutations, 64 caught, 0 holes.**
 """
@@ -53,6 +55,19 @@ REPO = Path(__file__).resolve().parents[1]
 #: ``(id, path relative to the repo, the code as written, the mutation, modules
 #: that ought to catch it)``. The last field is a screening hint only -- a
 #: survivor is always confirmed against the whole suite.
+#:
+#: The first module listed is the one *measured* to catch it, where that was
+#: worth finding out; the rest are the ones a reader would expect to. They are
+#: not always the same, and the difference is worth seeing. A halved panel
+#: success threshold is caught by ``test_bugfix_hunt_round11.py`` and not by
+#: ``test_panel_confidence.py``; the off-target dedup key is caught by
+#: ``test_installed_package.py``, which runs the example scripts end to end,
+#: and not by ``test_search.py``. Where a behaviour is pinned only by a module
+#: that looks unrelated to it, pruning that module would quietly unpin it.
+#:
+#: Naming the real catcher also costs the sweep six fewer whole-suite runs,
+#: which is most of its wall clock -- an instrument nobody runs documents drift
+#: instead of preventing it.
 MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     # ---- metrics/bounds.py: the asymmetric bound algebra ----
     ("bounds-benefit-reads-upper", "src/cas13guide/metrics/bounds.py",
@@ -168,7 +183,7 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     # ---- services/indexes.py: the search bound algebra ----
     ("union-dedup-key-drops-start", "src/cas13guide/services/indexes.py",
      "                key = (hit.locus_id, hit.start)", "                key = (hit.locus_id,)",
-     ["test_bugfix_regressions_round2.py", "test_search.py"]),
+     ["test_installed_package.py", "test_bugfix_regressions_round2.py", "test_search.py"]),
     ("weakest-bound-becomes-latest", "src/cas13guide/services/indexes.py",
      "    if candidate.exhaustive != current.exhaustive:\n        return not candidate.exhaustive",
      "    if candidate.exhaustive != current.exhaustive:\n        return candidate.exhaustive",
@@ -180,7 +195,7 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     ("panel-success-threshold-halved", "src/cas13guide/services/panel_confidence.py",
      "        self.threshold = float(spec.thresholds.required_coverage_min)",
      "        self.threshold = float(spec.thresholds.required_coverage_min) / 2",
-     ["test_panel_confidence.py"]),
+     ["test_bugfix_hunt_round11.py", "test_panel_confidence.py"]),
     ("beta-quantile-loses-precision", "src/cas13guide/services/panel_confidence.py",
      "    for _ in range(100):", "    for _ in range(8):",
      ["test_panel_confidence.py"]),
@@ -276,7 +291,7 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     ("rejection-rows-group-the-survivors", "src/cas13guide/pipeline/g_output.py",
      "        if a.gate.verdict is not Verdict.FAIL:",
      "        if a.gate.verdict is Verdict.FAIL:",
-     ["test_bugfix_regressions.py"]),
+     ["test_rejection_reporting.py", "test_bugfix_regressions.py"]),
     # services/training.py: the grouped split, which is the whole reason this
     # module claims its cross-validation means anything. An off-by-one in the
     # train complement leaves the held-out groups *in* the training set: the
@@ -312,7 +327,7 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "src/cas13guide/services/workflow.py",
      "        if locus.locus_id in seen_background:",
      "        if locus.locus_id in accepted_background:",
-     ["test_bugfix_regressions_round4.py", "test_the_input_doors_agree.py"]),
+     ["test_bugfix_regressions_round5.py", "test_bugfix_regressions_round4.py", "test_the_input_doors_agree.py"]),
     # services/fasta.py: where a record's name comes from. Splitting the header
     # on the wrong character renames every locus containing that character --
     # ">ENST00000_1" becomes "ENST00000" -- so provenance, off-target rows and
@@ -406,7 +421,7 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "src/cas13guide/services/fmindex.py",
      "        if local < 0 or local + length > span.length:",
      "        if local < 0 or local + length > span.length + 1:",
-     ["test_fmindex.py", "test_search.py", "test_properties.py"]),
+     ["test_mutation_holes.py", "test_fmindex.py", "test_search.py", "test_properties.py"]),
     # Tried and removed: models/features.py's `max(seed_lo + 1, ...)`, which
     # keeps the seed window non-empty. With SEED_SPAN = (0.35, 0.75) the guard
     # only does anything at a spacer length of 1 -- at 2 the window is already
@@ -466,7 +481,7 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "src/cas13guide/services/registry.py",
      "            and n_mismatch <= self.max_mismatches",
      "            and n_mismatch <= self.max_mismatches + 1",
-     ["test_trained_end_to_end.py", "test_bugfix_regressions.py", "test_gate.py"]),
+     ["test_arc_model.py", "test_trained_end_to_end.py", "test_bugfix_regressions.py", "test_gate.py"]),
     # contract/presets.py: whether the bundled miRNA presets have been checked
     # against a downloaded miRBase. The flag decides which of two limitations a
     # preset run states -- "these were verified against release N" or "these

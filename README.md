@@ -831,9 +831,14 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole — Six of the 64 are
-caught only by the full run, so a screening subset would have reported that many
-holes that are not there. It mutates the LCB/UCB asymmetry, the six named
+against the **whole** suite before being called a hole. None of the 64 are
+caught only by the full run today, because each hint names the module *measured*
+to catch it rather than the one a reader would guess — which is not always the
+same module, and where they differ the difference is worth seeing. That also
+took the sweep from about thirty minutes to five, and an instrument nobody runs
+documents drift instead of preventing it. The second stage stays: it is what
+makes "hole" a claim about the whole suite rather than about which modules
+somebody chose. It mutates the LCB/UCB asymmetry, the six named
 metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
 the candidate budget, the out-of-domain substitution, the conformal quantile,
 the search-bound algebra, the FR6.3 posterior and its Fréchet floor, the
