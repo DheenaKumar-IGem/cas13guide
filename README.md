@@ -784,7 +784,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1241 tests, run under `unittest` or `pytest` — both discover the same set —
+1244 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -796,7 +796,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1241 tests
+pytest                                                   # 1244 tests
 python examples/verify_mutation_coverage.py              # 74 mutations, 74 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced

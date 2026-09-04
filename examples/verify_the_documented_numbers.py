@@ -269,6 +269,133 @@ def vocabulary_size() -> int:
     return len(ReasonCode) + len(limitations) + len(QCFlag) + len(ReviewTier)
 
 
+TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+        "seventy": 70, "eighty": 80, "ninety": 90}
+
+
+def words_to_int(phrase: str) -> int | None:
+    """"A hundred and fifty-five" -> 155.
+
+    The README spells its counts out, for the reason NUMBER_WORDS already
+    gives: a word is what a reader checks against. Checking them means
+    reading them back.
+    """
+    total = 0
+    current = 0
+    seen = False
+    for token in phrase.lower().replace("-", " ").replace(",", " ").split():
+        if token in ("and", "a", "an"):
+            continue
+        if token == "hundred":
+            current = (current or 1) * 100
+            seen = True
+        elif token == "thousand":
+            total += (current or 1) * 1000
+            current = 0
+            seen = True
+        elif token in TENS:
+            current += TENS[token]
+            seen = True
+        elif token in NUMBER_WORDS:
+            current += NUMBER_WORDS[token]
+            seen = True
+        else:
+            return None
+    return total + current if seen else None
+
+
+def test_methods_in(pattern: str) -> int:
+    """Test methods under ``tests/`` whose module name matches ``pattern``."""
+    import ast
+
+    total = 0
+    for path in sorted((ROOT / "tests").glob(pattern)):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        total += sum(
+            1
+            for cls in ast.walk(tree)
+            if isinstance(cls, ast.ClassDef)
+            for fn in cls.body
+            if isinstance(fn, ast.FunctionDef) and fn.name.startswith("test")
+        )
+    return total
+
+
+def tests_needing_mirbase() -> int:
+    """Test methods that call the helper whose failure path is ``skipTest``."""
+    import ast
+
+    tree = ast.parse(
+        (ROOT / "tests" / "test_preset_provenance.py").read_text(encoding="utf-8"))
+    return sum(
+        1
+        for cls in ast.walk(tree)
+        if isinstance(cls, ast.ClassDef)
+        for fn in cls.body
+        if isinstance(fn, ast.FunctionDef)
+        and fn.name.startswith("test")
+        and any(isinstance(call, ast.Call)
+                and getattr(call.func, "attr", "") == "_mature_fa"
+                for call in ast.walk(fn))
+    )
+
+
+def documented_word_counts() -> list[tuple[str, int | None, int]]:
+    """``(label, what the README spells out, what the tree holds)``.
+
+    These are the counts that move when somebody does ordinary work -- adds a
+    regression test, runs another review pass, writes a test that needs the
+    miRBase file. Each is stated once in words and nowhere derived, which is
+    why they are worth deriving.
+
+    The review-pass section is a scoped historical account: passes ten to
+    thirteen have their own sections below it, so its numbers describe the
+    eight ``test_bugfix_regressions*.py`` modules those nine passes produced,
+    not every regression module in the tree.
+    """
+    readme = README.read_text(encoding="utf-8")
+    spelled = re.search(r"([a-zA-Z -]+?) of them are regression tests "
+                        r"from ([a-z]+) review passes", readme)
+    batches = re.search(r"[*][*]([0-9]+) defects[*][*] were fixed, in batches of"
+                        r"[^*]*[*][*]([0-9, ]+)[*][*]", readme)
+    heading = re.search(r"### What ([a-z]+) review passes found", readme)
+    needing = re.search(r"([A-Za-z]+) of them need a miRBase", readme)
+
+    parts = ([int(n) for n in batches.group(2).split(",") if n.strip()]
+             if batches else [])
+    return [
+        ("regression tests from the nine passes",
+         words_to_int(spelled.group(1)) if spelled else None,
+         test_methods_in("test_bugfix_regressions*.py")),
+        ("defects fixed, against the batches listed",
+         int(batches.group(1)) if batches else None, sum(parts)),
+        ("review passes, in the heading",
+         words_to_int(heading.group(1)) if heading else None, len(parts)),
+        ("review passes, in the sentence",
+         words_to_int(spelled.group(2)) if spelled else None, len(parts)),
+        ("tests needing a miRBase file",
+         words_to_int(needing.group(1)) if needing else None,
+         tests_needing_mirbase()),
+    ]
+
+
+def documented_vocabulary() -> tuple[int | None, int | None, int]:
+    """``(produced, of how many, how many the package can say)``.
+
+    The README quotes "52 of 52 things it can say". The denominator is the
+    half that drifts: adding a reason code or a caveat is a local edit, and
+    nothing about writing one prompts you to update a figure two files away.
+    Establishing the numerator needs a whole suite run and stays
+    ``verify_vocabulary_coverage.py``'s job.
+    """
+    stated = re.search(r"verify_vocabulary_coverage[.]py[^#]*#[ ]*"
+                       r"([0-9]+) of ([0-9]+) things",
+                       README.read_text(encoding="utf-8"))
+    return (int(stated.group(1)) if stated else None,
+            int(stated.group(2)) if stated else None,
+            vocabulary_size())
+
+
 def top_ranked_guide() -> dict:
     """Rank 1 of a real run over the same target the page's row describes.
 
@@ -488,17 +615,14 @@ def main() -> int:
     # ---- 4. how many things the package can say --------------------------
     print()
     print("the size of the vocabulary the README quotes")
-    stated = re.search(r"verify_vocabulary_coverage\.py\s+#\s*(\d+) of (\d+) things",
-                       README.read_text(encoding="utf-8"))
-    size = vocabulary_size()
+    produced, of_how_many, size = documented_vocabulary()
     if not check(f"the denominator is the vocabulary's size ({size})",
-                 bool(stated) and int(stated.group(2)) == size,
-                 f"README says {stated.group(2) if stated else '(not found)'}, "
-                 f"the package can say {size} things"):
+                 of_how_many == size,
+                 f"README says {of_how_many}, the package can say {size} things"):
         failures.append("the documented vocabulary size is stale")
     if not check("and it does not claim more produced than exist",
-                 bool(stated) and int(stated.group(1)) <= size,
-                 f"claims {stated.group(1) if stated else '?'} of {size}"):
+                 produced is not None and produced <= size,
+                 f"claims {produced} of {size}"):
         failures.append("the documented vocabulary coverage exceeds the vocabulary")
 
     # ---- 5. messages the README quotes as the package's own output -------
@@ -744,6 +868,14 @@ def main() -> int:
                      f"{TARGET[start : start + len(site)] if site else '?'!r}, "
                      f"page shows {site!r}"):
             failures.append("the page's site is not at the page's coordinate")
+
+    # ---- 14. the counts the README spells out in words --------------------
+    print()
+    print("the counts the review-pass section states as words")
+    for label, stated, actual in documented_word_counts():
+        if not check(f"{label}: {actual}", stated == actual,
+                     f"the README says {stated}"):
+            failures.append(f"the stated count of {label} is stale")
 
     print()
     if failures:

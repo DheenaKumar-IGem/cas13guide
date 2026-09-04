@@ -160,5 +160,41 @@ class TestThePagesWorkedExampleIsInternallyConsistent(unittest.TestCase):
         self.assertAlmostEqual(float(self.shown["gc"]), expected, delta=5e-5)
 
 
+class TestTheCountsStatedInWordsAreTheTreesCounts(unittest.TestCase):
+    """Counts that move when somebody does ordinary work.
+
+    Adding a regression test, running another review pass, or writing a test
+    that needs the miRBase file each moves a number the README spells out in
+    one place and derives in none. They were all correct when checked by hand;
+    the point is that checking by hand is what had to happen.
+    """
+
+    def test_each_one_is_what_the_tree_holds(self):
+        for label, stated, actual in documents.documented_word_counts():
+            with self.subTest(count=label):
+                self.assertIsNotNone(stated, "the sentence stating it is gone")
+                self.assertEqual(stated, actual)
+
+
+class TestTheVocabularySizeIsTheVocabularys(unittest.TestCase):
+    """"52 of 52 things it can say" is two numbers with different lifetimes.
+
+    The numerator needs a whole suite run and stays the vocabulary
+    instrument's job. The denominator is the size of four vocabularies, and
+    is the half that drifts: adding a reason code or a caveat is a local edit
+    two files away from the figure describing it.
+    """
+
+    def test_the_denominator_is_the_size_of_the_vocabulary(self):
+        _produced, of_how_many, size = documents.documented_vocabulary()
+        self.assertIsNotNone(of_how_many, "the figure stating it is gone")
+        self.assertEqual(of_how_many, size)
+
+    def test_it_does_not_claim_more_produced_than_exist(self):
+        produced, _of_how_many, size = documents.documented_vocabulary()
+        self.assertIsNotNone(produced, "the figure stating it is gone")
+        self.assertLessEqual(produced, size)
+
+
 if __name__ == "__main__":
     unittest.main()
