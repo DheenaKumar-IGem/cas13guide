@@ -266,5 +266,45 @@ class TestFeatureSpec(unittest.TestCase):
             spec.transform("AUGC", profile_duplex("AUGC", "GCAU"), None)
 
 
+class TestAnUnmeasuredCrossValidationSaysSo(unittest.TestCase):
+    """Nought is not a score, and CVReport.summary knows the difference.
+
+    A fold is skipped when its train or test side comes out empty, which
+    happens for real: a three-group screen leaves the training split with a
+    single group and every fold is skipped. `measured` is then False and the
+    numbers below it mean nothing.
+
+    The guard that stops them being printed was unpinned. Disabling it --
+    `if self.measured is None`, which a bool never is -- left the whole suite
+    green while `cas13guide train` reported "grouped 0-fold: spearman 0.000
+    +/- 0.000" for a screen it could not evaluate at all. The comment above
+    the branch says exactly what that costs: it reads as "no skill" rather
+    than "not measured", and those are opposite conclusions about a model.
+    """
+
+    def _report(self, **kw):
+        from cas13guide.services.training import CVReport
+
+        base = dict(grouped=True, folds=0, spearman_mean=0.0, spearman_std=0.0,
+                    mae_mean=0.0, requested_folds=5)
+        base.update(kw)
+        return CVReport(**base)
+
+    def test_it_says_not_measured_and_shows_no_number(self):
+        summary = self._report().summary()
+        self.assertIn("NOT MEASURED", summary)
+        self.assertNotIn("spearman", summary)
+
+    def test_it_names_the_folds_asked_for_not_the_none_that_ran(self):
+        """"0-fold" would be true and useless; 5 is what the user requested."""
+        self.assertIn("5-fold", self._report().summary())
+
+    def test_a_measured_report_still_reports_its_numbers(self):
+        """Or the tests above would pass with the summary always refusing."""
+        summary = self._report(folds=5, spearman_mean=0.42).summary()
+        self.assertIn("spearman", summary)
+        self.assertNotIn("NOT MEASURED", summary)
+
+
 if __name__ == "__main__":
     unittest.main()
