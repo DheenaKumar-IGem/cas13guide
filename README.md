@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1215 tests, run under `unittest` or `pytest` — both discover the same set —
+1219 tests, run under `unittest` or `pytest` — both discover the same set —
 and 91% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -783,8 +783,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1215 tests
-python examples/verify_mutation_coverage.py              # 51 mutations, 51 caught
+pytest                                                   # 1219 tests
+python examples/verify_mutation_coverage.py              # 53 mutations, 53 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -831,7 +831,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole — Four of the 51 are
+against the **whole** suite before being called a hole — Four of the 53 are
 caught only by the full run, so a screening subset would have reported that many
 holes that are not there. It mutates the LCB/UCB asymmetry, the six named
 metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
@@ -929,6 +929,16 @@ and the checks that caveats reach every surface. It was caught because a
 back from the sweep as a hole. `PYTHONPATH` takes precedence over the editable
 install's finder and children inherit it, so the sweep now puts the copy in
 front for the whole process tree.
+
+Closing that blind spot immediately produced a thirteenth and fourteenth hole,
+which is the argument for having closed it. Both CLI exit-code contracts were
+unpinned: `train` could always report success while the acceptance gate
+rejected the dataset, and `design` could always report success while nothing
+ranked. A status code is the part of a CLI another program reads, and a wrapper
+cannot tell a lie in it from the truth. The existing tests asserted 0 for
+success and 2 for a usage error; nothing asserted **1**, the status that says
+the run completed and its answer was "no". Both were invisible before, because
+an exit code is only observable through a subprocess.
 
 Five ways, then, in which this instrument could say "0 holes" without having
 asked: a red baseline, a missing anchor, an ambiguous anchor, a screening

@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1215 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Four of the 51 are
+  survives is re-run against all 1219 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. Four of the 53 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **51 mutations, 51 caught, 0 holes.**
+Last measured: **53 mutations, 53 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -362,6 +362,19 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     ("cli-reports-the-display-filter-as-an-empty-run",
      "src/cas13guide/cli.py",
      "    elif all_rows:", "    elif rows:",
+     ["test_mutation_holes.py", "test_subcommands_end_to_end.py", "test_module_entry_point.py"]),
+    # The exit-code contracts, which only a subprocess can observe -- and so
+    # were unreachable by this sweep until it started putting the mutated copy
+    # on PYTHONPATH for child processes. A status code is the one part of a CLI
+    # that another program reads, and a wrapper cannot tell a lie in it from
+    # the truth.
+    ("cli-train-always-reports-success", "src/cas13guide/cli.py",
+     "    return 0 if report.accepted else 1",
+     "    return 0",
+     ["test_mutation_holes.py", "test_subcommands_end_to_end.py", "test_acceptance.py"]),
+    ("cli-design-hides-that-nothing-ranked", "src/cas13guide/cli.py",
+     "    return 0 if all_rows else 1",
+     "    return 0",
      ["test_mutation_holes.py", "test_subcommands_end_to_end.py", "test_module_entry_point.py"]),
 ]
 

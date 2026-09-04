@@ -738,5 +738,112 @@ class TestAnEmptyTableIsNotAnEmptyRun(unittest.TestCase):
         self.assertNotIn("no guide cleared the gate", out)
 
 
+class TestTheExitCodesMeanWhatTheySay(unittest.TestCase):
+    """The thirteenth and fourteenth holes, and the ones that prove the fix
+    above was worth making.
+
+    A status code is the part of a CLI another program reads, and a wrapper
+    cannot tell a lie in it from the truth. Both contracts were unpinned:
+    ``train`` could always report success while the acceptance gate rejected
+    the dataset, and ``design`` could always report success while nothing
+    ranked.
+
+    They were also *unreachable* by the mutation sweep until it started putting
+    the mutated copy on PYTHONPATH: an exit code is only observable through a
+    subprocess, and a subprocess was importing the installed package rather
+    than the mutation. So these two holes existed behind a blind spot, which is
+    the argument for having closed it.
+
+    The existing CLI tests assert 0 for success and 2 for a usage or input
+    error. Nothing asserted 1 -- the status that says the run completed and its
+    answer was "no".
+    """
+
+    NOTHING_RANKS = "AAAAAAUUUUUU" * 12   # every window fails QC on homopolymers
+
+    def _cli(self, *argv, expect_files: bool = True):
+        import pathlib as _pathlib
+        import subprocess
+        import sys
+        import tempfile
+
+        root = _pathlib.Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as directory:
+            work = _pathlib.Path(directory)
+            done = subprocess.run(
+                [sys.executable, "-m", "cas13guide.cli", *argv,
+                 *(("--out", str(work / "out"), "--stem", "d")
+                   if expect_files else ())],
+                cwd=root, capture_output=True, text=True, timeout=900,
+            )
+        return done
+
+    def test_design_reports_one_when_nothing_ranked(self):
+        import pathlib as _pathlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            fasta = _pathlib.Path(directory) / "t.fa"
+            newline = chr(10)
+            fasta.write_text(f">lowcomplex{newline}{self.NOTHING_RANKS}{newline}",
+                             encoding="utf-8")
+            done = self._cli("design", "--fasta", str(fasta), "--task", "knockdown",
+                             "--assay", "cell_culture_knockdown", "--no-signal")
+        self.assertEqual(done.returncode, 1, done.stdout[-600:])
+
+    def test_design_reports_zero_when_guides_ranked(self):
+        """Both sides, or "always 1" would pass as readily as "always 0"."""
+        import pathlib as _pathlib
+        import tempfile
+
+        target = (
+            "GGACAUCGAAUCGCGGAACUUGGCAUCAAGCUAGCUAGGCAUCGAUCGAUCAGCUAGCAUCGAUCGGAUCC"
+            "AUGGAUUCCAGGCACUUCUCGAUCAUAGGACUCGGUAAUGCCAUGAGUCGAUGGACUUCAGUGCCAUCGAU"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            fasta = _pathlib.Path(directory) / "t.fa"
+            newline = chr(10)
+            fasta.write_text(f">T1{newline}{target}{newline}", encoding="utf-8")
+            done = self._cli("design", "--fasta", str(fasta), "--task", "knockdown",
+                             "--assay", "cell_culture_knockdown", "--no-signal")
+        self.assertEqual(done.returncode, 0, done.stdout[-600:])
+
+    def _noise_screen(self, path):
+        import random as _random
+
+        rng = _random.Random(7)
+        rows = ["spacer,activity,transcript"]
+        for index in range(400):
+            spacer = "".join(rng.choice("ACGU") for _ in range(22))
+            rows.append(f"{spacer},{rng.random():.4f},T{index % 20:02d}")
+        path.write_text(chr(10).join(rows) + chr(10), encoding="utf-8")
+        return path
+
+    def test_train_reports_one_when_the_gate_rejects_the_dataset(self):
+        """Labels that are noise: the dataset loads, and the acceptance gate
+        refuses to certify a model fitted on it. Exit 1 is what a CI job reads
+        to know that happened -- and 2 already means something else, a dataset
+        that could not be read at all."""
+        import pathlib as _pathlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            screen = self._noise_screen(_pathlib.Path(directory) / "noise.csv")
+            done = self._cli("train", str(screen), expect_files=False)
+        self.assertEqual(done.returncode, 1, done.stdout[-600:])
+
+    def test_and_one_is_distinct_from_the_unreadable_status(self):
+        """The distinction round twelve added: a malformed file exits 2, a
+        rejected dataset exits 1. Collapsing them makes a CI job unable to tell
+        "your data is bad" from "your data did not support a model"."""
+        import pathlib as _pathlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            missing = _pathlib.Path(directory) / "not-here.csv"
+            done = self._cli("train", str(missing), expect_files=False)
+        self.assertEqual(done.returncode, 2, done.stdout[-400:])
+
+
 if __name__ == "__main__":
     unittest.main()
