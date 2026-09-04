@@ -231,6 +231,11 @@ class DesignReport:
     #: what it means is that the guide's intended site is being scored as a
     #: perfect off-target under an accession nothing can match.
     self_identical_loci: frozenset = frozenset()
+    #: How many distinct (guide, locus) off-target pairs were found, before the
+    #: explorer's row cap. `off_target_rows` holds at most fifty of them, and
+    #: without this nothing downstream could tell fifty of fifty from fifty of
+    #: four thousand.
+    off_target_total: int = 0
     #: Why the guides that failed the gate failed it, grouped by reason code
     #: with a few worked examples. ``ranked`` deliberately holds no FAIL rows
     #: -- a refusal is not a recommendation and does not belong in a table
@@ -347,6 +352,7 @@ class DesignReport:
                 "discriminated": self.metric_summary.discriminated,
             },
             "off_targets": list(self.off_target_rows),
+            "off_target_total": self.off_target_total,
             "pareto_frontier": list(self.pareto_frontier),
             # Sorted, so the machine-readable report is byte-identical across
             # runs; a frozenset's iteration order is not.
@@ -396,7 +402,20 @@ def _off_target_rows(assessments: list[GuideAssessment], limit: int = 50) -> tup
                 worst_row[key] = row
 
     rows = sorted(worst_row.values(), key=lambda r: r["hazard"], reverse=True)
+    # The cap is on what a page can usefully show, not on what was found, and
+    # the two were indistinguishable downstream: every surface reported
+    # `len(off_targets)` as though it were the total.
+    for rank, row in enumerate(rows[:limit]):
+        row["of_total"] = len(rows)
+        row["rank"] = rank + 1
     return tuple(rows[:limit])
+
+
+def _off_target_total(assessments: list[GuideAssessment]) -> int:
+    """Distinct (guide, locus) off-target pairs, before the explorer's cap."""
+    return len({
+        (a.guide_id, e.locus_id) for a in assessments for e in a.off_targets()
+    })
 
 
 def _validation_plan(panel: Panel, controls: tuple[ControlGuide, ...], spec: ResolvedDesignSpec) -> tuple[str, ...]:
@@ -494,6 +513,7 @@ def build_report(
         coverage_map=coverage_map,
         metric_summary=summarize_metrics(assessments),
         off_target_rows=_off_target_rows(assessments),
+        off_target_total=_off_target_total(assessments),
         provenance=ledger.to_dict(),
         validation_plan=_validation_plan(panel, controls, spec),
         pareto_frontier=pareto_frontier,

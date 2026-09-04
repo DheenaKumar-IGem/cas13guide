@@ -534,8 +534,8 @@ def render_report(
         )
         off_target_html = (
             "<h2>Off-target explorer</h2>"
-            f"<div class='sub'>The {len(off_targets)} highest-hazard off-target "
-            "loci found, worst first. Hazard is the same product the "
+            f"<div class='sub'>{_off_target_caption(report, off_targets)} "
+            "Hazard is the same product the "
             "<code>worst_off_target</code> and <code>cumulative_burden</code> "
             "metrics are built from, so this table cannot drift from them.</div>"
             "<div class='tablewrap'><table><thead><tr>"
@@ -613,6 +613,30 @@ def render_report(
 <h2>Run parameters and versions</h2>
 <pre>{html.escape(provenance)}</pre>
 </div><script>{_JS}</script></body></html>"""
+
+
+def _off_target_caption(report: dict, shown: list) -> str:
+    """How much of the off-target picture this table is.
+
+    It used to read "The 50 highest-hazard off-target loci found", which is
+    what fifty of fifty would say and also what fifty of four thousand would
+    say. The validation plan underneath tells a reader to sequence from this
+    table, so whether it is the whole set is the first thing they need.
+
+    It does not point the reader at another file: the report dict carries
+    the same capped rows, and `report.json` is not written unless asked
+    for, so naming it would trade one false impression for another.
+    """
+    total = report.get("off_target_total") or len(shown)
+    if total <= len(shown):
+        return (f"All {total} off-target loci found, worst hazard first.")
+    return (
+        f"The {len(shown)} highest-hazard of {total} off-target loci found, "
+        f"worst first. The other {total - len(shown)} are not shown anywhere "
+        f"&mdash; every one of them scores below the last row here, and all "
+        f"{total} are already inside <code>worst_off_target</code> and "
+        f"<code>cumulative_burden</code>."
+    )
 
 
 def write_report(
