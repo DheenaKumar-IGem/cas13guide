@@ -454,5 +454,41 @@ class TestRunCarriesTheConfidence(unittest.TestCase):
         self.assertIsNone(report.to_dict()["panel"]["confidence"])
 
 
+class TestTheWindowSizeMinimumIsTheDefaultOne(unittest.TestCase):
+    """`MIN_WINDOW_N` is 20, and nothing overrides or exercises it.
+
+    Below it, `guide_success` stops conditioning on the prediction level and
+    falls back to the whole stratum -- weaker evidence, deliberately, rather
+    than none. Nothing in the package passes `min_window`, so the module
+    constant is the only value in play, and lowering it to 15 left the whole
+    suite green.
+
+    `trials` says which path ran: the count of rows inside the bandwidth when
+    the window is used, the whole stratum when it is not.
+    """
+
+    OUT_OF_WINDOW = 200
+
+    def _model(self, in_window: int):
+        spec = make_spec(targets=ONE_TARGET)
+        service = CalibrationService()
+        key = CalibrationService.stratum_key(
+            spec.profile.effector.value, spec.profile.assay.value, "mm0")
+        for i in range(in_window):
+            service.add_observation(key, 0.90, 0.95, group=f"T{i % 12:02d}")
+        for i in range(self.OUT_OF_WINDOW):
+            # 0.70 away from the query, far outside the 0.1 bandwidth.
+            service.add_observation(key, 0.20, 0.95, group=f"U{i % 12:02d}")
+        return BayesianPanelConfidence(service, spec)
+
+    def test_nineteen_neighbours_fall_back_to_the_whole_stratum(self):
+        success = self._model(19).guide_success("g1", "t1", 0.90)
+        self.assertEqual(success.trials, 19 + self.OUT_OF_WINDOW)
+
+    def test_twenty_condition_on_the_prediction_level(self):
+        success = self._model(20).guide_success("g1", "t1", 0.90)
+        self.assertEqual(success.trials, 20)
+
+
 if __name__ == "__main__":
     unittest.main()

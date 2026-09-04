@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1263 tests
+python -m unittest discover -s tests -t tests    # 1267 tests
 pytest                              # same suite under pytest
 ```
 
@@ -784,7 +784,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1263 tests, run under `unittest` or `pytest` — both discover the same set —
+1267 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -796,8 +796,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1263 tests
-python examples/verify_mutation_coverage.py              # 80 mutations, 80 caught
+pytest                                                   # 1267 tests
+python examples/verify_mutation_coverage.py              # 82 mutations, 82 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -844,7 +844,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 80 are
+against the **whole** suite before being called a hole. None of the 82 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -1081,7 +1081,7 @@ somebody checks the table in the module docstring still describes the machine.
 Constants are where the first batch's one real hole was, so the second went
 looking for more of them. Thirty-five module-level numbers decide something in
 this package. Twenty-nine of them had never been mutated when this batch was
-written, and twenty-four still have not. Six were picked for
+written, and twenty-two still have not. Six were picked for
 deciding something a user sees, and each was moved by a plausible amount rather
 than a wild one — the question is whether the suite notices a threshold
 shifting, not whether it notices the code breaking. **All six survived a green
@@ -1130,6 +1130,23 @@ of 42 candidates at zero hits — 0.5952, above 0.5 and below 0.6 — and 42 bas
 give exactly 21 of 42, which does not escalate because the comparison is `>`.
 Both are pinned, and the pair catches the value moving and the operator
 loosening to `>=`.
+
+A third batch, six more constants, found four caught and two of a kind not seen
+before: **a constant with tests around it whose default nothing checks.**
+`MIN_STRATUM_N` says how few observations a calibration stratum may hold and
+still certify a bound; `MIN_WINDOW_N` says how few calibration rows a
+prediction window may hold before FR6.3 stops conditioning on the prediction
+level and falls back to the whole stratum. Both are 20. Both could be 15 with
+the whole suite green.
+
+Neither is untested in the ordinary sense. Two tests build a
+`CalibrationService` with an explicit `min_stratum_n` — 10 in one, 20 in the
+other — so the *parameter* is exercised and the module constant behind it never
+is. Every production path builds `CalibrationService()` with no arguments, and
+nothing anywhere passes `min_window`, so the defaults are the only values a
+real run ever uses. Both are now stated in rows at the boundary: nineteen
+observations do not certify and twenty do; nineteen neighbours fall back to the
+whole stratum and twenty condition on the prediction level.
 
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the

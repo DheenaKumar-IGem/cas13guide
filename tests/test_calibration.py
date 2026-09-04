@@ -264,5 +264,36 @@ class TestResidualCacheIsTransparent(unittest.TestCase):
 
 
 
+class TestTheStratumSizeMinimumIsTheDefaultOne(unittest.TestCase):
+    """`MIN_STRATUM_N` is 20, and nothing exercised the default.
+
+    Two tests construct a service with an explicit `min_stratum_n` -- 10 in
+    one, 20 in the other -- so the *parameter* was covered and the module
+    constant behind it was not. Every production path builds
+    `CalibrationService()` with no arguments (cli, demo, training, workflow),
+    so the default is the only value a real run ever uses, and lowering it to
+    15 left the whole suite green.
+
+    Stated in rows rather than against the constant: an assertion written in
+    terms of `MIN_STRATUM_N` holds whatever `MIN_STRATUM_N` becomes.
+    """
+
+    KEY = "RfxCas13d|cell_culture_knockdown|mm0"
+
+    def _service_with(self, rows: int) -> CalibrationService:
+        service = CalibrationService()
+        for i in range(rows):
+            service.add_observation(self.KEY, 0.5, 0.5, group=f"T{i % 12:02d}")
+        return service
+
+    def test_nineteen_rows_do_not_certify(self):
+        self.assertIsNone(self._service_with(19).resolve(self.KEY))
+
+    def test_twenty_do(self):
+        stratum = self._service_with(20).resolve(self.KEY)
+        self.assertIsNotNone(stratum)
+        self.assertEqual(stratum.n, 20)
+
+
 if __name__ == "__main__":
     unittest.main()
