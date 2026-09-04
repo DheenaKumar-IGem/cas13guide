@@ -269,6 +269,26 @@ def vocabulary_size() -> int:
     return len(ReasonCode) + len(limitations) + len(QCFlag) + len(ReviewTier)
 
 
+def top_ranked_guide() -> dict:
+    """Rank 1 of a real run over the same target the page's row describes.
+
+    The page's spacer is 22 nt, which is RfxCas13d's geometry, not the
+    LwaCas13a configuration the limitations block above it comes from.
+    """
+    from cas13guide.services.workflow import DesignRequest, run_request
+
+    with tempfile.TemporaryDirectory() as directory:
+        fasta = pathlib.Path(directory) / "target.fa"
+        fasta.write_text(
+            ">MALAT1_frag" + chr(10) + TARGET + chr(10), encoding="utf-8")
+        outcome = run_request(DesignRequest(
+            fasta_path=str(fasta), task="knockdown",
+            assay="cell_culture_knockdown", effector="RfxCas13d",
+        ))
+    ranked = outcome.report["ranked"]
+    return ranked[0] if ranked else {}
+
+
 def longest_shared_run(sequences: list[str]) -> int:
     """The longest stretch of target every one of ``sequences`` covers."""
     first, rest = sequences[0], sequences[1:]
@@ -682,6 +702,48 @@ def main() -> int:
                      f"perfect duplexes range over {spread:.4f}, which is not "
                      f'"regardless of sequence"'):
             failures.append("the saturation is not sequence-independent as claimed")
+
+    # ---- 13. the worked example is a run, not a tableau -------------------
+    print()
+    print("the rank-1 row, against a run of the tool over the same target")
+    top = top_ranked_guide()
+    if not check("the run still ranks something", bool(top), "nothing ranked"):
+        failures.append("the worked example's run produces no ranking")
+    elif shown:
+        spacer = shown.get("spacer", "")
+        site = shown.get("site", "")
+        start = top.get("start")
+        binds = shown.get("binds", "")
+        for label, page_says, run_says in (
+            ("the guide id", shown.get("guide", ""), str(top.get("guide_id", ""))),
+            ("the spacer", spacer, str(top.get("spacer", ""))),
+            ("the verdict", shown.get("verdict", ""), str(top.get("verdict", ""))),
+        ):
+            if not check(f"{label} is the run's ({run_says})",
+                         page_says.startswith(run_says) and bool(run_says),
+                         f"the page says {page_says!r}"):
+                failures.append(f"the page's {label} is not the run's")
+        detail = " ".join(top.get("detail", []))
+        if not check("the verdict's reason is the run's own words",
+                     bool(detail) and detail in shown.get("verdict", ""),
+                     f"run says {detail!r}, page says {shown.get('verdict', '')!r}"):
+            failures.append("the page's verdict reason is not the run's")
+        # The coordinate is the field a reader checks by hand, and it was the
+        # one field nothing checked: every other value on the row agreed with
+        # every other, and the location pointed 147 bases away from the site
+        # printed beside it. Tie all three together -- page coordinate, page
+        # site, real target -- so agreement among the row's own cells can no
+        # longer stand in for agreement with the target.
+        expected = f"MALAT1_frag at {start}..{start + len(spacer)}" if spacer else ""
+        if not check(f"the coordinate is the run's ({expected})",
+                     binds == expected, f"the page says {binds!r}"):
+            failures.append("the page's coordinate is not the run's")
+        if not check(f"and the target really carries that site at {start}",
+                     bool(site) and TARGET[start : start + len(site)] == site,
+                     f"target[{start}:{start + len(site) if site else '?'}] = "
+                     f"{TARGET[start : start + len(site)] if site else '?'!r}, "
+                     f"page shows {site!r}"):
+            failures.append("the page's site is not at the page's coordinate")
 
     print()
     if failures:
