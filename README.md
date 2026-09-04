@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1267 tests
+python -m unittest discover -s tests -t tests    # 1268 tests
 pytest                              # same suite under pytest
 ```
 
@@ -784,7 +784,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1267 tests, run under `unittest` or `pytest` — both discover the same set —
+1268 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -796,8 +796,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1267 tests
-python examples/verify_mutation_coverage.py              # 82 mutations, 82 caught
+pytest                                                   # 1268 tests
+python examples/verify_mutation_coverage.py              # 83 mutations, 83 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -844,7 +844,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 82 are
+against the **whole** suite before being called a hole. None of the 83 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -1081,7 +1081,7 @@ somebody checks the table in the module docstring still describes the machine.
 Constants are where the first batch's one real hole was, so the second went
 looking for more of them. Thirty-five module-level numbers decide something in
 this package. Twenty-nine of them had never been mutated when this batch was
-written, and twenty-two still have not. Six were picked for
+written, and twenty-one still have not. Six were picked for
 deciding something a user sees, and each was moved by a plausible amount rather
 than a wild one — the question is whether the suite notices a threshold
 shifting, not whether it notices the code breaking. **All six survived a green
@@ -1147,6 +1147,28 @@ nothing anywhere passes `min_window`, so the defaults are the only values a
 real run ever uses. Both are now stated in rows at the boundary: nineteen
 observations do not certify and twenty do; nineteen neighbours fall back to the
 whole stratum and twenty condition on the prediction level.
+
+A fourth batch found one hole in six. Two were caught, and the three survivors
+that were not holes are worth the space, because they mark the edge of what
+this method can say. **An unpinned constant is not always a claim.**
+`_PRUNE_EVERY` sets how often the scanner compacts its live set: cadences of 1,
+4 and 8 return identical hit sets, so it is a speed knob and a test of it would
+pin nothing. `STABILITY_TARGET` is the margin RK4 is held inside — instability
+begins near 2.78, and moving 2.0 to 2.5 stays inside it, shifting a converged
+answer by three parts per million and changing which constants are refused not
+at all. `MIN_PAIRABLE_LENGTH` guards a length at which nothing can pair;
+raising it by one changes a five-base profile below display precision, and no
+locus is five bases long.
+
+The one that was a claim is `REJECTION_EXAMPLES`, which decides how many worked
+examples the rejection table carries per reason group — three, against a
+`count` that reports the real total. Raising it to five changes what a reader
+sees. There was already a test called `test_the_examples_are_bounded`, and it
+could not fail: it imported `REJECTION_EXAMPLES` and asserted the group was no
+larger than it. That is the third assertion here found comparing a constant to
+itself, after `CROSSOVER_BASES` and the two sample-size minimums — enough
+repetitions to call it a habit rather than an accident. **When the value is the
+claim, the test has to say the number.**
 
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the

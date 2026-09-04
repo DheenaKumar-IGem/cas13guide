@@ -73,11 +73,17 @@ class TestTheFailedGuidesAreAccountedFor(unittest.TestCase):
     def test_the_examples_are_bounded(self):
         """Grouping on the detail strings would put nearly every guide in a
         group of one, since they carry per-guide numbers -- reproducing the
-        wall of rows this replaces."""
-        from cas13guide.pipeline.g_output import REJECTION_EXAMPLES
+        wall of rows this replaces.
 
+        Three as a literal, not as ``REJECTION_EXAMPLES``. Importing the
+        constant and comparing against it is an identity: it holds whatever
+        the constant becomes, so raising it to five left this green while the
+        report grew. The exact truncation is pinned in ``TestTheGroupingItself``
+        where the group size can be chosen; here the fixture's groups may be
+        smaller than the bound, so this states the bound only.
+        """
         for group in self.report["rejected"]:
-            self.assertLessEqual(len(group["examples"]), REJECTION_EXAMPLES)
+            self.assertLessEqual(len(group["examples"]), 3)
 
     def test_the_order_is_stable_and_puts_the_dominant_cause_first(self):
         rows = self.report["rejected"]
@@ -111,6 +117,27 @@ class TestTheGroupingItself(unittest.TestCase):
             metrics=MetricVector(0.5, 0.0, 0.0, 0.0, 0.5, 1.0),
             gate=GateResult(verdict, tuple(reasons), detail=tuple(detail)),
         )
+
+    def test_a_large_group_summarises_rather_than_reproducing(self):
+        """Seven failures for one reason: count says seven, examples show three.
+
+        Both halves matter. The truncation is the point of the table -- it
+        replaces a wall of rows -- and ``count`` reporting the truncated
+        number instead of the real one would be the quiet version of the same
+        bug, a summary that understates what it summarises.
+        """
+        from cas13guide.contract.enums import ReasonCode, Verdict
+        from cas13guide.pipeline.g_output import _rejection_rows
+
+        reason = ReasonCode.DETERMINISTIC_INCOMPATIBLE
+        rows = _rejection_rows([
+            self._assessment(f"g{i:02d}", Verdict.FAIL, [reason],
+                             ["QC flags: gc_out_of_range"])
+            for i in range(7)
+        ])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["count"], 7)
+        self.assertEqual(len(rows[0]["examples"]), 3)
 
     def test_groups_are_ordered_by_count_then_reason(self):
         from cas13guide.contract.enums import ReasonCode, Verdict
