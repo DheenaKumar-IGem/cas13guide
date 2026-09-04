@@ -131,6 +131,23 @@ def frechet_by_enumeration(marginals: list[float], grid: int = 24) -> tuple[floa
     return min(union), max(union)
 
 
+def union_by_independent_enumeration(p: float, q: float) -> float:
+    """P(at least one succeeds) under independence, by summing the outcomes.
+
+    The Frechet sweep bounds the union over *every* joint consistent with the
+    marginals, so it says only that the package's ceiling lies somewhere in a
+    wide interval. That is a weak claim about a specific number: the noisy-OR
+    is one particular joint -- the independent one -- and it has an exact
+    value. This enumerates the four outcomes of two independent trials and
+    adds the three in which at least one succeeds, which is that value derived
+    without the closed form the package uses.
+    """
+    both = p * q
+    only_p = p * (1.0 - q)
+    only_q = (1.0 - p) * q
+    return both + only_p + only_q
+
+
 def check(name: str, ok: bool, detail: str = "") -> bool:
     print(f"  {'ok  ' if ok else 'FAIL'}  {name}" + (f"   {detail}" if not ok else ""))
     return ok
@@ -244,7 +261,7 @@ def main() -> int:
     print("\nFrechet bounds vs exhaustive enumeration of the joint")
     from cas13guide.services.panel_confidence import _combine_independent
 
-    worst_lo = worst_hi = 0.0
+    worst_lo = worst_hi = worst_below = worst_indep = 0.0
     for _ in range(200):
         p, q = rng.random(), rng.random()
         # The package's floor is the comonotone case (the panel is worth its
@@ -253,12 +270,27 @@ def main() -> int:
         enum_lo, enum_hi = frechet_by_enumeration([p, q])
         worst_lo = max(worst_lo, abs(floor - enum_lo))
         worst_hi = max(worst_hi, ceiling - enum_hi)
+        # Both remaining directions. The interval check above is one-sided,
+        # and one-sided is not what "the ceiling is the noisy-OR" claims: the
+        # noisy-OR sits strictly inside the Frechet interval for most
+        # marginals, so a ceiling that drifted *downwards* -- to the floor,
+        # even -- cleared it. Measured: scaling the per-member miss by 0.99
+        # left this section reporting agreement.
+        worst_below = max(worst_below, enum_lo - ceiling)
+        worst_indep = max(worst_indep,
+                          abs(ceiling - union_by_independent_enumeration(p, q)))
     if not check(f"comonotone floor matches enumeration (max gap {worst_lo:.2e})",
                  worst_lo < 1e-12):
         failures.append("frechet floor")
     if not check("independent ceiling never exceeds the attainable maximum",
                  worst_hi <= 1e-12, f"exceeds by {worst_hi:.2e}"):
         failures.append("frechet ceiling")
+    if not check("nor falls below the attainable minimum",
+                 worst_below <= 1e-12, f"falls short by {worst_below:.2e}"):
+        failures.append("frechet ceiling below the attainable minimum")
+    if not check(f"and is the independent joint enumerated "
+                 f"(max gap {worst_indep:.2e})", worst_indep < 1e-12):
+        failures.append("the noisy-OR is not the independent union")
 
     print()
     if failures:
