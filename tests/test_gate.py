@@ -182,6 +182,45 @@ class TestReviewGrading(unittest.TestCase):
         self.assertIs(result.review_tier, ReviewTier.R2)
         self.assertIn(ReasonCode.EXPRESSION_UNKNOWN, result.reasons)
 
+    def test_the_targets_own_unknown_expression_does_not_downgrade(self):
+        """The complement of the test above, and the one that was missing.
+
+        `EXPRESSION_UNKNOWN` used to count every locus with no abundance
+        evidence, the run's own target included. An intended locus's
+        expression reaches no metric, no threshold and no verdict -- its two
+        readers, `pair_hazard` and the off-target explorer rows, both sit
+        behind `not e.is_intended` -- so the downgrade fired for a gap that
+        changes no number the run produces, on every guide of every run that
+        did not pass an undocumented `--expression`.
+
+        Measured on the README's own command shape: PASS 0 / REVIEW 272 with
+        this as the sole reason, no panel, no controls, no FR6.3 interval, and
+        a 100% review rate -- the degeneracy this module's docstring says the
+        R1/R2/R3 grading exists to prevent. `--expression 0`, asserting the
+        target is not expressed at all, cleared it just as well as 120.
+        """
+        spec = make_spec()
+        _, result = run_gate(spec, (strong_required(expression_imputed=True),))
+        self.assertNotIn(ReasonCode.EXPRESSION_UNKNOWN, result.reasons)
+        self.assertIs(result.verdict, Verdict.PASS)
+
+    def test_an_off_target_still_downgrades_beside_an_unknown_target(self):
+        """And the reason still fires when it means something.
+
+        Both loci lack abundance evidence here; only the off-target one is
+        supposed to count.
+        """
+        spec = make_spec()
+        evidence = (
+            strong_required(expression_imputed=True),
+            make_evidence(0.0, 0.05, locus_id="LU", expression=(0.0, 0.9),
+                          expression_imputed=True),
+        )
+        _, result = run_gate(spec, evidence)
+        self.assertIs(result.verdict, Verdict.REVIEW)
+        self.assertIn(ReasonCode.EXPRESSION_UNKNOWN, result.reasons)
+        self.assertIn("1 locus/loci", " ".join(result.detail))
+
     def test_r1_borderline_coverage(self):
         spec = make_spec()
         borderline = make_evidence(

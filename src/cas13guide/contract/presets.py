@@ -257,16 +257,42 @@ def designability(
 def largest_designable_spacer_length(
     preset: TargetPreset, effector: Effector, min_windows: int = 1
 ) -> int | None:
-    """Longest tolerated spacer that still yields ``min_windows`` windows.
+    """Longest spacer that still yields ``min_windows`` windows, canonical first.
 
     Longest rather than shortest because a longer spacer is the more specific
     one; there is no reason to give away duplex length that the target can
     actually accommodate. Returns ``None`` when even the shortest tolerated
     spacer does not fit.
+
+    Canonical before longest, though, because specificity the gate refuses to
+    certify is not worth having. A length outside the ortholog's published set
+    is reported out-of-domain, so its activity interval is not narrowed at
+    all, and benefit is read at its lower bound -- the guide is refused rather
+    than ranked. Picking the longest *tolerated* length did exactly that to
+    the package's own headline example: `--preset hsa-miR-21-5p` against
+    RfxCas13d resolved to 24 nt, which that ortholog does not publish, and the
+    run ended `FAIL: 1` and exit 1. The canonical 23 nt fits the same 24 nt
+    target and ends `REVIEW: 2`, exit 0.
+
+    The fallback is unchanged and still matters: no canonical LwaCas13a length
+    fits any mature miRNA -- its only published length is 28 and the longest
+    preset here is 24 -- so those resolve to a tolerated length and are
+    reported out-of-domain, which is the geometry problem this package
+    documents rather than a choice it can make differently.
     """
-    low, high = EFFECTORS[effector].spacer_length_range
+    params = EFFECTORS[effector]
+    low, high = params.spacer_length_range
+
+    def fits(length: int) -> bool:
+        return low <= length <= high and preset.length - length + 1 >= min_windows
+
+    canonical = [length for length in sorted(params.spacer_lengths, reverse=True)
+                 if fits(length)]
+    if canonical:
+        return canonical[0]
+
     for length in range(min(high, preset.length), low - 1, -1):
-        if preset.length - length + 1 >= min_windows:
+        if fits(length):
             return length
     return None
 

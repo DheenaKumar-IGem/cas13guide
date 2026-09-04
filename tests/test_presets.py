@@ -240,5 +240,59 @@ class TestBothWaysToATargetStillAgree(unittest.TestCase):
                     )
 
 
+class TestTheResolvedLengthIsCanonicalWhereOneFits(unittest.TestCase):
+    """The default length must be one the ortholog publishes, where it can be.
+
+    A length outside the published set is reported out-of-domain, so the
+    activity interval is not narrowed at all; benefit is read at its lower
+    bound, and the guide is refused rather than ranked. Choosing the longest
+    *tolerated* length therefore bought specificity the gate then refused to
+    certify -- and it did that to this package's own headline example.
+    `--preset hsa-miR-21-5p` against RfxCas13d resolved to 24 nt, which that
+    ortholog does not publish, and the run ended FAIL: 1 with exit 1. The
+    canonical 23 nt fits the same 24 nt target and ends REVIEW: 2, exit 0.
+
+    Stated as "canonical wherever one fits" rather than as the number 23, so
+    it holds for a preset added later.
+    """
+
+    def test_a_canonical_length_is_chosen_when_one_fits(self):
+        for preset_id, preset in MIRNA_PRESETS.items():
+            for effector in (Effector.RFX_CAS13D, Effector.PSP_CAS13B):
+                canonical = EFFECTORS[effector].spacer_lengths
+                fits = [c for c in canonical if preset.length - c + 1 >= 1]
+                if not fits:
+                    continue
+                with self.subTest(preset=preset_id, effector=effector.value):
+                    chosen = largest_designable_spacer_length(preset, effector)
+                    self.assertIn(
+                        chosen, canonical,
+                        f"{preset_id} at {preset.length} nt resolved to {chosen}, "
+                        f"which {effector.value} does not publish, when "
+                        f"{max(fits)} does and would be certifiable",
+                    )
+
+    def test_and_it_is_the_longest_such_length(self):
+        """Longest among the canonical ones: specificity, once certifiable."""
+        preset = MIRNA_PRESETS["hsa-miR-21-5p"]
+        self.assertEqual(
+            largest_designable_spacer_length(preset, Effector.RFX_CAS13D), 23)
+
+    def test_a_tolerated_length_is_still_used_when_no_canonical_one_fits(self):
+        """LwaCas13a publishes only 28, and no mature miRNA can host a 28-mer.
+
+        The fallback is the geometry problem this package documents, not a
+        choice it can make differently, so it must survive the preference.
+        """
+        for preset_id, preset in MIRNA_PRESETS.items():
+            with self.subTest(preset=preset_id):
+                chosen = largest_designable_spacer_length(
+                    preset, Effector.LWA_CAS13A)
+                self.assertIsNotNone(chosen)
+                self.assertNotIn(chosen, EFFECTORS[Effector.LWA_CAS13A].spacer_lengths)
+                low, high = EFFECTORS[Effector.LWA_CAS13A].spacer_length_range
+                self.assertTrue(low <= chosen <= high)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,9 @@ at all, and only an out-of-process run sees that.
 
 import subprocess
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 #: A 400 nt target with room for real tiling. Fixed rather than random
 #: so the verdict mix under the built-in models is the same every run.
@@ -60,11 +62,25 @@ class TestTheTerminalSaysWhenThereIsNoRecommendation(unittest.TestCase):
 
     Shortfalls used to print only when *nothing* ranked -- the case where the
     reader already knows something went wrong. The dangerous case is the other
-    one: with the built-in synthetic calibration every guide lands REVIEW, the
-    panel is PASS-only and therefore empty, and the terminal printed a full
-    table and not one word about it. The report and the export headers carried
-    the shortfall the whole time; only the surface a person actually reads did
-    not.
+    one: rows ranked, the PASS-only panel empty, and the terminal printing a
+    full table and not one word about it. The report and the export headers
+    carried the shortfall the whole time; only the surface a person actually
+    reads did not.
+
+    The empty panel is now *arranged* rather than inherited. This docstring
+    used to say every guide lands REVIEW "with the built-in synthetic
+    calibration", and so did README's account of it, and both were wrong: the
+    universal REVIEW came from EXPRESSION_UNKNOWN counting the run's own
+    target, whose abundance no metric reads. Once that was restricted to
+    off-target loci the same command returns 272 PASS under the same synthetic
+    calibration, and a test resting on the old behaviour would have gone green
+    only while the defect lasted.
+
+    So the fixture supplies a background paralog: a full-length copy of the
+    target with every seventh base substituted. Every window then has an
+    off-target hit in a locus of unknown abundance -- weak enough to downgrade
+    rather than fail -- so every survivor is REVIEW for the reason the code
+    means by it, the panel is empty, and the terminal has to say so.
 
     Run out of process on purpose: the defect was in what reaches a terminal,
     and calling the printer directly would not have seen it.
@@ -72,9 +88,28 @@ class TestTheTerminalSaysWhenThereIsNoRecommendation(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.result = run_module(
-            "design", "--sequence", SEQUENCE, "--top", "2", "--panel-size", "3"
+        substitute = {"A": "C", "C": "A", "G": "U", "U": "G"}
+        paralog = "".join(
+            substitute[base] if index % 7 == 3 else base
+            for index, base in enumerate(SEQUENCE)
         )
+        cls._directory = tempfile.TemporaryDirectory()
+        root = Path(cls._directory.name)
+        (root / "target.fa").write_text(f">t1\n{SEQUENCE}\n", encoding="utf-8")
+        (root / "paralog.fa").write_text(f">paralog\n{paralog}\n", encoding="utf-8")
+        cls.result = run_module(
+            "design", "--fasta", str(root / "target.fa"),
+            "--background", str(root / "paralog.fa"),
+            "--top", "2", "--panel-size", "3",
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._directory.cleanup()
+
+    def test_the_fixture_really_leaves_the_panel_empty(self):
+        """Or every assertion below would pass on a run that recommended one."""
+        self.assertIn("'PASS': 0", self.result.stdout)
 
     def test_the_run_succeeds_and_ranks_something(self):
         self.assertEqual(self.result.returncode, 0, self.result.stderr)

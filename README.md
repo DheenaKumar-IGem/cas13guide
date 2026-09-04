@@ -73,7 +73,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1281 tests
+python -m unittest discover -s tests -t tests    # 1287 tests
 pytest                              # same suite under pytest
 ```
 
@@ -185,12 +185,29 @@ hidden (--all-sites to show them)
 ### And a table is not a recommendation
 
 The panel is PASS-only, deliberately — the machine's recommendation stays
-certified even where the table a human triages is wider. Under the built-in
-synthetic calibration every guide lands REVIEW, so there *is* no panel, and the
-terminal used to print the shortfall only when nothing ranked at all. The
-dangerous case is the opposite one: 264 ranked rows, an empty panel, and not a
-word about it. The report and every export header carried the shortfall the
-whole time; the surface a person actually reads did not.
+certified even where the table a human triages is wider. So an empty panel
+beside a full table is the dangerous case, and the terminal used to print the
+shortfall only when *nothing* ranked at all: the reader who already knew
+something was wrong got told, and the reader looking at 264 plausible rows did
+not.
+
+This section used to say that every guide lands REVIEW under the built-in
+synthetic calibration, and that was wrong. The universal REVIEW came from
+`EXPRESSION_UNKNOWN` counting the run's **own target** among the loci with no
+abundance evidence — and an intended locus's expression reaches no metric, no
+threshold and no verdict, since the only two readers of it sit behind `not
+e.is_intended`. `design --fasta t1.fa` returned PASS 0 / REVIEW 272 with that
+as the sole reason on every survivor; the same command with `--expression 120`
+returned PASS 272 under the identical synthetic calibration. So did
+`--expression 0`, which asserts the target is not expressed at all — any value
+cleared the flag, because nothing downstream read it.
+
+The reason now counts off-target loci only, which is what the report's own
+glossary already said it meant. PASS, the panel, its controls and the FR6.3
+interval are reachable from the documented command again. The shortfall message
+stays, and the test that guards it now arranges an empty panel deliberately — a
+background paralog every window also hits — rather than inheriting one from a
+defect.
 
 ```
   ! no panel: guides ranked but none PASSed the gate, and the panel is
@@ -469,6 +486,16 @@ package makes the trade-off explicit instead of hiding it:
   22/23/30 for LwaCas13a and LwaCas13a's 28 for RfxCas13d — so four of the five
   miRNA presets were being certified at a length no model here was fit on, on
   the package's own headline path;
+- the default spacer length prefers a **canonical** one wherever a canonical
+  length fits the target, and falls back to the longest merely tolerated length
+  only when none does. Longest-tolerated was the rule until it was pointed at
+  this package's own headline example: `--preset hsa-miR-21-5p` against
+  RfxCas13d resolved to 24 nt, which that ortholog does not publish, and the
+  run ended `FAIL: 1` with exit 1 — specificity bought at the price of the
+  certification that would have made it usable. The canonical 23 nt fits the
+  same 24 nt target and ends `REVIEW: 2`, exit 0. Every LwaCas13a preset still
+  takes the fallback, because 28 is its only published length and no mature
+  miRNA can host a 28-mer: that one is geometry, not a choice;
 - `designability()` states up front how many windows a target can yield, so
   "1 candidate" is a prediction rather than a surprise.
 
@@ -784,7 +811,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1281 tests, run under `unittest` or `pytest` — both discover the same set —
+1287 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -796,8 +823,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1281 tests
-python examples/verify_mutation_coverage.py              # 90 mutations, 90 caught
+pytest                                                   # 1287 tests
+python examples/verify_mutation_coverage.py              # 92 mutations, 92 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -844,7 +871,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 90 are
+against the **whole** suite before being called a hole. None of the 92 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also

@@ -164,7 +164,28 @@ def gate(
     # summing rows counted one locus once per context and once per binding site
     # within it -- and the string says "locus/loci", unlike the two R3 details
     # above it, which say "pair(s)" and do mean rows.
-    unknown_loci = {e.locus_id for e in evidence if e.expression_unknown}
+    # Off-target loci only. An intended locus's abundance reaches no metric,
+    # no threshold and no verdict: `PairEvidence.expression` has exactly two
+    # readers, `pair_hazard` and the off-target explorer rows, and both are
+    # behind `not e.is_intended`. Counting the target itself downgraded every
+    # guide for a gap that changes no number the run produces.
+    #
+    # It made the certified surface unreachable from the documented command.
+    # `design --fasta t1.fa` gave PASS 0 / REVIEW 272, the sole reason on every
+    # survivor being this one, so there was no panel, no controls and no FR6.3
+    # interval -- a 100% review rate, which is the degeneracy the R1/R2/R3
+    # grading in this module's docstring exists to prevent. The same run with
+    # `--expression 120` gave PASS 272 under identical synthetic calibration.
+    # So did `--expression 0`, which asserts the target is not expressed at
+    # all: any value cleared the flag, because nothing downstream read it.
+    #
+    # This also makes the reason mean what the report already says it means --
+    # `report_html.py`'s glossary glosses R2 EXPRESSION_UNKNOWN as "an
+    # off-target whose expression is unknown", which was not the case that
+    # fired.
+    unknown_loci = {
+        e.locus_id for e in evidence if e.expression_unknown and not e.is_intended
+    }
     if unknown_loci:
         review.append(
             (ReviewTier.R2, ReasonCode.EXPRESSION_UNKNOWN,
