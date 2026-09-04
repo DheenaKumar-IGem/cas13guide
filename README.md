@@ -680,9 +680,16 @@ lands in the provenance ledger:
 ```python
 ctx = DesignContext.auto("reference", transcriptome, universes, locus_to_target)
 # index/exhaustive-scan/v1
-# "2,400 bases x 1000 queries: scan ~0s beats FM ~2800s
-#  (suffix-array build does not pay back)"
+# "2,391 bases x 1000 queries: scan ~0s, and the suffix-array build does
+#  not pay back (FM cost is only modelled above 1.5 Mb)"
 ```
+
+That message used to quote a counterfactual — "scan ~0s beats FM ~2800s" —
+and the measured FM cost at that corpus is about 27 seconds. The flat
+per-query constant is calibrated between 1.5 Mb and 3 Mb and was being
+extrapolated down two orders of magnitude; the decision was never wrong,
+because the crossover sits near 87 Mb, but the number was. It now says which
+regime it can speak for.
 
 The constants are machine-specific; `examples/bench_index.py` re-measures them.
 The tests pin the *shape* of the policy (query volume flips the decision above

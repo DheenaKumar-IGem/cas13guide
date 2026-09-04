@@ -233,6 +233,45 @@ def measured_flip_rate(seed: int = 12345, n: int = 20_000) -> float:
     return 100.0 * flips / n
 
 
+#: Messages the README quotes as the package's own output, and how to ask the
+#: package for them. The index rationale in this list had gone stale -- the
+#: README still showed "scan ~0s beats FM ~2800s" months after that
+#: counterfactual was removed for overstating the FM cost a hundredfold. The
+#: designability note beside it was still exact, so the risk is real and
+#: unevenly distributed, which is the argument for checking rather than
+#: reading.
+def quoted_tool_messages() -> list[tuple[str, str, str]]:
+    """``(label, what the README says, what the package says)``."""
+    from cas13guide.contract.enums import Effector
+    from cas13guide.contract.presets import designability, get_preset
+    from cas13guide.services.index_selection import plan_index
+
+    readme = README.read_text(encoding="utf-8")
+    out: list[tuple[str, str, str]] = []
+
+    # Each is a `# "..."` block whose continuation lines start `#  `.
+    for label, marker, actual in (
+        ("designability note", '# "24 nt target cannot hold',
+         designability(get_preset("hsa-miR-21-5p"), Effector.LWA_CAS13A).note),
+        ("index rationale", '# "2,391 bases x 1000 queries',
+         plan_index(2391, 1000).rationale),
+    ):
+        start = readme.find(marker)
+        if start < 0:
+            out.append((label, "", normalise(actual)))
+            continue
+        block: list[str] = []
+        for line in readme[start:].splitlines():
+            if not line.startswith("#"):
+                break
+            block.append(line.lstrip("#").strip())
+        # The README writes the message inside quotation marks; the
+        # package returns it without them.
+        quoted = normalise(" ".join(block)).strip().strip(chr(34))
+        out.append((label, quoted, normalise(actual)))
+    return out
+
+
 def page_critical_quotes() -> list[str]:
     page = PAGE.read_text(encoding="utf-8")
     blocks = re.findall(r'<li class="lim">.*?</li>', page, re.S)
@@ -385,7 +424,17 @@ def main() -> int:
                  f"prose says {claimed}, the block lists {actual}"):
         failures.append("the README miscounts its own verification commands")
 
-    # ---- 4. the size of the mutation set -------------------------------
+    # ---- 4. messages the README quotes as the package's own output -------
+    print()
+    print("messages the README quotes as output")
+    for label, quoted, actual in quoted_tool_messages():
+        if not check(f"{label} is what the package prints",
+                     bool(quoted) and quoted == actual,
+                     f"README: {quoted[:90] or '(not found)'}"
+                     f"  ||  package: {actual[:90]}"):
+            failures.append(f"the README misquotes the {label}")
+
+    # ---- 5. the size of the mutation set -------------------------------
     print()
     print("the mutation sweep's size, wherever the documents state it")
     size = mutation_set_size()
@@ -414,7 +463,7 @@ def main() -> int:
                  f"claims {sorted(set(caught.values()))} caught of {size}"):
         failures.append("more mutations are claimed caught than the sweep carries")
 
-    # ---- 5. the most-repeated figure in the repository -------------------
+    # ---- 6. the most-repeated figure in the repository -------------------
     print()
     print("the DR-interaction flip rate, stated in four files")
     stated = stated_flip_rates()
@@ -438,7 +487,7 @@ def main() -> int:
                      f"documents say {claimed}%, re-measured {measured:.2f}%"):
             failures.append("the stated flip rate is stale")
 
-    # ---- 6. the defect count is a count of something -------------------
+    # ---- 7. the defect count is a count of something -------------------
     print()
     print("the defect count the page closes on")
     stated = re.search(r"have fixed (\d+) defects", PAGE.read_text(encoding="utf-8"))
@@ -449,7 +498,7 @@ def main() -> int:
                  f"the tree holds {counted}"):
         failures.append("the stated defect count is not what the tree holds")
 
-    # ---- 7. the worked example re-derives --------------------------------
+    # ---- 8. the worked example re-derives --------------------------------
     print()
     print("the worked example the page invites a reader to check by hand")
     from cas13guide.util.seq import revcomp
