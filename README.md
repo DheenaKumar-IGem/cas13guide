@@ -1182,6 +1182,36 @@ moves if any of the three cost constants moves, and `FM_FLAT_ABOVE_BASES` by
 the rationale string the landing page quotes. The habit is real and currently
 has no live instances.
 
+**Then the comments, which say what the code must not do.** Constants needed
+guessing about which knob was a claim. This codebase states its reasoning in
+place, and a comment of the form “X, not Y” is a claim with its own
+counterexample attached: make the code Y and see whether anything objects. Five
+batches, twelve mutations, aimed at comments in the modules the sweep had
+barely touched.
+
+Four were holes. A computed fold could vouch for the activity model that
+computed it, changing every score under `--structure` and reordering the
+ranking. A DESIRED target could lose its accessibility entirely. An
+unmeasurable cross-validation could print `spearman 0.000` where it now says
+NOT MEASURED — “no skill” and “not measured” being opposite conclusions about a
+model. And `SOFT_QC_FLAGS`, a set naming which QC findings only warn, was
+consulted by nothing at all.
+
+The yield is about the same as the constants gave — nine holes from twenty-two
+there, four from twelve here — so the method is not better, it is *different*:
+it reaches invariants that are not numbers, which no amount of moving
+thresholds would have found. Two batches in a row have now come back empty,
+which is the signal that this seam is worked out rather than that the code is
+finished.
+
+It also rejects candidates honestly. Three comments describe defences that are
+deliberately unreachable — `c_search`'s weakest-bound rule, written for an
+index that degrades and admitting “today every iteration writes an equivalent
+value”; the hazard prior's fallback, labelled defence in depth behind a key
+that is guaranteed to exist; and `MIN_PAIRABLE_LENGTH`, which guards a length
+no locus has. Mutating those would produce survivors that are not holes, and a
+sweep that collects those stops meaning anything.
+
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the
 gate says and what a caller switches on; `Limitation`, what the run admits it
