@@ -239,5 +239,31 @@ class TestTheRationaleDoesNotQuoteAnUnmodelledNumber(unittest.TestCase):
                 self.assertIn(row, doc)
 
 
+class TestTheDecisionBoundarySitsWhereTheMeasurementsPutIt(unittest.TestCase):
+    """Where scan stops winning, in bases, rather than as an identity.
+
+    ``test_derived_crossover_matches_the_per_query_costs`` says outright that
+    CROSSOVER_BASES is derived from the constants rather than independent, so
+    it stays true whatever those constants become -- and nothing else pinned
+    them. Doubling SCAN_SECONDS_PER_MB_PER_QUERY, which reads exactly like an
+    ordinary re-measurement on a different machine, moved the real boundary
+    from 100.7 Mb to 46.8 Mb with the whole suite still green. Every corpus in
+    between changed which index it builds, and which one it tells the ledger
+    it built.
+
+    Bracketing the boundary pins all three constants at once, because the
+    boundary is where ``BUILD * mb + q * FM_Q`` overtakes ``q * SCAN * mb``.
+    A genuine re-measurement should fail here: that is the point at which
+    somebody confirms the module docstring's table still describes the
+    machine.
+    """
+
+    def test_the_scanner_still_wins_just_below_it(self):
+        self.assertEqual(plan_index(100_000_000, 1000).kind, SCANNER)
+
+    def test_and_the_fm_index_wins_just_above_it(self):
+        self.assertEqual(plan_index(101_000_000, 1000).kind, FM)
+
+
 if __name__ == "__main__":
     unittest.main()

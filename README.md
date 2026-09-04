@@ -784,7 +784,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1245 tests, run under `unittest` or `pytest` — both discover the same set —
+1247 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -796,8 +796,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1245 tests
-python examples/verify_mutation_coverage.py              # 74 mutations, 74 caught
+pytest                                                   # 1247 tests
+python examples/verify_mutation_coverage.py              # 75 mutations, 75 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -844,7 +844,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 74 are
+against the **whole** suite before being called a hole. None of the 75 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -963,7 +963,7 @@ me twice: a test asserting the wrong offset passed under the mutation it was
 written for, and a first attempt at the reference-context test asserted against
 evidence the choice does not actually affect.
 
-### Two things it found that were not holes
+### Five things it found that were not holes
 
 A mutation the suite cannot catch is not always a gap. The FM index documents
 two independent defences against a match spanning two loci — the separator is
@@ -975,6 +975,40 @@ correct guard from one loosened by an off-by-one, so the redundancy is verified
 rather than assumed. A probe into `features.py` was the same shape with no such
 payoff — its guard only matters at a spacer length of 1 and the contract admits
 22 to 30 — so it was removed and the reasoning left in its place.
+
+A later batch, aimed at the modules the sweep had never touched, produced four
+survivors and three of them were this same shape. Each is worth naming, because
+what defends them is not a test:
+
+*The GC fraction could count `S`* — the IUPAC code for "G or C", which is
+exactly what a reader would think belongs there. It survives because it can
+never fire: `normalize` transcribes to the AUGCN alphabet and `ingest` rejects
+anything outside it, so no `S` reaches the function. The mutation is a no-op on
+the reachable input, which the sweep counts as a defect in the mutation rather
+than a hole in the suite.
+
+*A PASS could be graded as severe as a borderline REVIEW.* `SEVERITY` maps five
+verdict strings to ranks, and the one place that reads it takes a `max` over
+review tiers alone. The PASS and FAIL entries are never looked up. They
+document an ordering rather than drive one.
+
+*An evidence gap could outrank an out-of-domain finding* — R2 raised to R3's
+rank, collapsing two tiers into one. `max` returns the first maximal element,
+and `f_decide` appends every R3 before every R2, so the tie resolves to R3
+either way. The ordering is real but the append order already decides it;
+enumerating all three tiers in every permutation confirms no reachable case
+differs.
+
+The fourth was a hole. `SCAN_SECONDS_PER_MB_PER_QUERY` is a measurement, and
+doubling it — which reads like an ordinary re-measurement on another machine
+-- moved the point where the FM index starts winning from 100.7 Mb to 46.8 Mb
+with the whole suite green. Every corpus in between changed which index it
+builds and which one it records having built. The module had a test for the
+crossover, and that test says in its own docstring that `CROSSOVER_BASES` is
+derived from the constants rather than independent — so it holds whatever they
+become. The boundary is now bracketed in bases, which pins all three constants
+at once, and a genuine re-measurement is meant to fail it: that is when
+somebody checks the table in the module docstring still describes the machine.
 
 **Everything the tool can say to a user is said by a test.**
 This package has four vocabularies for talking to a user: `ReasonCode`, what the
