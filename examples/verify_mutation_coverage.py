@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 84 are
+  "hole" is never an artefact of which modules were chosen. None of the 86 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **84 mutations, 84 caught, 0 holes.**
+Last measured: **86 mutations, 86 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -673,6 +673,20 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         '_preset("hsa-miR-21-5p", "hsa-miR-21-5p", "MIMAT0000076"',
         '_preset("hsa-miR-21-5p", "miR-21 (5p arm)", "MIMAT0000076"',
         ["test_presets.py"],
+    ),
+    (
+        "a-computed-fold-vouches-for-the-model",
+        "src/cas13guide/pipeline/d_pair_evidence.py",
+        "model_accessibility = accessibility_value if independent else None",
+        "model_accessibility = accessibility_value",
+        ["test_structure_and_signal.py"],
+    ),
+    (
+        "only-required-targets-get-accessibility",
+        "src/cas13guide/pipeline/d_pair_evidence.py",
+        "intended = hit.target_class in (TargetClass.REQUIRED, TargetClass.DESIRED)",
+        "intended = hit.target_class in (TargetClass.REQUIRED,)",
+        ["test_structure_and_signal.py"],
     ),
 ]
 

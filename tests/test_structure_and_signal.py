@@ -383,5 +383,127 @@ class TestSignalOnlyCountsWhereCollateralIsTheReadout(unittest.TestCase):
         self.assertIsNone(predicted_signal(self._evidence(), spec, NullKineticsModel()))
 
 
+class TestAComputedFoldDoesNotVouchForTheModel(unittest.TestCase):
+    """FR3.3's independence rule, tested at the call rather than the score.
+
+    ``d_pair_evidence`` computes an accessibility for every intended hit and
+    then passes it to ``predict()`` only when the source says it is
+    independent evidence. A thermodynamic fold is not: it is a prediction
+    from the same sequence the activity model already sees, so letting it in
+    would have one computation vouch for another. The module says so in a
+    comment beside the line that enforces it, and nothing enforced the
+    comment.
+
+    Deleting the guard -- ``model_accessibility = accessibility_value``,
+    unconditionally -- left the whole suite green while changing every score
+    in a run with ``--structure`` and reordering the ranking: rank 1 moved
+    from one guide to another on a 400 nt target. ``[structure]`` is the
+    install the README leads with, so that is the ordinary path.
+
+    Tested by asking the model what it was handed, rather than by comparing
+    scores. A score comparison would pass for the wrong reason the moment
+    accessibility stopped ranking, and the claim here is about what reaches
+    the prediction, not about what the number comes out as.
+    """
+
+    class _RecordingModel:
+        """An activity model that remembers the accessibility it was given."""
+
+        version = "recording/v1"
+
+        def __init__(self):
+            from cas13guide.services.registry import HeuristicCas13Model
+
+            self._real = HeuristicCas13Model()
+            self.domain = self._real.domain
+            self.seen = []
+
+        def predict(self, spacer, duplex, accessibility):
+            self.seen.append(accessibility)
+            return self._real.predict(spacer, duplex, accessibility)
+
+    class _FoldSource:
+        """A thermodynamic fold: a real number, and not independent."""
+
+        version = "accessibility/fake-fold/v1"
+        is_independent_evidence = False
+
+        def accessibility(self, sequence, start, length):
+            return 0.9
+
+    class _ProbingSource(_FoldSource):
+        """A probing experiment: the same number, independently obtained."""
+
+        version = "accessibility/fake-probe/v1"
+        is_independent_evidence = True
+
+    class _NoExpression:
+        def expression_tpm(self, locus_id):
+            return None
+
+    def _evidence_with(self, source, target_class=None):
+        from cas13guide.contract.enums import Universe
+        from cas13guide.pipeline.d_pair_evidence import evidence_for_hit
+        from cas13guide.services.calibration import CalibrationService
+        from cas13guide.services.registry import ModelRegistry
+        from cas13guide.services.transcriptome import Locus, Transcriptome
+
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
+        # REQUIRED, or the accessibility is never computed for this hit.
+        hit = make_hit("g1", "L1", target_id="t1",
+                       target_class=target_class or TargetClass.REQUIRED)
+        world = Transcriptome("GRCh38", "v44")
+        world.add(Locus("L1", hit.target_site, Universe.CODING, expression=10.0))
+        model = self._RecordingModel()
+        evidence = evidence_for_hit(
+            hit, spacer, make_spec(), ModelRegistry(model, source),
+            CalibrationService(), world, self._NoExpression(),
+        )
+        return model, evidence
+
+    def test_a_fold_is_computed_and_withheld(self):
+        model, evidence = self._evidence_with(self._FoldSource())
+        self.assertTrue(model.seen, "the model was never asked")
+        self.assertEqual(
+            set(model.seen), {None},
+            "a non-independent accessibility reached predict(): one "
+            "computation is vouching for another",
+        )
+        self.assertIsNotNone(
+            evidence.accessibility,
+            "and it should still be recorded -- withheld from the "
+            "prediction, not thrown away",
+        )
+
+    def test_a_desired_target_is_aimed_at_too(self):
+        """The accessibility is computed for sites the design aims at.
+
+        REQUIRED and DESIRED are both aimed at; only the rest are skipped, and
+        skipping them is the 8.7x saving the comment above the branch
+        describes. Narrowing it to REQUIRED alone leaves a DESIRED target with
+        no accessibility at all -- not a slower run, a different one -- and
+        the whole suite stayed green.
+        """
+        from cas13guide.contract.enums import TargetClass
+
+        for target_class in (TargetClass.REQUIRED, TargetClass.DESIRED):
+            with self.subTest(target_class=target_class.value):
+                _model, evidence = self._evidence_with(
+                    self._ProbingSource(), target_class=target_class)
+                self.assertIsNotNone(
+                    evidence.accessibility,
+                    f"a {target_class.value} site is one the design aims at",
+                )
+
+    def test_a_probing_experiment_is_passed_through(self):
+        """Or the test above would pass with accessibility disabled entirely."""
+        model, _evidence = self._evidence_with(self._ProbingSource())
+        self.assertTrue(model.seen, "the model was never asked")
+        self.assertEqual(
+            set(model.seen), {0.9},
+            "independent evidence is exactly what predict() is for",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
