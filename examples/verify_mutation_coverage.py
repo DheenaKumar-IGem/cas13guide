@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1204 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. Two of the 38 are
+  survives is re-run against all 1208 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. Four of the 42 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
 
@@ -36,7 +36,7 @@ It copies the tree to a temporary directory and mutates the copy, so the
 repository is never modified. Expect it to take a while: a surviving mutation
 costs a full suite run.
 
-Last measured: **38 mutations, 38 caught, 0 holes.**
+Last measured: **42 mutations, 42 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -244,6 +244,38 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "for locus in sorted(self.loci.values(), key=lambda lo: lo.locus_id)",
      "for locus in self.loci.values()",
      ["test_bugfix_hunt_round13.py"]),
+    # ---- Probes into surface no mutation had ever touched. Eight of the ten
+    # ---- mutations whose verdicts were unverifiable turned out to be holes,
+    # ---- so the modules nothing has ever mutated are where the next ones are.
+    #
+    # services/limitations.py is the product's central promise -- the guide
+    # designer that tells you when it does not know -- and had never been
+    # mutated at all. Demotion rather than deletion: a dropped limitation is
+    # caught by anything that greps for the text, while a CRITICAL quietly
+    # rendered as a warning still appears on every surface in the same words.
+    # Only the severity mark and the ordering change, which is exactly how a
+    # caveat stops being read.
+    ("critical-calibration-warning-demoted",
+     "src/cas13guide/services/limitations.py",
+     'Severity.CRITICAL,\n                "Conformal bounds were calibrated',
+     'Severity.WARNING,\n                "Conformal bounds were calibrated',
+     ["test_caveats_reach_every_surface.py", "test_limitations.py",
+      "test_bugfix_regressions.py"]),
+    ("collateral-warning-goes-to-the-wrong-runs",
+     "src/cas13guide/services/limitations.py",
+     "    if spec.profile.collateral_is_hazard:",
+     "    if not spec.profile.collateral_is_hazard:",
+     ["test_caveats_reach_every_surface.py", "test_limitations.py"]),
+    # services/fasta.py: the header a CSV carries out of the session.
+    ("export-header-drops-the-world", "src/cas13guide/services/fasta.py",
+     'if kind in ("model", "calibration", "search", "transcriptome"):',
+     'if kind in ("model", "calibration", "search"):',
+     ["test_bugfix_hunt_round13.py"]),
+    # pipeline/g_output.py: the exported tables.
+    ("rejection-rows-group-the-survivors", "src/cas13guide/pipeline/g_output.py",
+     "        if a.gate.verdict is not Verdict.FAIL:",
+     "        if a.gate.verdict is Verdict.FAIL:",
+     ["test_bugfix_regressions.py"]),
 ]
 
 

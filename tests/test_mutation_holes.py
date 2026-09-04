@@ -21,6 +21,14 @@ and ``min`` agree; a weight of 1.0, where dropping the weight changes nothing;
 a threshold tested at a value far from the boundary that moved. The tests below
 were written to be *sensitive to the specific change*, which is what the
 screening modules were not.
+
+A ninth came from the first probe into ground the sweep had never touched.
+``services/limitations.py`` -- the module carrying this tool's central promise,
+that it tells you when it does not know -- had never been mutated at all, and
+its most important caveat could be demoted from CRITICAL to WARNING with the
+whole suite green. Every test asserted the text reached its surface; none
+asserted the severity it reached them at. That is the last class here, and the
+reason to keep pointing mutations at modules nothing has mutated yet.
 """
 
 import unittest
@@ -424,6 +432,96 @@ class TestThePanelFloorIsItsBestMember(unittest.TestCase):
         for member in target.members:
             with self.subTest(guide=member.guide_id):
                 self.assertGreaterEqual(target.lower, member.mean)
+
+
+class TestTheCriticalCaveatsStayCritical(unittest.TestCase):
+    """A CRITICAL demoted to a warning still says every word it said before.
+
+    Found by the first probe into ``services/limitations.py``, which nothing
+    had ever mutated -- and which carries the product's central promise: the
+    guide designer that tells you when it does not know. Demoting
+    ``synthetic-calibration`` from CRITICAL to WARNING left the whole suite
+    green. Every test asserted the *text* reached its surface; none asserted
+    what severity it reached them at.
+
+    That is the difference between a caveat a reader must act on and one they
+    may note in passing. "Every interval, and therefore every PASS, is
+    exercisable rather than earned" is not a warning, and the severity mark is
+    the only thing on the page that says so -- it also sets the ordering, so a
+    demotion moves it below the notes a reader is meant to skim past.
+
+    ``test_limitations.py`` already pins the severity of two limitations. These
+    are the rest.
+    """
+
+    #: Every limitation that must reach a reader as CRITICAL. Stated as a set
+    #: rather than one assertion each, so a *promotion* is caught too: a run
+    #: that starts calling an ordinary caveat critical is its own defect, and
+    #: it devalues the mark for the four that have earned it.
+    MUST_BE_CRITICAL = frozenset({
+        "synthetic-calibration",
+        "heuristic-activity-model",
+        "collateral-not-predicted",
+        "search-scope-is-what-you-loaded",
+    })
+
+    def _found(self):
+        from cas13guide.contract.enums import AssayType, Task
+        from cas13guide.services.limitations import limitations_for_run
+        from test_limitations import _Model, _Registry, spec_for
+
+        class MarkedSynthetic:
+            """A calibration that says its data was generated, not measured."""
+
+            synthetic = True
+
+        # The bound is what makes `search-scope-is-what-you-loaded` apply: a
+        # scope caveat is only stated when a search actually ran.
+        return limitations_for_run(
+            spec_for(assay=AssayType.CELL_CULTURE_KNOCKDOWN, task=Task.KNOCKDOWN),
+            registry=_Registry(activity=_Model("model/heuristic-cas13/v1")),
+            calibration=MarkedSynthetic(),
+            bound=exhaustive_bound(4),  # noqa: F405
+        )
+
+    def test_every_caveat_that_must_be_critical_is_critical(self):
+        from cas13guide.services.limitations import Severity
+
+        by_id = {item.id: item for item in self._found()}
+        for identifier in sorted(self.MUST_BE_CRITICAL):
+            with self.subTest(limitation=identifier):
+                if identifier not in by_id:
+                    self.skipTest(f"{identifier} does not apply to this fixture")
+                self.assertIs(by_id[identifier].severity, Severity.CRITICAL)
+
+    def test_the_synthetic_calibration_caveat_specifically(self):
+        """Named on its own because it is the one that was demotable, and the
+        one whose subject is that no PASS on this tool has been earned."""
+        from cas13guide.services.limitations import Severity
+
+        by_id = {item.id: item for item in self._found()}
+        self.assertIn("synthetic-calibration", by_id)
+        self.assertIs(by_id["synthetic-calibration"].severity, Severity.CRITICAL)
+
+    def test_nothing_else_claims_that_severity(self):
+        """The other direction. A mark that everything carries marks nothing."""
+        from cas13guide.services.limitations import Severity
+
+        critical = {item.id for item in self._found()
+                    if item.severity is Severity.CRITICAL}
+        self.assertTrue(critical <= self.MUST_BE_CRITICAL,
+                        f"unexpected CRITICAL: {sorted(critical - self.MUST_BE_CRITICAL)}")
+
+    def test_critical_caveats_sort_ahead_of_the_rest(self):
+        """Severity is not only a label: it orders the list, so a reader who
+        stops after one line has read the one that matters."""
+        from cas13guide.services.limitations import Severity
+
+        found = list(self._found())
+        rank = {Severity.CRITICAL: 0, Severity.WARNING: 1, Severity.INFO: 2}
+        positions = [rank[item.severity] for item in found]
+        self.assertEqual(positions, sorted(positions),
+                         "limitations are not ordered by severity")
 
 
 if __name__ == "__main__":

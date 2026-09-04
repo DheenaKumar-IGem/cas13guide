@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1204 tests, run under `unittest` or `pytest` — both discover the same set —
+1208 tests, run under `unittest` or `pytest` — both discover the same set —
 and 91% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -783,8 +783,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1204 tests
-python examples/verify_mutation_coverage.py              # 38 mutations, 38 caught
+pytest                                                   # 1208 tests
+python examples/verify_mutation_coverage.py              # 42 mutations, 42 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -831,7 +831,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole — Two of the 38 are
+against the **whole** suite before being called a hole — Four of the 42 are
 caught only by the full run, so a screening subset would have reported that many
 holes that are not there. It mutates the LCB/UCB asymmetry, the six named
 metrics, every FAIL branch in the gate, the QC checks, the panel constraints,
@@ -862,6 +862,18 @@ with one element, where `max` and `min` agree; a weight of 1.0, where dropping
 the weight changes nothing; a threshold exercised far from the boundary that
 moved. They are pinned in `tests/test_mutation_holes.py`, each verified to fail
 against the mutation it closes.
+
+Then the obvious next question: if eight of ten unverified verdicts were holes,
+what is in the modules nothing has *ever* mutated? The first probe went into
+`services/limitations.py` — 390 lines carrying this tool's central promise, and
+never mutated once. Its most important caveat, *"Conformal bounds were
+calibrated on SYNTHETIC data. Every interval, and therefore every PASS, is
+exercisable rather than earned"*, could be demoted from CRITICAL to WARNING
+with the whole suite green. Every test asserted the text reached its surface;
+none asserted the severity it reached them at — and severity is not decoration
+here, it also sets the order, so a demotion moves that sentence below the notes
+a reader is meant to skim. That is a ninth hole, now pinned along with the
+other three CRITICAL caveats and the rule that nothing else may claim the mark.
 
 Three smaller repairs came with it. A mutation whose anchor no longer matches is
 now a **failure** rather than a silent skip — `distinct-sites-best-becomes-worst`
