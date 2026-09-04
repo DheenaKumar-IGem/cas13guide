@@ -940,6 +940,16 @@ success and 2 for a usage error; nothing asserted **1**, the status that says
 the run completed and its answer was "no". Both were invisible before, because
 an exit code is only observable through a subprocess.
 
+Three further ways it could misreport were closed without waiting for one to
+bite: a mutation identical to the code it replaces (a guaranteed false *hole*
+rather than a false pass, and nothing checked for it); compiled bytecode copied
+into a tree whose whole purpose is to have its source edited, where Python's
+mtime-and-size invalidation *should* save you and "should" is the word that
+starts every other entry in this list; and a mutation that hangs, which raised
+an unhandled `TimeoutExpired` and ended the sweep, losing every verdict after
+it. A hang is now reported as caught, since an infinite loop is a failure the
+suite would report if it ever finished.
+
 Five ways, then, in which this instrument could say "0 holes" without having
 asked: a red baseline, a missing anchor, an ambiguous anchor, a screening
 module that does not exist, and a subprocess importing the code it was

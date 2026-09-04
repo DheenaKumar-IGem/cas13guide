@@ -400,8 +400,15 @@ def _run(root: Path, modules: list[str] | None) -> tuple[bool, str]:
     # the copy in front for the whole process tree.
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(root / "src")
-    done = subprocess.run(command, cwd=root, env=environment,
-                          capture_output=True, text=True, timeout=3600)
+    try:
+        done = subprocess.run(command, cwd=root, env=environment,
+                              capture_output=True, text=True, timeout=3600)
+    except subprocess.TimeoutExpired:
+        # A mutation that hangs is caught -- an infinite loop is a failure the
+        # suite would report if it ever finished. Reported as such rather than
+        # raised, because an unhandled TimeoutExpired ends the sweep and loses
+        # every verdict after it.
+        return False, "TIMED OUT after 3600s"
     return done.returncode == 0, (done.stdout.strip().splitlines() or [""])[-1]
 
 
@@ -426,7 +433,15 @@ def main() -> int:
             if not source.exists():
                 continue
             if source.is_dir():
-                shutil.copytree(source, root / item)
+                # Not __pycache__. Python invalidates a .pyc on source mtime
+                # and size, and writing a mutation changes the mtime, so a
+                # stale cache should never be used -- but "should" is the word
+                # that starts every entry in this file. Copying compiled
+                # bytecode into a tree whose whole purpose is to have its
+                # source edited is a hazard with no upside, and it makes the
+                # copy slower.
+                shutil.copytree(source, root / item,
+                                ignore=shutil.ignore_patterns("__pycache__"))
             else:
                 shutil.copy2(source, root / item)
 
@@ -492,6 +507,12 @@ def main() -> int:
                 broken.append(f"{name} ({reason})")
                 continue
 
+            if original_code == mutated_code:
+                reason = "the mutation is identical to the code it replaces"
+                print(f"[BROKEN] {name}: {reason}")
+                broken.append(f"{name} ({reason})")
+                continue
+
             occurrences = before.count(original_code)
             if occurrences != 1:
                 reason = ("anchor no longer present -- has the code moved?"
@@ -523,8 +544,9 @@ def main() -> int:
     if broken:
         print()
         print("These mutations did NOT run -- an anchor that no longer")
-        print("identifies exactly one place, or a screening module that is not")
-        print("there. Nothing above is evidence about what they guard:")
+        print("identifies exactly one place, a screening module that is not")
+        print("there, or a mutation identical to the code it replaces.")
+        print("Nothing above is evidence about what they guard:")
         for item in broken:
             print(f"  {item}")
     if holes:
