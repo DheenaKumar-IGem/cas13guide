@@ -147,6 +147,28 @@ def main() -> int:
         (tests_only if name in in_tests else unread).append((name, owners))
 
     print(f"{len(declared)} public fields and properties declared")
+
+    # A scraped inventory can come back empty, and this file's whole result is
+    # a statement about what is *missing* from it: with nothing declared,
+    # nothing is unread, nothing is flagged, and it exits 0 having compared two
+    # empty sets. Same vacuous pass the vocabulary scraper had.
+    #
+    # Anchored on fields that cannot legitimately disappear rather than on a
+    # count, which would need editing every time a field is added. Each of
+    # these is load-bearing enough that its absence means the walk broke, not
+    # that the field went away.
+    load_bearing = {"required_coverage", "worst_off_target", "lower", "upper"}
+    if not declared:
+        print("FAIL: no public fields or properties found at all. The source")
+        print("walk is broken, and an empty inventory reports no dead values")
+        print("because it has nothing to report on.")
+        return 1
+    absent = sorted(load_bearing - set(declared))
+    if absent:
+        print("FAIL: the walk did not find fields that must exist: "
+              + ", ".join(absent))
+        print("Its inventory is of something other than this package.")
+        return 1
     print()
 
     flagged = [(n, o) for n, o in unread if n not in ALLOWED]

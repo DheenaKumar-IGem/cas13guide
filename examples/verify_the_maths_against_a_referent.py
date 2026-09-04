@@ -136,6 +136,26 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
+#: How many cases each generator is built to produce, so an empty or shortened
+#: list cannot pass as agreement.
+#:
+#: The checks below take the largest disagreement over a list and compare it to
+#: a tolerance. Over an *empty* list that maximum is 0.0, which clears any
+#: tolerance -- so a generator that stopped producing cases would report
+#: "largest disagreement 0.00e+00 over 0 exact cases: ok" and this file would
+#: exit 0 having compared nothing. It is the same vacuous pass the vocabulary
+#: scraper had, in different arithmetic.
+#:
+#: Derived rather than observed. For each of 4 values of x the CDF generator
+#: emits 1 uniform + 3 powers in each direction + 1 arcsine = 8, so 32; plus
+#: the binomial identity over 3 values of n x 5 of k x 3 of x = 45. Total 77.
+#: The quantile generator emits the same 8 per value of p over 8 values of p,
+#: so 64. Change a generator and these change with it -- deliberately, so the
+#: change has to be noticed.
+EXPECTED_CDF_CASES = 77
+EXPECTED_QUANTILE_CASES = 64
+
+
 def main() -> int:
     failures: list[str] = []
     rng = random.Random(20260902)
@@ -144,6 +164,9 @@ def main() -> int:
     print()
     print("regularized_incomplete_beta vs closed forms and the binomial identity")
     cases = exact_beta_cdf_cases()
+    if not check(f"the generator produced its {EXPECTED_CDF_CASES} cases",
+                 len(cases) == EXPECTED_CDF_CASES, f"produced {len(cases)}"):
+        failures.append("the incomplete-beta case list is not the one this checks")
     worst, worst_at = 0.0, None
     for (a, b, x), want, label in cases:
         got = regularized_incomplete_beta(a, b, x)
@@ -172,6 +195,9 @@ def main() -> int:
     print()
     print("beta_quantile vs closed-form inverse CDFs")
     cases = exact_beta_quantile_cases()
+    if not check(f"the generator produced its {EXPECTED_QUANTILE_CASES} cases",
+                 len(cases) == EXPECTED_QUANTILE_CASES, f"produced {len(cases)}"):
+        failures.append("the quantile case list is not the one this checks")
     worst, worst_at = 0.0, None
     for (a, b, p), want, label in cases:
         got = beta_quantile(a, b, p)
