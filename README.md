@@ -162,11 +162,11 @@ ranks 1, 2 and 3 differed by one nucleotide each:
 #  3 start= 209  AACGAGAUAAAUGGGUCGAGAGUUCGUG
 ```
 
-Those three share 27 of 28 target bases, the same local structure and the same
-accessibility. They succeed or fail together. Ordering that list buys one
-experiment ten times while looking, on screen, like ten independent candidates —
-and it makes "test several candidates" impossible to follow from the list the
-tool hands you.
+Those three share 26 of 28 target bases (27 for a neighbouring pair), the same
+local structure and the same accessibility. They succeed or fail together.
+Ordering that list buys one experiment ten times while looking, on screen, like
+ten independent candidates — and it makes "test several candidates" impossible
+to follow from the list the tool hands you.
 
 So each ranked guide is marked `distinct_site`: is it the best-ranked
 representative of a site not already listed above it? The CLI and the report

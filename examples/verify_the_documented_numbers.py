@@ -269,6 +269,18 @@ def vocabulary_size() -> int:
     return len(ReasonCode) + len(limitations) + len(QCFlag) + len(ReviewTier)
 
 
+def longest_shared_run(sequences: list[str]) -> int:
+    """The longest stretch of target every one of ``sequences`` covers."""
+    first, rest = sequences[0], sequences[1:]
+    best = 0
+    for start in range(len(first)):
+        for stop in range(start + 1, len(first) + 1):
+            run = first[start:stop]
+            if len(run) > best and all(run in other for other in rest):
+                best = len(run)
+    return best
+
+
 def quoted_tool_messages() -> list[tuple[str, str, str]]:
     """``(label, what the README says, what the package says)``."""
     from cas13guide.contract.enums import Effector
@@ -572,6 +584,59 @@ def main() -> int:
                          bool(gc_shown) and abs(float(gc_shown) - gc_real) < 5e-5,
                          f"page says {gc_shown!r}, spacer gives {gc_real:.4f}"):
                 failures.append("the page's GC does not match the page's spacer")
+
+    # ---- 10. the near-duplicate windows overlap by what it says ----------
+    print()
+    print("the three near-duplicate windows the ranking section prints")
+    text = README.read_text(encoding="utf-8")
+    windows = re.findall(r"^#\s+\d+\s+start=\s*\d+\s+([ACGU]+)\s*$", text, re.M)
+    claim = re.search(r"share (\d+) of (\d+) target bases "
+                      r"\((\d+) for a neighbouring pair\)", text)
+    if not check("the block still prints three of them", len(windows) == 3,
+                 f"found {len(windows)}"):
+        failures.append("the near-duplicate window block changed shape")
+    elif not check("and the sentence still states the overlap", bool(claim),
+                   "no 'share N of M target bases (K for a neighbouring pair)'"):
+        failures.append("the overlap sentence changed shape")
+    else:
+        assert claim is not None
+        shared, width, pairwise = (int(g) for g in claim.groups())
+        if not check(f"each window is {width} nt",
+                     all(len(w) == width for w in windows),
+                     f"lengths {[len(w) for w in windows]}"):
+            failures.append("the stated spacer width is not the width shown")
+        common = longest_shared_run(windows)
+        if not check(f"all three share {shared} of {width}", common == shared,
+                     f"they actually share {common}"):
+            failures.append("the three-way window overlap is misstated")
+        neighbours = min(longest_shared_run(windows[i:i + 2]) for i in range(2))
+        if not check(f"a neighbouring pair shares {pairwise}",
+                     neighbours == pairwise,
+                     f"a neighbouring pair actually shares {neighbours}"):
+            failures.append("the pairwise window overlap is misstated")
+
+    # ---- 11. the canonical spacer lengths it quotes ----------------------
+    print()
+    print("the canonical spacer lengths the domain section quotes")
+    from cas13guide.contract.effectors import EFFECTORS
+    from cas13guide.contract.enums import Effector
+
+    quoted = re.search(r"RfxCas13d's\s+([\d/]+) for LwaCas13a and "
+                       r"LwaCas13a's\s+(\d+) for RfxCas13d", text)
+    if not check("the sentence still names both sets", bool(quoted),
+                 "the out-of-domain sentence changed shape"):
+        failures.append("the quoted canonical lengths changed shape")
+    else:
+        assert quoted is not None
+        for label, effector, stated in (
+            ("RfxCas13d", Effector.RFX_CAS13D,
+             sorted(int(n) for n in quoted.group(1).split("/"))),
+            ("LwaCas13a", Effector.LWA_CAS13A, [int(quoted.group(2))]),
+        ):
+            real = sorted(EFFECTORS[effector].spacer_lengths)
+            if not check(f"{label}'s canonical set is {real}", stated == real,
+                         f"README says {stated}"):
+                failures.append(f"the quoted canonical lengths for {label} are stale")
 
     print()
     if failures:
