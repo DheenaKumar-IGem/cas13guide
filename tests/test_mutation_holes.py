@@ -1138,5 +1138,72 @@ class TestTheOffTargetTableShowsTheWorstHits(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["hazard"], expected, places=9)
 
 
+class TestAWhitespacePasteIsNoSequence(unittest.TestCase):
+    """The twentieth hole, at the door a browser user comes in through.
+
+    ``_read_records`` tries the input doors in order, and each text door is
+    guarded with ``.strip()`` so that a box containing only spaces or newlines
+    counts as empty and falls through to::
+
+        No sequence supplied. Paste a sequence, upload a FASTA file, or pick a
+        built-in target.
+
+    Without the guard the whitespace is treated as supplied input, and the
+    reader gets a parse failure about a sequence they did not knowingly give.
+    That is the difference between an error naming what to do next and one
+    naming a symptom -- the distinction this package makes everywhere else, in
+    the one place a user is most likely to arrive by accident.
+
+    Both doors are checked, because they are guarded separately and a fix to
+    one has already been forgotten in the other elsewhere in this codebase.
+    """
+
+    WHITESPACE = ("   ", chr(10) + chr(9) + " ", "", chr(10) * 3)
+
+    def _error(self, **fields):
+        from cas13guide.services.workflow import (
+            DesignRequest,
+            DesignRequestError,
+            run_request,
+        )
+
+        try:
+            run_request(DesignRequest(task="knockdown",
+                                      assay="cell_culture_knockdown",
+                                      use_signal=False, **fields))
+        except DesignRequestError as exc:
+            return str(exc)
+        except Exception as exc:  # noqa: BLE001 - the point is which type
+            return f"{type(exc).__name__}: {exc}"
+        return ""
+
+    def test_a_whitespace_paste_says_no_sequence_was_supplied(self):
+        for text in self.WHITESPACE:
+            with self.subTest(text=repr(text)):
+                self.assertIn("No sequence supplied", self._error(sequence_text=text))
+
+    def test_the_same_for_a_whitespace_fasta_box(self):
+        """The upload-as-text door, guarded separately."""
+        for text in self.WHITESPACE:
+            with self.subTest(text=repr(text)):
+                self.assertIn("No sequence supplied", self._error(fasta_text=text))
+
+    def test_the_message_says_what_to_do_next(self):
+        """A refusal a user cannot act on is worse than the wrong answer --
+        this package's own words, in `services/ingest.py`."""
+        message = self._error(sequence_text="   ")
+        self.assertIn("Paste a sequence", message)
+        self.assertIn("upload a FASTA file", message)
+        self.assertIn("built-in target", message)
+
+    def test_a_real_sequence_still_gets_through(self):
+        """The guard must not swallow input that only looks empty."""
+        target = (
+            "GGACAUCGAAUCGCGGAACUUGGCAUCAAGCUAGCUAGGCAUCGAUCGAUCAGCUAGCAUCGAUCGGAUCC"
+            "AUGGAUUCCAGGCACUUCUCGAUCAUAGGACUCGGUAAUGCCAUGAGUCGAUGGACUUCAGUGCCAUCGAU"
+        )
+        self.assertEqual(self._error(sequence_text=f"  {target}  "), "")
+
+
 if __name__ == "__main__":
     unittest.main()

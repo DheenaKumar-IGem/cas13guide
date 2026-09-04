@@ -771,7 +771,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1237 tests, run under `unittest` or `pytest` — both discover the same set —
+1241 tests, run under `unittest` or `pytest` — both discover the same set —
 and 91% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -783,8 +783,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1237 tests
-python examples/verify_mutation_coverage.py              # 68 mutations, 68 caught
+pytest                                                   # 1241 tests
+python examples/verify_mutation_coverage.py              # 70 mutations, 70 caught
 python examples/verify_vocabulary_coverage.py            # 52 of 52 things it can say
 python examples/measure_coverage.py                      # 91% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -831,7 +831,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 68 are
+against the **whole** suite before being called a hole. None of the 70 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -959,6 +959,15 @@ redundancy is verified rather than assumed. A probe into `features.py` turned
 out to be the same shape with no such payoff — its guard only matters at a
 spacer length of 1, and the contract admits 22 to 30 — so that one was removed
 and the reasoning left in its place.
+
+A twentieth sits at the door a browser user is most likely to arrive at by
+accident. Each text input door is guarded with `.strip()`, so a box containing
+only spaces or newlines counts as empty and falls through to *"No sequence
+supplied. Paste a sequence, upload a FASTA file, or pick a built-in target"*.
+Without the guard the whitespace is treated as input and the reader gets a parse
+failure about a sequence they did not knowingly give — an error naming a symptom
+instead of naming what to do next, which is the distinction this package draws
+everywhere else.
 
 An eighteenth and nineteenth came once the sweep was fast enough to be worth
 running often — five minutes rather than thirty — and both are in the off-target

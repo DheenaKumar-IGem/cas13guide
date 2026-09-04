@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1237 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 68 are
+  survives is re-run against all 1241 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. None of the 70 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **68 mutations, 68 caught, 0 holes.**
+Last measured: **70 mutations, 70 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -530,6 +530,28 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "    scored.sort(key=lambda row: row[0], reverse=True)",
      "    scored.sort(key=lambda row: row[0])",
      ["test_decision_order.py", "test_gate.py"]),
+    # pipeline/orchestrator.py: the search-escalation budget. Every loop here
+    # carries one, and on exhaustion the run returns its best partial answer
+    # with an explicit shortfall reason rather than spinning. Moving the
+    # boundary by one lets a run take an escalation it was budgeted to refuse,
+    # so the shortfall it should have recorded is never recorded -- and a
+    # partial answer that does not say it is partial is the failure the budget
+    # exists to make visible.
+    ("orchestrator-takes-one-escalation-past-its-budget",
+     "src/cas13guide/pipeline/orchestrator.py",
+     "            if telemetry.search_escalations < spec.budget.max_search_escalations:",
+     "            if telemetry.search_escalations <= spec.budget.max_search_escalations:",
+     ["test_orchestrator.py", "test_subcommands_end_to_end.py", "test_bugfix_regressions.py", "test_gate.py"]),
+    # services/workflow.py: a pasted sequence that is only whitespace. The
+    # guard makes it fall through to "No sequence supplied. Paste a sequence,
+    # upload a FASTA file, or pick a built-in target" -- an error a user can
+    # act on. Without it the whitespace is treated as input and the reader gets
+    # a parse failure about a sequence they did not knowingly supply.
+    ("workflow-treats-whitespace-as-a-pasted-sequence",
+     "src/cas13guide/services/workflow.py",
+     "    if request.sequence_text and request.sequence_text.strip():",
+     "    if request.sequence_text is not None:",
+     ["test_mutation_holes.py", "test_the_input_doors_agree.py", "test_webapp.py", "test_subcommands_end_to_end.py"]),
     # services/benchmark.py: the same all([]) hazard as the acceptance gate,
     # on the property both the `check` CI gate and the "conformal coverage"
     # acceptance criterion read. Found by grepping the package for every all()
