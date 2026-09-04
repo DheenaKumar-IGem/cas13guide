@@ -94,6 +94,15 @@ class TestTheMutationCountIsStatedConsistently(unittest.TestCase):
     claims more caught than the sweep carries.
     """
 
+    def test_no_source_has_dropped_out_of_the_comparison(self):
+        """Pinned like the test count and the flip rate. A document reworded
+        past its regex would otherwise leave the comparison silently, and the
+        check would agree with whatever remained -- vacuous agreement being the
+        failure this whole file exists to stop, applied to itself."""
+        self.assertEqual(len(documents.stated_mutation_counts()),
+                         documents.EXPECTED_MUTATION_SOURCES,
+                         sorted(documents.stated_mutation_counts()))
+
     def test_every_stated_total_is_the_size_of_the_set(self):
         size = documents.mutation_set_size()
         stated = documents.stated_mutation_counts()

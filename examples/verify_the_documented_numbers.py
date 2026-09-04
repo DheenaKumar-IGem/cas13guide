@@ -127,6 +127,11 @@ FLIP_RATE_PATTERN = re.compile(
 SUPERSEDED_REPEAT = "CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU"
 
 
+#: How many places state the size of the mutation set. Pinned so a document
+#: cannot drop out of the comparison by being reworded past its regex.
+EXPECTED_MUTATION_SOURCES = 8
+
+
 def mutation_set_size() -> int:
     """How many mutations the sweep actually carries, from the sweep itself."""
     sys.path.insert(0, str(ROOT / "examples"))
@@ -180,13 +185,26 @@ def stated_mutation_counts() -> dict[str, int]:
 
 
 def stated_flip_rates() -> dict[str, float]:
-    """Every place that states how often the wrong repeat moved a verdict."""
+    """Every place that states how often the wrong repeat moved a verdict.
+
+    One value per file, and a file that states it twice differently is itself
+    a disagreement -- so those are surfaced rather than overwritten. Keeping
+    only the last match would have hidden exactly the drift this checks for,
+    inside a single document.
+    """
     found: dict[str, float] = {}
     for rel in FLIP_RATE_SOURCES:
         raw = (ROOT / rel).read_text(encoding="utf-8")
         raw = re.sub(r"(?m)^\s*>\s?", " ", raw)          # markdown blockquotes
-        for value in FLIP_RATE_PATTERN.findall(" ".join(raw.split())):
-            found[rel] = float(value)
+        values = {float(v) for v in FLIP_RATE_PATTERN.findall(" ".join(raw.split()))}
+        if len(values) == 1:
+            found[rel] = values.pop()
+        elif values:
+            # Deliberately not a single number: the caller compares the values
+            # across sources, and a file at odds with itself must not be able
+            # to look like agreement.
+            found[f"{rel} (states {len(values)} different figures)"] = min(values)
+            found[f"{rel} (and)"] = max(values)
     return found
 
 
@@ -374,6 +392,14 @@ def main() -> int:
     stated_mutations = stated_mutation_counts()
     for where, value in sorted(stated_mutations.items()):
         print(f"          {where}: {value}")
+    # Pinned, like the test-count and flip-rate checks: a reworded document
+    # whose regex stops matching would otherwise drop out silently and the
+    # check would pass on whatever remained. Vacuous agreement is the failure
+    # mode this whole file exists to stop, and it applies to the file itself.
+    if not check(f"all {EXPECTED_MUTATION_SOURCES} sources still state it",
+                 len(stated_mutations) == EXPECTED_MUTATION_SOURCES,
+                 f"found {len(stated_mutations)}: {sorted(stated_mutations)}"):
+        failures.append("a document stopped stating the mutation count")
     totals = {k: v for k, v in stated_mutations.items() if "caught" not in k}
     if not check(f"every stated total is the set's size ({size})",
                  bool(totals) and set(totals.values()) == {size},

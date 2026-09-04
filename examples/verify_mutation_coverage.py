@@ -22,7 +22,7 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1219 tests before being called a hole. So a
+  survives is re-run against all 1220 tests before being called a hole. So a
   "hole" is never an artefact of which modules were chosen. Four of the 53 are
   caught *only* by the full suite, which is why that second stage is not
   optional.
