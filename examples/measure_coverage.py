@@ -128,7 +128,61 @@ def main(argv: list[str]) -> int:
     if run.returncode != 0:
         print("\nNote: the suite itself did not pass, so the figure is provisional.")
         return run.returncode
+
+    # The README states this figure three times, and it drifted: coverage rose
+    # to 92% while the prose still said 91%, and cli.py reached 94% while the
+    # sentence explaining subprocess tracing still said 90%. Every other
+    # documented number is held to the package by
+    # verify_the_documented_numbers.py, but that instrument runs in seconds and
+    # this measurement costs a whole traced suite run -- so the check belongs
+    # here, where the measurement has already happened and comparing costs
+    # nothing.
+    stale = readme_disagreements(total, measured_cli(report.stdout))
+    if stale:
+        print()
+        print("The README states a coverage figure this run does not produce:")
+        for item in stale:
+            print("    " + item)
+        print("Update the prose, or find out why the number moved.")
+        return 1
     return 0
+
+
+def measured_cli(report: str) -> int | None:
+    """``cli.py``'s traced percentage, which the prose quotes on its own."""
+    for line in report.splitlines():
+        if "cli.py" in line and line.rstrip().endswith("%"):
+            return int(line.split()[-1].rstrip("%"))
+    return None
+
+
+def readme_disagreements(total: str, cli: int | None) -> list[str]:
+    """Every coverage figure the README states, against what just ran."""
+    import re
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    digits = "(" + chr(92) + "d+)"
+    whole = total.rstrip("%")
+    stale = []
+    for label, pattern, actual in (
+        ("the prose total", "and " + digits + "% line coverage", whole),
+        ("the command comment",
+         "measure_coverage" + chr(92) + ".py" + chr(92) + "s+#" + chr(92)
+         + "s*" + digits + "% lines", whole),
+        ("the section heading",
+         chr(92) + "*" + chr(92) + "*Coverage is " + digits + "%", whole),
+        ("the traced cli.py figure", "traced, it is " + digits + "%",
+         str(cli) if cli is not None else None),
+    ):
+        found = re.search(pattern, readme)
+        if not found:
+            stale.append(label + ": the sentence stating it is gone")
+        elif actual is None:
+            stale.append(label + ": this run did not measure it")
+        elif found.group(1) != actual:
+            stale.append(f"{label}: README says {found.group(1)}%, "
+                         f"this run measured {actual}%")
+    return stale
 
 
 if __name__ == "__main__":
