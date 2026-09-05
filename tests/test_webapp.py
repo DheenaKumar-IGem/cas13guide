@@ -327,6 +327,70 @@ class TestErrorsAreLegibleNotTracebacks(ServerTestCase):
         self.assertIn("&lt;script&gt;", body)
 
 
+class TestBadRequestsGetAnAnswerNotATraceback(ServerTestCase):
+    """Error paths on the door aimed at people who will not use a command
+    line. None of them had ever executed.
+
+    Each is the difference between a message and a stack trace. A browser or
+    a script gets these wrong routinely -- a stale bookmark, a client posting
+    a form the ordinary urlencoded way, a part sent without a name -- and this
+    is the surface where a traceback is least recoverable, because the person
+    reading it did not choose a terminal.
+    """
+
+    CRLF = chr(13) + chr(10)
+
+    def test_a_post_to_the_wrong_path_is_a_404_with_a_page(self):
+        status, _headers, body = self.request(
+            "POST", "/desgin", body=b"", headers={"Content-Length": "0"})
+        self.assertEqual(status, 404)
+        self.assertIn("Not found.", body)
+        self.assertNotIn("Traceback", body)
+
+    def test_a_query_string_does_not_change_the_route(self):
+        """`/design?utm=1` is still the design endpoint, not a 404."""
+        status, _headers, body = self.request(
+            "POST", "/design?utm=1", body=b"",
+            headers={"Content-Length": "0",
+                     "Content-Type": "multipart/form-data; boundary=zz"})
+        self.assertNotEqual(status, 404, body[:200])
+
+    def test_a_body_that_is_not_multipart_is_refused_legibly(self):
+        """An ordinary urlencoded post carries no field this parser reads, so
+        the run has no sequence -- and has to say so rather than raise."""
+        body = b"sequence=ACGUACGUACGUACGUACGUACGU"
+        status, _headers, page = self.request(
+            "POST", "/design", body=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded",
+                     "Content-Length": str(len(body))})
+        self.assertNotIn("Traceback", page)
+        self.assertIn("sequence", page.lower())
+
+    def test_a_part_without_a_name_is_skipped_not_fatal(self):
+        """`get_param` returns nothing for a part with no name, and the field
+        dict must not gain a `None` key that nothing downstream looks up."""
+        boundary = "----zzz"
+        eol = self.CRLF
+        body = (
+            "--" + boundary + eol
+            + "Content-Disposition: form-data" + eol + eol
+            + "orphan" + eol
+            + "--" + boundary + eol
+            + 'Content-Disposition: form-data; name="sequence"' + eol + eol
+            + "ACGU" + eol
+            + "--" + boundary + "--" + eol
+        ).encode()
+        fields = _parse_multipart(
+            body, "multipart/form-data; boundary=" + boundary)
+        # The exact key set, not `assertNotIn(None, ...)`: without the guard
+        # the name falls through to `str(raw_name)`, which is the *string*
+        # "None" rather than the object, so checking for the object passes
+        # against the very code this test exists to reject. The sweep caught
+        # that, on a test written minutes earlier.
+        self.assertEqual(set(fields), {"sequence"})
+        self.assertEqual(fields["sequence"], "ACGU")
+
+
 class TestMultipartParsing(unittest.TestCase):
     """``cgi`` was removed in 3.13, so this uses ``email``; pin the behaviour."""
 
