@@ -283,6 +283,11 @@ def load_screen(
             dropped_activity += 1
             continue
         if math.isnan(value) or math.isinf(value):
+            # `float("nan")` and `float("inf")` both parse, so these reach here
+            # as numbers. A NaN would poison what it touches quietly --
+            # comparisons against it are all False, so it survives sorting,
+            # quantiles and coverage checks without ever looking wrong -- and
+            # this is the data every conformal bound is calibrated on.
             dropped_activity += 1
             continue
 
@@ -308,7 +313,8 @@ def load_screen(
         )
     if dropped_activity:
         report.warnings.append(
-            f"dropped {dropped_activity} row(s) with missing or non-numeric activity"
+            f"dropped {dropped_activity} row(s) whose activity is missing, "
+            "non-numeric, or not a finite number"
         )
     if dropped_group:
         report.warnings.append(

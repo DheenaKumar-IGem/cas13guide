@@ -233,7 +233,13 @@ class TestWarnings(ScreenFileTestCase):
         path = self.write("nan.csv", rows, ["spacer", "activity", "transcript"])
         examples, report = load_screen(path)
         self.assertEqual(len(examples), len(self.examples))
-        self.assertIn("non-numeric activity", " ".join(report.warnings))
+        # The wording widened when `nan` turned out to reach this branch as a
+        # perfectly good float: "non-numeric" is the wrong description of a
+        # value that parses. Both of this test's cases -- an empty cell and
+        # "notanumber" -- are still non-numeric, and still say so.
+        warnings = " ".join(report.warnings)
+        self.assertIn("non-numeric", warnings)
+        self.assertIn("activity", warnings)
 
     def test_mixed_spacer_lengths_keeps_the_dominant_design(self):
         rows = [[e.spacer, e.observed_activity, e.group] for e in self.examples]
@@ -290,6 +296,90 @@ class TestContradictoryOptionsAreRefused(ScreenFileTestCase):
         _, depletion = load_screen(path, columns=ColumnMap(higher_is_better=False))
         self.assertTrue(normalized.ok, normalized.summary())
         self.assertTrue(depletion.ok, depletion.summary())
+
+
+class TestANumberThatIsNotAMeasurement(ScreenFileTestCase):
+    """`nan` and `inf` parse as floats and are not activities.
+
+    `float("nan")` succeeds, so these arrive as numbers and the guard that
+    drops them is the only thing keeping them out of the calibration set. It
+    had never executed in the whole suite.
+
+    A NaN is the dangerous one because it fails quietly: every comparison
+    against it is False, so it survives sorting, quantile selection and the
+    coverage check without ever looking wrong -- in the data every conformal
+    bound in this package is calibrated on.
+    """
+
+    def rows_with(self, value):
+        rows = [[e.spacer, e.observed_activity, e.group] for e in self.examples]
+        rows[0][1] = value
+        return self.write("odd.csv", rows, ["spacer", "activity", "transcript"])
+
+    def test_a_nan_activity_is_dropped(self):
+        examples, report = load_screen(self.rows_with("nan"))
+        self.assertEqual(len(examples), len(self.examples) - 1)
+
+    def test_an_infinite_activity_is_dropped(self):
+        for text in ("inf", "-inf", "Infinity"):
+            with self.subTest(value=text):
+                examples, _ = load_screen(self.rows_with(text))
+                self.assertEqual(len(examples), len(self.examples) - 1)
+
+    def test_the_reason_says_which_column_to_look_at(self):
+        """This module's whole job is saying precisely why a screen cannot be
+        used, and "non-numeric" is the wrong description of `nan`: it parses
+        as a float perfectly well."""
+        _, report = load_screen(self.rows_with("nan"))
+        summary = report.summary()
+        self.assertIn("activity", summary)
+        self.assertIn("finite", summary)
+
+    def test_the_rest_of_the_screen_still_loads(self):
+        """One unusable row is not an unusable screen."""
+        _, report = load_screen(self.rows_with("nan"))
+        self.assertTrue(report.ok, report.summary())
+
+
+class TestATargetSiteMustMatchItsSpacer(ScreenFileTestCase):
+    """A site of a different length is not that spacer's site.
+
+    Dropped as a *sequence* failure rather than an activity one, which is the
+    distinction this module draws so a user fixes the column that is actually
+    wrong. Never exercised.
+    """
+
+    def test_a_site_of_the_wrong_length_is_dropped(self):
+        rows = [[e.spacer, e.target_site, e.observed_activity, e.group]
+                for e in self.examples]
+        rows[0][1] = rows[0][1][:-3]
+        path = self.write(
+            "sites.csv", rows, ["spacer", "site", "activity", "transcript"])
+        examples, report = load_screen(
+            path, columns=ColumnMap(spacer="spacer", target_site="site",
+                                    activity="activity", group="transcript"))
+        self.assertEqual(len(examples), len(self.examples) - 1)
+        self.assertIn("sequence", report.summary())
+
+
+class TestRankingDegenerateScreens(ScreenFileTestCase):
+    """`_rank_normalize` on nothing, and on one thing.
+
+    A single observation has no rank information, so it gets the middle of the
+    scale rather than 0.0 or 1.0 -- either of which would assert an extreme
+    the screen cannot support. Neither branch had run.
+    """
+
+    def test_no_values_rank_to_nothing(self):
+        from cas13guide.services.ingest import _rank_normalize
+
+        self.assertEqual(_rank_normalize([], higher_is_better=True), [])
+
+    def test_one_value_ranks_to_the_middle(self):
+        from cas13guide.services.ingest import _rank_normalize
+
+        self.assertEqual(_rank_normalize([7.5], higher_is_better=True), [0.5])
+        self.assertEqual(_rank_normalize([7.5], higher_is_better=False), [0.5])
 
 
 if __name__ == "__main__":
