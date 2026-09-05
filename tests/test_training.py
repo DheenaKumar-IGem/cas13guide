@@ -120,6 +120,63 @@ class TestGroupedSplitting(unittest.TestCase):
             self.assertTrue(part, "no split may be empty")
 
 
+class TestTheSplitHoldsAtItsSmallestLegalSize(unittest.TestCase):
+    """Three groups is where the split arithmetic actually has to work.
+
+    `test_three_way_split_is_disjoint_by_group` already asserts that no split
+    is empty, on twenty groups -- where it is true however the rounding falls.
+    The rebalance that makes it true is only reached at the boundary, and
+    branch coverage says that branch had never run.
+
+    At three groups with the default (0.6, 0.2, 0.2), the raw arithmetic gives
+    train=2 and cal=1, leaving *nothing* for test. Conformal coverage would
+    then be measured on an empty held-out set -- which is the vacuous pass
+    this package has found in three other places: a check that reports success
+    because it compared nothing.
+    """
+
+    def test_three_groups_still_fill_all_three_splits(self):
+        groups = [f"T{i // 4}" for i in range(12)]
+        self.assertEqual(len(set(groups)), 3, "fixture sanity")
+        train, cal, test = three_way_group_split(groups, seed=1)
+        for name, part in (("train", train), ("cal", cal), ("test", test)):
+            with self.subTest(split=name):
+                self.assertTrue(part, f"{name} split is empty at three groups")
+
+    def test_each_split_gets_a_whole_group_and_they_do_not_overlap(self):
+        groups = [f"T{i // 4}" for i in range(12)]
+        train, cal, test = three_way_group_split(groups, seed=1)
+        gt, gc, gs = ({groups[i] for i in part} for part in (train, cal, test))
+        self.assertEqual(gt & gc, set())
+        self.assertEqual(gt & gs, set())
+        self.assertEqual(gc & gs, set())
+        self.assertEqual(len(gt | gc | gs), 3)
+
+    def test_four_groups_too(self):
+        """The rebalance must not overshoot the moment there is room."""
+        groups = [f"T{i // 3}" for i in range(12)]
+        self.assertEqual(len(set(groups)), 4, "fixture sanity")
+        train, cal, test = three_way_group_split(groups, seed=1)
+        for part in (train, cal, test):
+            self.assertTrue(part)
+
+    def test_two_groups_are_refused_rather_than_split_into_nothing(self):
+        with self.assertRaises(ValueError) as caught:
+            three_way_group_split(["A", "A", "B"], seed=1)
+        self.assertIn("three groups", str(caught.exception))
+
+
+class TestFittingRefusesAnEmptyScreen(unittest.TestCase):
+    """`fit_model([])` raises rather than returning a model of nothing."""
+
+    def test_no_examples_is_a_refusal(self):
+        from cas13guide.services.training import fit_model
+
+        with self.assertRaises(ValueError) as caught:
+            fit_model([])
+        self.assertIn("no examples", str(caught.exception))
+
+
 class TestSplittingBiasIsMeasuredNotAssumed(unittest.TestCase):
     """The ungrouped-split bias is regime-dependent; pin both regimes."""
 

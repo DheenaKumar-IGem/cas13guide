@@ -106,7 +106,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1370 tests
+python -m unittest discover -s tests -t tests    # 1375 tests
 pytest                              # same suite under pytest
 ```
 
@@ -844,7 +844,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1370 tests, run under `unittest` or `pytest` — both discover the same set —
+1375 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -856,8 +856,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1370 tests
-python examples/verify_mutation_coverage.py              # 114 mutations, 114 caught
+pytest                                                   # 1375 tests
+python examples/verify_mutation_coverage.py              # 115 mutations, 115 caught
 python examples/verify_vocabulary_coverage.py            # 55 of 55 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -911,7 +911,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 114 are
+against the **whole** suite before being called a hole. None of the 115 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
