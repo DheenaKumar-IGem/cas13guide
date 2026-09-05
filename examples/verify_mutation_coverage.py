@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 122 are
+  "hole" is never an artefact of which modules were chosen. None of the 123 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **122 mutations, 122 caught, 0 holes.**
+Last measured: **123 mutations, 123 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -939,6 +939,13 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         "        if self.in_range(low, high):",
         "        if False:",
         ["test_structure_and_signal.py"],
+    ),
+    (
+        "the-seed-heuristic-returns-sites-past-its-envelope",
+        "src/cas13guide/services/indexes.py",
+        "                if profile.n_mismatch > max_mismatches:",
+        "                if False:",
+        ["test_search.py"],
     ),
 ]
 
