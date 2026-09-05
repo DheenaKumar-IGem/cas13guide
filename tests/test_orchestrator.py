@@ -313,5 +313,81 @@ class TestUniverseGateEndToEnd(unittest.TestCase):
         self.assertEqual(report.verdict_counts["PASS"], 0)
 
 
+class TestTheWeakestBoundAcrossContextsIsTheOneReported(unittest.TestCase):
+    """A variant searched with a weaker index drags the guarantee down.
+
+    `run_design` folds bounds across contexts with `is_weaker`, and that
+    branch had never executed: every fixture gave every context the same
+    exhaustive scanner, so the fold could not do anything.
+
+    It is the "suspiciously clean" shape in its purest form. The reported
+    bound is what `SEARCH_NOT_EXHAUSTIVE` reads, so without the fold a run
+    whose haplotype was searched by a seed heuristic would report the
+    reference's `exhaustive=True` and claim a guarantee no context actually
+    provides. `is_weaker` lives in `indexes.py` precisely because two stages
+    fold bounds and "weakest wins" has to mean the same thing in both.
+    """
+
+    def _contexts(self, world, weak_variant: bool):
+        from cas13guide.services.indexes import SeedHeuristicIndex
+
+        universes = FULL_UNIVERSES
+        reference = DesignContext(
+            "reference", world, ExhaustiveScanIndex(world, universes),
+            {"L_T1": "t1"},
+        )
+        variant_index = (
+            SeedHeuristicIndex(world, universes) if weak_variant
+            else ExhaustiveScanIndex(world, universes)
+        )
+        variant = DesignContext(
+            "hap2", world, variant_index, {"L_T1": "t1"},
+        )
+        return [reference, variant]
+
+    def _run(self, contexts):
+        spec = make_spec()
+        return run_design(
+            spec, contexts,
+            ModelRegistry(HeuristicCas13Model(), NullAccessibilityModel()),
+            seeded_calibration(spec),
+            panel_size=2, initial_step=1,
+        )
+
+    def test_the_two_indexes_really_do_differ(self):
+        """Or the fold has nothing to choose between and proves nothing."""
+        from cas13guide.services.indexes import SeedHeuristicIndex
+
+        w = world(include_target=True)
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
+        strong = ExhaustiveScanIndex(w, FULL_UNIVERSES).search("g", spacer, 4)
+        weak = SeedHeuristicIndex(w, FULL_UNIVERSES).search("g", spacer, 4)
+        self.assertTrue(strong.bound.exhaustive)
+        self.assertFalse(weak.bound.exhaustive)
+
+    def test_a_heuristic_variant_makes_the_run_report_a_heuristic_search(self):
+        w = world(include_target=True)
+        both_exhaustive = self._run(self._contexts(w, weak_variant=False))
+        self.assertTrue(both_exhaustive.search_bound.exhaustive, "fixture sanity")
+
+        mixed = self._run(self._contexts(w, weak_variant=True))
+        self.assertFalse(
+            mixed.search_bound.exhaustive,
+            "a context searched by a seed heuristic left the run claiming an "
+            "exhaustive search",
+        )
+
+    def test_and_the_gate_sees_it(self):
+        """The bound is not decoration: it is what SEARCH_NOT_EXHAUSTIVE reads."""
+        w = world(include_target=True)
+        mixed = self._run(self._contexts(w, weak_variant=True))
+        reasons = {
+            reason
+            for row in mixed.to_dict()["ranked"]
+            for reason in row.get("reasons", ())
+        }
+        self.assertIn("search_not_exhaustive", reasons)
+
+
 if __name__ == "__main__":
     unittest.main()
