@@ -32,6 +32,7 @@ reason to keep pointing mutations at modules nothing has mutated yet.
 """
 
 import random
+import pathlib
 import unittest
 
 from helpers import *  # noqa: F401,F403
@@ -1314,6 +1315,82 @@ class TestADisfavouredPfsCostsWhatItSaysItCosts(unittest.TestCase):
         for flank in (None, "N"):
             with self.subTest(flank=flank):
                 self.assertEqual(self._policy().preference(None, flank), 1.0)
+
+
+class TestEveryMutationStillHasSomethingToMutate(unittest.TestCase):
+    """An anchor that no longer matches is a mutation that proves nothing.
+
+    The sweep applies each mutation by exact string replacement. When the code
+    it names is edited, the anchor stops matching and that mutation silently
+    stops being evidence -- it is not caught and it is not a hole, it simply
+    does not run. The instrument reports this at the end ("anchor no longer
+    present -- has the code moved?") and is careful to say "Nothing above is
+    evidence about what they guard", but only after a full sweep, and the
+    documents in the meantime say "N mutations, N caught".
+
+    That happened: rewriting the universe gate and the background loop left
+    two anchors stale, so 104 were listed and 102 applied while README and the
+    landing page both claimed 104 caught.
+
+    It is the same shape as the defect this whole module exists for -- the
+    sweep once could not report a hole at all, so "0 survived" was true by
+    construction rather than by measurement. An unmatched anchor is that in
+    miniature, one mutation at a time, and it is checkable in milliseconds
+    instead of at the end of a long run.
+    """
+
+    @staticmethod
+    def _mutations():
+        import sys
+
+        root = pathlib.Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(root / "examples"))
+        import verify_mutation_coverage
+
+        return verify_mutation_coverage.MUTATIONS
+
+    def test_every_anchor_appears_exactly_once_in_the_tree(self):
+        root = pathlib.Path(__file__).resolve().parent.parent
+        for name, relative, old, _new, _tests in self._mutations():
+            with self.subTest(mutation=name):
+                source = (root / relative).read_text(encoding="utf-8")
+                self.assertEqual(
+                    source.count(old), 1,
+                    f"{name}: its anchor appears {source.count(old)} times in "
+                    f"{relative}, so the sweep cannot apply it and it is "
+                    f"evidence about nothing",
+                )
+
+    def test_every_replacement_actually_changes_the_source(self):
+        """A no-op mutation is caught by nothing and is not a hole either."""
+        for name, relative, old, new, _tests in self._mutations():
+            with self.subTest(mutation=name):
+                self.assertNotEqual(old, new, name)
+
+    def test_every_screening_hint_names_a_test_file_that_exists(self):
+        """The sweep's own note: a screening module that is not there is worse
+        than a wrong one.
+
+        `pytest tests/nope.py` exits 4, and the sweep reads any non-zero exit
+        as "the suite went red", so a stale hint would report the mutation
+        caught without it ever having been judged. The sweep guards this at
+        run time; checking it here means a rename is caught by the rename's
+        own commit.
+        """
+        root = pathlib.Path(__file__).resolve().parent
+        for name, _relative, _old, _new, hints in self._mutations():
+            for hint in hints:
+                with self.subTest(mutation=name, hint=hint):
+                    self.assertTrue(
+                        (root / hint).exists(),
+                        f"{name} screens against {hint}, which does not exist",
+                    )
+
+    def test_there_are_mutations_and_hints_to_check(self):
+        """Or every assertion above is true of an empty list."""
+        mutations = self._mutations()
+        self.assertGreater(len(mutations), 0)
+        self.assertGreater(sum(len(hints) for *_, hints in mutations), 0)
 
 
 if __name__ == "__main__":

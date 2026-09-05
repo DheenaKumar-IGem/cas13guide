@@ -101,8 +101,8 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "    if False and forbidden:\n        fail.append(ReasonCode.CREDIBLE_FORBIDDEN_HIT)",
      ["test_gate.py", "test_decision_order.py"]),
     ("gate-drops-universe-adequacy", "src/cas13guide/pipeline/f_decide.py",
-     "    if universe_gaps:\n        fail.append(ReasonCode.UNIVERSE_INADEQUATE)",
-     "    if False and universe_gaps:\n        fail.append(ReasonCode.UNIVERSE_INADEQUATE)",
+     "    if skipped:\n        fail.append(ReasonCode.UNIVERSE_INADEQUATE)",
+     "    if False and skipped:\n        fail.append(ReasonCode.UNIVERSE_INADEQUATE)",
      ["test_gate.py", "test_search.py"]),
     ("gate-hazard-boundary-flips", "src/cas13guide/pipeline/f_decide.py",
      "    if metrics.worst_off_target > t.worst_off_target_max:",
@@ -754,8 +754,8 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     (
         "every-background-record-is-coding-again",
         "src/cas13guide/services/workflow.py",
-        "                                         background_biotype,",
-        "                                         Universe.CODING,",
+        "    return default",
+        "    return Universe.CODING",
         ["test_subcommands_end_to_end.py", "test_bugfix_regressions_round4.py"],
     ),
     (
