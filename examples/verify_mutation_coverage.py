@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 105 are
+  "hole" is never an artefact of which modules were chosen. None of the 106 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **105 mutations, 105 caught, 0 holes.**
+Last measured: **106 mutations, 106 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -820,6 +820,13 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         "                declared_universes=frozenset({target_biotype}),",
         "                declared_universes=frozenset({target_biotype, Universe(request.background_biotype)}),",
         ["test_subcommands_end_to_end.py"],
+    ),
+    (
+        "the-browser-door-drops-its-background",
+        "src/cas13guide/services/webapp.py",
+        "        background_text=fields.get(\"background__file\"),",
+        "        background_text=None,",
+        ["test_webapp.py"],
     ),
 ]
 

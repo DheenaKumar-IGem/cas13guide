@@ -392,5 +392,95 @@ class TestMultipartParsing(unittest.TestCase):
         self.assertEqual(request.assay, defaults.assay)
 
 
+class TestTheBrowserDoorCanSupplyAnOffTargetCorpus(unittest.TestCase):
+    """Without one it cannot certify anything, and that was a regression.
+
+    The universe-adequacy gate reads what the index actually holds, so a
+    corpus covering none of the universes an assay is exposed to leaves every
+    guide at REVIEW. That is the honest answer -- but the command line can act
+    on it with `--background` and the form could not, so a run made through
+    the browser could not reach PASS at all.
+
+    It is a capability the gate fix removed rather than one this door never
+    had: before it, the shortfall was simply never noticed and the same run
+    certified guides against a corpus of one sequence.
+
+    `background_text` mirrors `variants_text`, kept separate from
+    `background_path` for the reason that field records -- the two doors must
+    reach the same code and a browser has no path to give.
+    """
+
+    ASSAY = "cell_culture_knockdown"
+
+    @classmethod
+    def setUpClass(cls):
+        import random
+
+        rng = random.Random(23)
+
+        def seq(n):
+            return "".join(rng.choice("ACGU") for _ in range(n))
+
+        cls.target = seq(300)
+        eol = chr(10)
+        rows = []
+        for name, biotype in (("RN18S1", "rrna"), ("MT-CO1", "mito"),
+                              ("LINC01", "ncrna"), ("PREM1", "pre_mrna")):
+            rows += [">" + name + " biotype=" + biotype, seq(300)]
+        cls.background = eol.join(rows) + eol
+
+    def _run(self, **extra):
+        from cas13guide.services.workflow import run_request
+
+        fields = {
+            "sequence": self.target, "assay": self.ASSAY,
+            "task": "knockdown", "effector": "RfxCas13d",
+        }
+        fields.update(extra)
+        return run_request(_request_from_fields(fields)).report
+
+    def test_the_form_offers_a_background_upload(self):
+        from cas13guide.services.webapp import _form_page
+
+        page = _form_page()
+        self.assertIn('name="background"', page)
+        self.assertIn('name="background_biotype"', page)
+
+    def test_the_form_says_what_an_empty_background_costs(self):
+        """A reader has to know before they submit, not after."""
+        from cas13guide.services.webapp import _form_page
+
+        page = _form_page()
+        self.assertIn("biotype=rrna", page)
+        self.assertIn("REVIEW", page)
+
+    def test_without_a_background_nothing_is_certified(self):
+        report = self._run()
+        self.assertEqual(report["verdict_counts"]["PASS"], 0)
+        gaps = [item for item in report["limitations"]
+                if item["id"] == "universe-gap"]
+        self.assertTrue(gaps, "no PASS, and no statement of why")
+
+    def test_with_one_the_same_target_certifies(self):
+        report = self._run(background__file=self.background)
+        self.assertGreater(report["verdict_counts"]["PASS"], 0)
+        self.assertEqual(
+            [item for item in report["limitations"]
+             if item["id"] == "universe-gap"],
+            [],
+        )
+
+    def test_the_uploaded_records_keep_their_own_biotypes(self):
+        """The header labels have to survive the browser path too."""
+        report = self._run(background__file=self.background)
+        by_locus = {row["locus"]: row["biotype"]
+                    for row in report["off_targets"]}
+        expected = {"RN18S1": "rrna", "MT-CO1": "mito",
+                    "LINC01": "ncrna", "PREM1": "pre_mrna"}
+        for locus, biotype in by_locus.items():
+            if locus in expected:
+                self.assertEqual(biotype, expected[locus], locus)
+
+
 if __name__ == "__main__":
     unittest.main()

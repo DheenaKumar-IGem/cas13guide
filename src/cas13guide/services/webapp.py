@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs
 
-from ..contract.enums import AssayType, Effector, Task
+from ..contract.enums import AssayType, Effector, Task, Universe
 from ..contract.presets import get_preset, preset_ids
 from .fasta import SequenceInputError, decode_text
 from .report_html import REPORT_CSS, AccessibilityTrack, render_report, track_rows
@@ -70,6 +70,7 @@ def _form_page(message: str = "", is_error: bool = False) -> str:
     effectors = options([e.value for e in Effector], defaults.effector)
     assays = options([a.value for a in AssayType], defaults.assay)
     tasks = options([t.value for t in Task], defaults.task)
+    biotypes = options([u.value for u in Universe], defaults.background_biotype)
     banner = (
         f'<div class="note" style="border-left-color:var(--fail)">{html.escape(message)}</div>'
         if is_error and message
@@ -107,6 +108,18 @@ AUGCAUGC..."></textarea>
   <label for="variants">Variants / isoforms (optional FASTA)</label>
   <input id="variants" name="variants" type="file" accept=".fa,.fasta,.fna,.txt">
   <div class="hint">A shared guide must work against all of them; robustness shows which it loses.</div>
+
+  <label for="background">Off-target background (optional FASTA)</label>
+  <input id="background" name="background" type="file" accept=".fa,.fasta,.fna,.txt">
+  <div class="hint">Specificity is measured against what you load here and nothing else.
+  Label each record in its header &mdash; <code>&gt;RN18S1 biotype=rrna</code> &mdash; or set
+  one biotype for the whole file below. Without a background covering the universes your
+  assay is exposed to, every guide stays at REVIEW.</div>
+
+  <div class="row">
+    <div><label for="background_biotype">Background biotype (default for unlabelled records)</label>
+      <select id="background_biotype" name="background_biotype">{biotypes}</select></div>
+  </div>
 
   <div class="row">
     <div><label for="effector">Effector</label>
@@ -192,6 +205,8 @@ def _request_from_fields(fields: dict[str, Any]) -> DesignRequest:
         fasta_text=fields.get("fasta__file") or None,
         preset=fields.get("preset") or None,
         variants_text=fields.get("variants__file"),
+        background_text=fields.get("background__file"),
+        background_biotype=fields.get("background_biotype") or "coding",
         effector=fields.get("effector") or "LwaCas13a",
         assay=fields.get("assay") or "in_vitro_detection",
         task=fields.get("task") or "detection",

@@ -90,6 +90,11 @@ class DesignRequest:
     variants_path: str | Path | None = None
     variants_text: str | None = None
     background_path: str | Path | None = None
+    #: An uploaded background FASTA's *text*, as the browser supplies it.
+    #: Distinct from ``background_path`` for the same reason ``variants_text``
+    #: is distinct from ``variants_path``: the two doors must reach the same
+    #: code, and a browser has no path to give.
+    background_text: str | None = None
 
     effector: str = "LwaCas13a"
     assay: str = "in_vitro_detection"
@@ -614,8 +619,19 @@ def run_request(request: DesignRequest) -> DesignOutcome:
     # mito at 1.5 -- were unreachable from the CLI: a user who supplied rRNA
     # as off-target evidence had it weighted 1.0, like any transcript.
     background_biotype = Universe(request.background_biotype)
+    background_records: list[SequenceRecord] = []
     if request.background_path:
-        for record in _read_fasta_or_fail(request.background_path, "--background"):
+        background_records = _read_fasta_or_fail(
+            request.background_path, "--background")
+    elif request.background_text and request.background_text.strip():
+        try:
+            background_records = parse_sequence_input(
+                request.background_text, default_name="background"
+            )
+        except SequenceInputError as exc:
+            raise DesignRequestError(f"background: {exc}") from exc
+    if background_records:
+        for record in background_records:
             background_loci.append(Locus(
                 record.name, record.sequence,
                 # Per record, so one pulled corpus can hold the rRNA, mito and
