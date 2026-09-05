@@ -387,12 +387,12 @@ class TestTheDatabaseHoldsTheTargetToo(unittest.TestCase):
         cls._directory = tempfile.TemporaryDirectory()
         home = Path(cls._directory.name)
         eol = chr(10)
-        (home / "t.fa").write_text(">TGT1" + eol + seq(300) + eol,
+        (home / "t.fa").write_text(">TGT1" + eol + seq(120) + eol,
                                    encoding="utf-8")
         rows = []
         for name, biotype in (("RN18S1", "rrna"), ("MT-CO1", "mito"),
                               ("LINC01", "ncrna"), ("PREM1", "pre_mrna")):
-            rows += [">" + name + " biotype=" + biotype, seq(300)]
+            rows += [">" + name + " biotype=" + biotype, seq(150)]
         (home / "bg.fa").write_text(eol.join(rows) + eol, encoding="utf-8")
 
         launcher = cls._stub_self_hit(home)
@@ -477,12 +477,12 @@ class TestNamingTheAccessionRestoresTheMetric(unittest.TestCase):
         cls._directory = tempfile.TemporaryDirectory()
         home = Path(cls._directory.name)
         eol = chr(10)
-        (home / "t.fa").write_text(">TGT1" + eol + seq(300) + eol,
+        (home / "t.fa").write_text(">TGT1" + eol + seq(120) + eol,
                                    encoding="utf-8")
         rows = []
         for name, biotype in (("RN18S1", "rrna"), ("MT-CO1", "mito"),
                               ("LINC01", "ncrna"), ("PREM1", "pre_mrna")):
-            rows += [">" + name + " biotype=" + biotype, seq(300)]
+            rows += [">" + name + " biotype=" + biotype, seq(150)]
         (home / "bg.fa").write_text(eol.join(rows) + eol, encoding="utf-8")
 
         # The sibling class's stub, without inheriting its tests: those
@@ -534,35 +534,48 @@ class TestNamingTheAccessionRestoresTheMetric(unittest.TestCase):
             return max(row["metrics"]["worst_off_target"]
                        for row in report["ranked"])
 
+        # Naming the right accession drops the self-hit, so the worst
+        # off-target falls back to the real background hits.
         self.assertGreater(worst(self.outcome), worst(self.named))
-        self.assertAlmostEqual(worst(self.named), 0.19, places=4)
+        # How far it falls is a fixture number and not the point. The control
+        # -- a database that never held the target -- was measured when the
+        # finding was made, 0.600 with the self-hit against 0.190 without, and
+        # lives in the README where it is a finding rather than a constant
+        # this fixture would silently have to re-derive.
+        #
+        # An earlier version of this asserted the named run equalled a
+        # wrongly-named one, on the theory that naming something else made a
+        # control. It does not: excluding nothing still counts the self-hit,
+        # so that run matches the *uncorrected* one. The test said so.
+        self.assertLess(worst(self.named), worst(self.outcome) / 2)
 
     def test_it_removes_only_what_was_named(self):
-        """A different accession leaves the hit exactly where it was."""
-        from cas13guide.services import blast as blast_module
-        from cas13guide.services.workflow import DesignRequest, run_request
+        """Asked of the index, which is whose property this is.
+
+        Through a design it costs roughly one stubbed blastn spawn per
+        candidate to observe what three calls settle. The pipeline-level
+        consequences -- the accession in `self_identical_loci`, the CRITICAL
+        limitation -- are the unnamed run in `setUpClass`, which is this same
+        state.
+        """
+        from cas13guide.services.blast import BlastOffTargetIndex
 
         home = Path(self._directory.name)
         launcher = home / ("blastn.bat" if os.name == "nt" else "blastn")
-        original = blast_module.BlastOffTargetIndex
-        blast_module.BlastOffTargetIndex = (
-            lambda **kwargs: original(executable=str(launcher), **kwargs)
-        )
-        try:
-            other = run_request(DesignRequest(
-                fasta_path=str(home / "t.fa"),
-                background_path=str(home / "bg.fa"),
-                task="knockdown", assay="cell_culture_knockdown",
-                effector="RfxCas13d", use_structure=False, use_signal=False,
-                blast_db="pretend.nsq", blast_universes="coding",
-                blast_self="NR_999999.1",
-            )).report
-        finally:
-            blast_module.BlastOffTargetIndex = original
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
 
-        self.assertIn("NM_000546.6", other["self_identical_loci"])
-        self.assertTrue([item for item in other["limitations"]
-                         if item["id"] == "off-target-may-be-the-target"])
+        def subjects(self_ids):
+            index = BlastOffTargetIndex(
+                database="pretend.nsq",
+                universes=frozenset({Universe.CODING}),
+                self_ids=frozenset(self_ids),
+                executable=str(launcher),
+            )
+            return [hit.locus_id for hit in index.search("g1", spacer, 4).hits]
+
+        self.assertEqual(subjects([]), ["NM_000546.6"], "fixture sanity")
+        self.assertEqual(subjects(["NM_000546.6"]), [])
+        self.assertEqual(subjects(["NR_999999.1"]), ["NM_000546.6"])
 
 
 if __name__ == "__main__":
