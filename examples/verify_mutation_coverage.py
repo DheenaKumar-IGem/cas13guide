@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 108 are
+  "hole" is never an artefact of which modules were chosen. None of the 111 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **108 mutations, 108 caught, 0 holes.**
+Last measured: **111 mutations, 111 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -841,6 +841,27 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         "    if request.target_biotype:",
         "    if False:",
         ["test_subcommands_end_to_end.py"],
+    ),
+    (
+        "the-server-stops-warning-when-bound-past-localhost",
+        "src/cas13guide/services/webapp.py",
+        "    if host in (\"127.0.0.1\", \"localhost\", \"::1\"):",
+        "    if True:",
+        ["test_user_facing_surfaces.py"],
+    ),
+    (
+        "list-presets-stops-listing",
+        "src/cas13guide/cli.py",
+        "    if args.list_presets:",
+        "    if False:",
+        ["test_user_facing_surfaces.py"],
+    ),
+    (
+        "the-panel-interval-never-reaches-the-terminal",
+        "src/cas13guide/cli.py",
+        "    if confidence and confidence[\"targets\"]:",
+        "    if False:",
+        ["test_user_facing_surfaces.py"],
     ),
 ]
 

@@ -355,6 +355,26 @@ def make_server(host: str = "127.0.0.1", port: int = 8000) -> HTTPServer:
     return ThreadingHTTPServer((host, port), DesignHandler)
 
 
+
+
+def bind_warning(host: str) -> str | None:
+    """What to say when the server is bound past localhost, or None.
+
+    A function rather than an inline branch so it can be tested without a
+    test binding a socket to every interface on the machine. It is the
+    only thing standing between `--host 0.0.0.0` and an unauthenticated
+    server on the network, and nothing checked that it appears: branch
+    coverage found the branch had never run once in the whole suite.
+    """
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return None
+    return (
+    "  WARNING: this is a development server with no authentication "
+    "and no request limits.\n  Binding beyond localhost exposes it "
+    "to the network; put a real server in front of it."
+    )
+
+
 def serve(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True) -> int:
     """Run the development server until interrupted."""
     server = make_server(host, port)
@@ -368,12 +388,9 @@ def serve(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True) 
     bound_port = server.server_address[1]
     url = f"http://{host}:{bound_port}/"
     print(f"cas13guide is at {url}")
-    if host not in ("127.0.0.1", "localhost"):
-        print(
-            "  WARNING: this is a development server with no authentication "
-            "and no request limits.\n  Binding beyond localhost exposes it "
-            "to the network; put a real server in front of it.",
-        )
+    exposure = bind_warning(host)
+    if exposure:
+        print(exposure)
     print("  Ctrl-C to stop.")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
