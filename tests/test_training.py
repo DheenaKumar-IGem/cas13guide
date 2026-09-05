@@ -291,6 +291,49 @@ class TestTrainAndCalibrate(unittest.TestCase):
 
 
 class TestFeatureSpec(unittest.TestCase):
+    def test_a_spacer_of_the_wrong_length_is_refused(self):
+        """Both length guards exist; only this one had ever fired."""
+        from cas13guide.util.duplex import profile_duplex
+        from cas13guide.util.seq import revcomp
+
+        spec = FeatureSpec.for_length(22)
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
+        duplex = profile_duplex(spacer, revcomp(spacer))
+        with self.assertRaises(ValueError) as caught:
+            spec.transform(spacer + "AC", duplex, None)
+        self.assertIn("does not match feature spec", str(caught.exception))
+
+    def test_a_duplex_of_the_wrong_length_is_refused_too(self):
+        """The sibling guard, which had never executed.
+
+        The feature row packs spacer-derived and duplex-derived blocks at
+        fixed offsets. A duplex profile of a different length would write
+        positional features into slots meant for other positions -- a row that
+        is the right shape and the wrong data, which a model consumes without
+        complaint and which no later check can recover.
+        """
+        from cas13guide.util.duplex import profile_duplex
+        from cas13guide.util.seq import revcomp
+
+        spec = FeatureSpec.for_length(22)
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
+        longer = spacer + "AC"
+        mismatched = profile_duplex(longer, revcomp(longer))
+        self.assertNotEqual(mismatched.length, len(spacer), "fixture sanity")
+        with self.assertRaises(ValueError) as caught:
+            spec.transform(spacer, mismatched, None)
+        self.assertIn("duplex profile length", str(caught.exception))
+
+    def test_a_matching_pair_transforms(self):
+        """Or both refusals above would be satisfied by refusing everything."""
+        from cas13guide.util.duplex import profile_duplex
+        from cas13guide.util.seq import revcomp
+
+        spec = FeatureSpec.for_length(22)
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
+        row = spec.transform(spacer, profile_duplex(spacer, revcomp(spacer)), None)
+        self.assertEqual(row.shape, (spec.n_features,))
+
     def test_block_offsets_match_the_layout(self):
         spec = FeatureSpec.for_length(22)
         blocks = spec.blocks

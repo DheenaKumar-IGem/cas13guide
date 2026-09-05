@@ -202,6 +202,28 @@ class TestDuplexEnergy(unittest.TestCase):
         self.assertFalse(energy.in_range(None, energy.dg_per_nt - 0.1))
         self.assertIn("weaker", energy.describe(None, energy.dg_per_nt - 0.1))
 
+    def test_range_checking_also_reports_success(self):
+        """Both failure directions were pinned and the passing one was not.
+
+        `describe` has three answers and only two had ever been produced: every
+        call in the suite passed bounds that excluded the duplex. The third is
+        what a reader sees when nothing is wrong, and a message nothing
+        generates is a message nothing checks -- it is not in the limitation
+        vocabulary either, so `verify_vocabulary_coverage` does not reach it.
+        """
+        from cas13guide.util.seq import revcomp
+
+        energy = self.dg(SPACER, revcomp(SPACER))
+        wide = energy.describe(energy.dg_per_nt - 0.5, energy.dg_per_nt + 0.5)
+        self.assertIn("within range", wide)
+        self.assertNotIn("over-stable", wide)
+        self.assertNotIn("weaker", wide)
+        # An open range is in range too, and says so.
+        self.assertIn("within range", energy.describe(None, None))
+        # The number it reports is the duplex's own, in both units.
+        self.assertIn(f"{energy.dg:.1f}", wide)
+        self.assertIn(f"{energy.dg_per_nt:.2f}", wide)
+
     def test_summarize_derives_a_range_from_data(self):
         from cas13guide.services.thermodynamics import summarize
         from cas13guide.util.seq import revcomp, windows
