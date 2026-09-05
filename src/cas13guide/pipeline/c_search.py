@@ -44,9 +44,11 @@ def universe_gaps(
     what the spec declared. Those are different things, and trusting the
     declaration was a hole straight through the universe-adequacy gate: an
     index built over a narrower universe set than the spec declares returns a
-    perfectly clean off-target report, and because ``missing_universes`` only
-    ever compared ``ASSAY_REQUIRED`` against ``declared_universes`` the gate saw
-    no gap, raised no REVIEW and recorded no shortfall. In a reproduction, the
+    perfectly clean off-target report, and because the gate only ever compared
+    ``ASSAY_REQUIRED`` against ``declared_universes`` it saw no gap, raised no
+    REVIEW and recorded no shortfall. (The method that did that comparison,
+    ``ContextScope.missing_universes``, has since been removed: once this read
+    what the index holds, nothing called it.) In a reproduction, the
     same spec and transcriptome went from 42 FAIL to 42 PASS with zero
     off-target rows purely by narrowing the index -- rRNA hits at 5000 TPM
     simply ceased to exist.

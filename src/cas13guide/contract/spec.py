@@ -265,9 +265,6 @@ class ContextScope(_Frozen):
         """
         return sorted(u.value for u in universes)
 
-    def missing_universes(self, assay: AssayType) -> frozenset[Universe]:
-        return frozenset(ASSAY_REQUIRED_UNIVERSES[assay] - self.declared_universes)
-
 
 class ResolvedDesignSpec(_Frozen):
     """The design contract. Immutable, and carried in provenance.
