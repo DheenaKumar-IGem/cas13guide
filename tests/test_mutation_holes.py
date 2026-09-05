@@ -1350,16 +1350,40 @@ class TestEveryMutationStillHasSomethingToMutate(unittest.TestCase):
         return verify_mutation_coverage.MUTATIONS
 
     def test_every_anchor_appears_exactly_once_in_the_tree(self):
+        """Each anchor is present, or its replacement is and this tree is
+        mid-mutation.
+
+        This test runs inside the sweep's mutated copy too, and the applied
+        mutation's anchor is *gone* there. Asserting the anchor unconditionally
+        therefore failed for every mutation the sweep ever applied, which made
+        every one of them "caught" without any behavioural test noticing --
+        the exact defect this module opens by describing, reintroduced in the
+        file that records it. A sweep that cannot report a hole is not
+        measuring anything.
+        """
         root = pathlib.Path(__file__).resolve().parent.parent
-        for name, relative, old, _new, _tests in self._mutations():
+        mutating = []
+        for name, relative, old, new, _tests in self._mutations():
             with self.subTest(mutation=name):
                 source = (root / relative).read_text(encoding="utf-8")
-                self.assertEqual(
-                    source.count(old), 1,
+                if source.count(old) == 1:
+                    continue
+                if source.count(old) == 0 and source.count(new) >= 1:
+                    # This tree has that mutation applied to it.
+                    mutating.append(name)
+                    continue
+                self.fail(
                     f"{name}: its anchor appears {source.count(old)} times in "
-                    f"{relative}, so the sweep cannot apply it and it is "
-                    f"evidence about nothing",
+                    f"{relative} and its replacement {source.count(new)}, so "
+                    f"the sweep cannot apply it and it is evidence about "
+                    f"nothing"
                 )
+        self.assertLessEqual(
+            len(mutating), 1,
+            f"more than one mutation looks applied at once ({mutating}), which "
+            f"is not a state the sweep produces -- so one of these anchors is "
+            f"matching something it should not",
+        )
 
     def test_every_replacement_actually_changes_the_source(self):
         """A no-op mutation is caught by nothing and is not a hole either."""

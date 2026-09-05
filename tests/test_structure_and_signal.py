@@ -364,6 +364,44 @@ class TestSignalOnlyCountsWhereCollateralIsTheReadout(unittest.TestCase):
         self.assertIsNotNone(value)
         self.assertGreater(value, 0.0)
 
+    def test_the_signal_comes_from_the_intended_site_not_the_strongest_hit(self):
+        """`_intended_prediction` skips evidence that is not the target.
+
+        Nothing exercised that filter. Every fixture reaching this code had
+        only intended evidence in it, so the `continue` never ran once in the
+        whole suite and removing the filter changed no test -- a hole, found
+        by branch coverage and confirmed by the sweep once the sweep could
+        report one again.
+
+        It matters because the filter is the only thing making this number
+        mean what its docstring says. A guide with a strong off-target would
+        otherwise report the collateral signal of the *off-target* as its own
+        predicted fluorescence, which is a number about the wrong molecule.
+        """
+        spec = self._spec(AssayType.IN_VITRO_DETECTION)
+        model = CollateralKineticsModel()
+        intended = make_evidence(
+            0.20, 0.30, target_id="t1", target_class=TargetClass.REQUIRED
+        )
+        # Unannotated, and far stronger than the intended site.
+        off_target = make_evidence(0.95, 0.99, locus_id="L_OFF")
+
+        self.assertFalse(off_target.is_intended, "fixture sanity")
+        self.assertGreater(
+            off_target.activity.lower, intended.activity.lower,
+            "fixture does not discriminate: the off-target must be the one a "
+            "max would pick",
+        )
+
+        alone = predicted_signal((intended,), spec, model)
+        beside = predicted_signal((intended, off_target), spec, model)
+        self.assertIsNotNone(alone)
+        self.assertEqual(
+            beside, alone,
+            "an off-target changed the predicted signal, so the number "
+            "describes the wrong site",
+        )
+
     def test_knockdown_assays_do_not(self):
         spec = self._spec(AssayType.CELL_CULTURE_KNOCKDOWN)
         self.assertTrue(spec.profile.collateral_is_hazard)
