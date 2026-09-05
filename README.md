@@ -33,6 +33,39 @@ cas13guide design --preset hsa-miR-21-5p
 cas13guide design --list-presets
 ```
 
+**Specificity is measured against what you load, and nothing else.** A run
+given only its target finds no off-targets because there was nothing to find,
+which has the shape of a good answer and the substance of no answer. So the
+universe-adequacy gate asks whether the corpus covers the universes the assay
+exposes the guide to, and answers by looking at what the index actually holds:
+
+```bash
+# every guide stays at REVIEW -- nothing to be specific against
+cas13guide design --fasta target.fa --assay cell_culture_knockdown
+
+# label each record in its own header, so one file can carry several universes
+cas13guide design --fasta target.fa --background corpus.fa \
+                  --assay cell_culture_knockdown
+```
+
+```text
+>RN18S1 biotype=rrna
+>MT-CO1 biotype=mito
+>LINC01 biotype=ncrna
+>PREM1  biotype=pre_mrna
+```
+
+On a 300 nt target the first command returns 0 PASS and 223 REVIEW, naming the
+four universes it did not cover; the second returns 223 PASS and 50 FAIL.
+`--background-biotype` sets one biotype for a whole unlabelled file, and
+`--target-biotype` overrides what the assay implies about the target itself
+(`in_vitro_detection` reads it as synthetic, `antiviral` as viral, the
+knockdown assays as coding). The browser form takes the same upload.
+
+The hazard weights are per-biotype and rRNA is the largest of them, so a
+mislabelled corpus is not a cosmetic problem: `biotype=rrna` weights a hit at
+2.0 where `coding` weights it 1.0.
+
 ```bash
 cas13guide serve                    # then open the page it prints
 ```
