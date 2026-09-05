@@ -56,6 +56,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src" / "cas13guide"
+EXAMPLES = Path(__file__).resolve().parent
 TESTS = ROOT / "tests"
 
 #: Fields that are read nowhere and are meant to be. Each needs a reason, so
@@ -236,6 +237,84 @@ def _report_constants() -> int:
     return len(flagged)
 
 
+#: Public functions nobody calls, and why that is allowed.
+ALLOWED_FUNCTIONS: dict[str, str] = {
+    "hamming": (
+        "a generic string primitive, kept deliberately and documented as the "
+        "*wrong* function for comparing a spacer to a target site: it is "
+        "wobble-blind, so it over-counts mismatches and inflates apparent "
+        "specificity. `util.duplex.profile_duplex` is what specificity claims "
+        "use. Keeping it uncalled is the point"
+    ),
+}
+
+
+def _declared_functions() -> dict[str, str]:
+    """Public functions defined at module level, by the file declaring them."""
+    found: dict[str, str] = {}
+    for path in SRC.rglob("*.py"):
+        if path.name == "_contrafold_kernel.py":
+            continue
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not node.name.startswith("_"):
+                    found[node.name] = f"{path.relative_to(SRC)}:{node.lineno}"
+    return found
+
+
+def _called(root: Path) -> set[str]:
+    """Names that appear in call position.
+
+    Call sites rather than mentions, because `predicted_signal_nm` is also a
+    dataclass field and a CSV column: counting the name would have found it
+    everywhere while nothing invoked it.
+    """
+    seen: set[str] = set()
+    for path in root.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Name):
+                seen.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                seen.add(func.attr)
+    return seen
+
+
+def _report_functions() -> list[str]:
+    """Public module-level functions with no call site anywhere."""
+    declared = _declared_functions()
+    called = _called(SRC) | _called(TESTS) | _called(EXAMPLES)
+
+    print(f"{len(declared)} public module-level functions declared")
+    if not declared:
+        print("FAIL: none found at all, so this section proved nothing.")
+        return ["no functions discovered"]
+
+    uncalled = sorted(n for n in declared if n not in called)
+    flagged = [n for n in uncalled if n not in ALLOWED_FUNCTIONS]
+    excused = [n for n in uncalled if n in ALLOWED_FUNCTIONS]
+
+    if excused:
+        print(f"never called, and allowed -- {len(excused)}:")
+        for name in excused:
+            print(f"    {name:24} {ALLOWED_FUNCTIONS[name]}")
+    if flagged:
+        print(f"never called ANYWHERE -- {len(flagged)}:")
+        for name in flagged:
+            print(f"    {name:24} {declared[name]}")
+        print()
+        print("A function nothing calls is a value computed for nobody with a")
+        print("parameter list. Give it a caller, or add it to")
+        print("ALLOWED_FUNCTIONS with the reason it has none.")
+    return flagged
+
+
 def main() -> int:
     declared = _declared()
     in_src = _mentions(SRC)
@@ -300,6 +379,10 @@ def main() -> int:
 
     stranded = _report_constants()
     if stranded:
+        return 1
+
+    print()
+    if _report_functions():
         return 1
 
     print()

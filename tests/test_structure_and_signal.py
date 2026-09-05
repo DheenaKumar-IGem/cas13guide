@@ -402,6 +402,62 @@ class TestSignalOnlyCountsWhereCollateralIsTheReadout(unittest.TestCase):
             "describes the wrong site",
         )
 
+    def test_the_absolute_figure_is_refused_on_placeholder_constants(self):
+        """`predicted_signal_nm` had no caller and no test at all.
+
+        Its sibling `predicted_signal` is public and tested; this one was
+        reachable from nothing -- src, tests or examples -- because
+        `build_metric_vector` inlines both readings to avoid running the
+        collateral ODE twice. The dead-value sweep could not see it either:
+        that walks fields, properties and methods, and a module-level function
+        is none of those.
+
+        The behaviour is worth having pinned here as well as through the
+        report rows, because it is the one that refuses to fabricate: a
+        fluorescence figure in real units derived from placeholder rate
+        constants is a made-up measurement wearing a unit label, and nothing
+        downstream can tell it from a measured one.
+        """
+        from cas13guide.metrics.aggregate import predicted_signal_nm
+        from cas13guide.services.kinetics import KineticConstants
+
+        spec = self._spec(AssayType.IN_VITRO_DETECTION)
+        evidence = self._evidence()
+
+        # The shipped default is provisional, and refuses.
+        self.assertIsNone(
+            predicted_signal_nm(evidence, spec, CollateralKineticsModel())
+        )
+        self.assertIsNone(predicted_signal_nm(evidence, spec, None))
+
+        measured = KineticConstants(
+            k_on=1.0, k_off=1e-4, k_cat=4e-3, k_m=200.0, complex_nm=50.0,
+            target_nm=1.0, reporter_nm=500.0, assay_seconds=1800.0,
+            source="measured", provisional=False,
+        )
+        value = predicted_signal_nm(
+            evidence, spec, CollateralKineticsModel(measured)
+        )
+        self.assertIsNotNone(value, "measured constants must unlock the figure")
+        self.assertGreater(value, 0.0)
+
+    def test_the_absolute_figure_is_refused_where_collateral_is_a_hazard(self):
+        """Same rule as the relative one: a knockdown assay gets neither."""
+        from cas13guide.metrics.aggregate import predicted_signal_nm
+        from cas13guide.services.kinetics import KineticConstants
+
+        measured = KineticConstants(
+            k_on=1.0, k_off=1e-4, k_cat=4e-3, k_m=200.0, complex_nm=50.0,
+            target_nm=1.0, reporter_nm=500.0, assay_seconds=1800.0,
+            source="measured", provisional=False,
+        )
+        spec = self._spec(AssayType.CELL_CULTURE_KNOCKDOWN)
+        self.assertIsNone(
+            predicted_signal_nm(
+                self._evidence(), spec, CollateralKineticsModel(measured)
+            )
+        )
+
     def test_knockdown_assays_do_not(self):
         spec = self._spec(AssayType.CELL_CULTURE_KNOCKDOWN)
         self.assertTrue(spec.profile.collateral_is_hazard)
