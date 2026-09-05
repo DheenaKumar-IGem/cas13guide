@@ -126,6 +126,17 @@ class BlastOffTargetIndex:
     #: Biotype assigned to hits. A single value because a BLAST database has no
     #: universe column; split databases and separate indexes if that matters.
     biotype: Universe = Universe.CODING
+    #: Subject ids the caller asserts are the run's own target, not
+    #: off-targets. A transcript database contains the target's transcript, and
+    #: its accession cannot be matched to the record the user supplied -- so
+    #: the intended site comes back as a perfect off-target and nothing here
+    #: can tell it from a paralog identical across the whole site. Which
+    #: accession is theirs is the one thing the user knows and this does not.
+    #:
+    #: Dropped rather than annotated as the target: the local scan already
+    #: supplies the on-target evidence, and counting it twice would inflate
+    #: coverage.
+    self_ids: frozenset[str] = frozenset()
     executable: str = "blastn"
     #: Short queries need a small word size and a permissive E-value, or almost
     #: nothing is reported: a 22-mer simply cannot reach a conventional E-value.
@@ -260,6 +271,10 @@ class BlastOffTargetIndex:
             duplex = profile_duplex(spacer, site)
             # Re-derived under the wobble rule, never BLAST's own count.
             if duplex.n_mismatch > max_mismatches:
+                continue
+            if row.subject in self.self_ids:
+                # Asserted by the caller as this run's own target. See
+                # `self_ids`: the hit is real, and it is not an off-target.
                 continue
             hits.append(
                 SearchHit(

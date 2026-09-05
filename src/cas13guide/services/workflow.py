@@ -104,6 +104,9 @@ class DesignRequest:
     #: coverage, because the gate reads what the index holds.
     target_biotype: str | None = None
     background_biotype: str = "coding"
+    #: Comma-separated subject ids that `--blast-db` should treat as this run's
+    #: own target rather than as off-targets.
+    blast_self: str = ""
     task: str = "detection"
     spacer_length: int | None = None
     max_mismatches: int = 4
@@ -463,7 +466,12 @@ def _reference_index(request: DesignRequest, world):
             "it as your assertion about what the database covers"
         )
 
-    index = BlastOffTargetIndex(database=request.blast_db, universes=universes)
+    self_ids = frozenset(
+        name.strip() for name in request.blast_self.split(",") if name.strip()
+    )
+    index = BlastOffTargetIndex(
+        database=request.blast_db, universes=universes, self_ids=self_ids
+    )
     try:
         index.ensure_available()
     except BlastUnavailable as exc:

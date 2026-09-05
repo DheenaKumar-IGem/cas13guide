@@ -196,6 +196,7 @@ def _design(args: argparse.Namespace) -> int:
         use_arc=args.arc,
         blast_db=args.blast_db,
         blast_universes=args.blast_universes,
+        blast_self=args.blast_self,
     )
     try:
         outcome = run_request(request)
@@ -496,6 +497,10 @@ def main(argv: list[str] | None = None) -> int:
         help="BLAST nucleotide database for off-target search (FR4, DR1/DR3). "
              "Without one, --background is scanned exhaustively instead, which "
              "is slower but can report exhaustive=True")
+    design.add_argument(
+        "--blast-self", default="", metavar="ACC[,ACC]",
+        help="subject ids in --blast-db that are this run's own target; their "
+             "hits are not counted as off-targets")
     design.add_argument(
         "--blast-universes", default="coding", metavar="A,B",
         help="what you assert --blast-db covers; the universe-adequacy gate "
