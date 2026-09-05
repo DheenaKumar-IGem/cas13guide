@@ -114,5 +114,37 @@ class TestNothingIsComputedForNobody(unittest.TestCase):
         self.assertRegex(text, r"[1-9][0-9]* (public )?(field|value|name)")
 
 
+class TestTheOutputIsRightForTheInput(unittest.TestCase):
+    """The one instrument that asks a user's question, run rather than cited.
+
+    Every other check here is about the *process* -- are the invariants
+    pinned, is every verdict reached, is anything computed for nobody.
+    `verify_output_against_input.py` recomputes each exported claim from the
+    input in plain Python, without asking the package how it got there: it
+    writes out `revcomp` again on purpose, because a check that calls
+    `util.seq.revcomp` proves the exporter and the sequence layer agree rather
+    than that either is correct.
+
+    Its load-bearing check is that a designed guide's claim -- "this 22-mer
+    binds that transcript at position 154" -- survives slicing the input at
+    that position and reverse-complementing it. Everything the tool reports is
+    downstream of that.
+
+    One test file mentions it in a docstring. Nothing ran it. It takes 1.2
+    seconds.
+    """
+
+    def test_every_exported_claim_recomputes_from_the_input(self):
+        import contextlib
+        import io
+
+        import verify_output_against_input as loop
+
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            code = loop.main()
+        self.assertEqual(code, 0, chr(10) + captured.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
