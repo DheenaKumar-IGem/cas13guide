@@ -296,12 +296,6 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
         effector = Effector(request.effector)
         assay = AssayType(request.assay)
         target_biotype = _target_biotype(request)
-        # The corpus covers the background's universe too, when one is given.
-        # An overclaim here can only widen the gap the gate reads -- it keys on
-        # what the index holds -- so the safe direction is to name it.
-        corpus = {target_biotype}
-        if request.background_path:
-            corpus.add(Universe(request.background_biotype))
         task = Task(request.task)
     except ValueError as exc:
         raise DesignRequestError(str(exc)) from exc
@@ -337,11 +331,15 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
                 organism=request.organism,
                 genome_build=request.genome_build,
                 annotation_version=request.annotation,
-                # What the corpus actually holds, not what the search was
-                # willing to admit. `build_spec` sees only the target records;
-                # `run_request` widens this with the accepted --background
-                # loci once it knows which survived.
-                declared_universes=frozenset(corpus),
+                # The one universe this function can assert: the target's.
+                # The background is deliberately absent. What it contributes is
+                # *measured* -- the index reports the universes it holds, which
+                # is the whole point of that bound -- so declaring it adds
+                # nothing the gate reads and can only invent a gap. It did:
+                # adding the file-level --background-biotype here declared
+                # `coding` for a background whose every record was labelled
+                # rrna or mito, and the run reported coding as unsearched.
+                declared_universes=frozenset({target_biotype}),
             ),
             thresholds=Thresholds(
                 required_search_mismatches=request.max_mismatches,

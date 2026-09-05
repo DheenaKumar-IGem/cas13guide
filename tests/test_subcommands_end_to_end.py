@@ -563,6 +563,64 @@ class TestOneBackgroundFileCanHoldSeveralUniverses(unittest.TestCase):
             if row["locus"] == "BG1":
                 self.assertEqual(row["biotype"], "rrna")
 
+    def test_the_files_default_is_not_declared_when_no_record_uses_it(self):
+        """A label the corpus does not carry must not become a gap.
+
+        `build_spec` used to add the file-level --background-biotype to
+        `declared_universes` whenever a background was supplied, on the
+        reasoning that an overclaim only widens the gap the gate reads and is
+        therefore the safe direction. It is not safe: a widened gap is a
+        REVIEW for a universe nobody needed and nobody was missing, and it
+        lands on exactly the users these per-record labels exist for.
+
+        Measured on an in_vitro_detection run against a background whose every
+        record was labelled rrna or mito: declared {coding, synthetic},
+        corpus {synthetic, rrna, mito}, and `coding` reported as a universe
+        the search did not cover.
+        """
+        from cas13guide.contract.enums import Universe
+        from cas13guide.services.workflow import (
+            DesignRequest,
+            _read_records,
+            _target_biotype,
+            build_spec,
+        )
+
+        # in_vitro_detection on purpose: its target biotype is `synthetic`,
+        # so it differs from the `coding` file-level default. Under
+        # cell_culture_knockdown the two are both `coding` and the set
+        # collapses to one element either way -- a fixture that cannot tell
+        # the cases apart, which is how the first version of this test passed
+        # against the very code it was written to reject.
+        request = DesignRequest(
+            fasta_path=str(self.home / "t.fa"),
+            background_path=str(self.home / "mixed.fa"),
+            task="detection", assay="in_vitro_detection", effector="RfxCas13d",
+        )
+        spec = build_spec(request, _read_records(request), [])
+        self.assertNotEqual(
+            Universe(request.background_biotype),
+            _target_biotype(request),
+            "fixture does not discriminate: the default is the target's own "
+            "biotype, so declaring it changes nothing",
+        )
+        self.assertNotIn(
+            Universe(request.background_biotype),
+            spec.context.declared_universes,
+            "the file-level default was declared though no record uses it",
+        )
+        # What it may assert is the target's own biotype, and nothing else.
+        self.assertEqual(
+            spec.context.declared_universes, frozenset({_target_biotype(request)})
+        )
+
+    def test_no_gap_names_a_universe_no_record_was_labelled_with(self):
+        report = self._run()
+        gaps = [item for item in report["limitations"]
+                if item["id"] == "universe-gap"]
+        for item in gaps:
+            self.assertNotIn("coding", item["text"])
+
     def test_an_unknown_biotype_names_the_flag_and_the_valid_values(self):
         from cas13guide.services.workflow import DesignRequestError
 
