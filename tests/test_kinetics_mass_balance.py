@@ -16,6 +16,8 @@ suite knew how to ask, and it would have become a fabricated measurement the
 moment real constants unlocked absolute_signal().
 """
 
+import pathlib
+import tempfile
 import unittest
 
 from helpers import *  # noqa: F401,F403
@@ -400,3 +402,68 @@ class TestTheUnlockReachesASurfaceSomebodyReads(unittest.TestCase):
                 )
                 first = next(iter(csv.DictReader(io.StringIO(body))))
                 self.assertEqual(bool(first["predicted_signal_nm"]), expect_value)
+
+
+class TestSupplyingConstantsThatAreStillProvisional(unittest.TestCase):
+    """The README says `--kinetics-constants` unlocks the absolute figure.
+
+    It does, once the file says the values are measured. A file still carrying
+    `provisional: true` leaves the figure withheld -- correctly, because a
+    number in real units from placeholder rate constants is a fabricated
+    measurement wearing a unit label -- and this note is the only thing
+    telling a user why they followed the instructions and got a blank column.
+
+    Branch coverage says it had never been emitted.
+
+    Asked of `build_registry` rather than of a run: the note is composed there,
+    before any design happens, and the classes above already cover both what
+    the figure does with measured constants and what it does without them.
+    Running a full design here would re-solve the collateral ODE for every
+    candidate to read a string.
+    """
+
+    CONSTANTS = {
+        "k_on": 1.0, "k_off": 1e-4, "k_cat": 4e-3, "k_m": 200.0,
+        "complex_nm": 50.0, "target_nm": 1.0, "reporter_nm": 500.0,
+        "assay_seconds": 1800.0, "source": "measured",
+    }
+
+    def _notes(self, provisional: bool) -> str:
+        import json
+
+        from cas13guide.services.workflow import DesignRequest, build_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "k.json"
+            path.write_text(
+                json.dumps(dict(self.CONSTANTS, provisional=provisional)),
+                encoding="utf-8")
+            notes: list[str] = []
+            build_registry(
+                DesignRequest(
+                    sequence_text="ACGUACGUAGCUAGCUAGCUACGAUCGAUCGUAGCUAGCUA",
+                    task="detection", assay="in_vitro_detection",
+                    effector="LwaCas13a", use_signal=True,
+                    kinetics_json=str(path),
+                ),
+                notes,
+            )
+            return " ".join(notes)
+
+    def test_a_provisional_file_is_said_to_be_provisional(self):
+        notes = self._notes(provisional=True)
+        self.assertIn("provisional=true", notes)
+        self.assertIn("absolute signal stays", notes)
+
+    def test_it_names_the_file_the_user_passed(self):
+        """A run can load constants from anywhere; the note has to say which."""
+        self.assertIn("k.json", self._notes(provisional=True))
+
+    def test_and_it_says_what_to_change(self):
+        """A note naming the problem and not the fix sends a reader looking
+        for a bug in the flag."""
+        self.assertIn("provisional=false", self._notes(provisional=True))
+
+    def test_measured_constants_say_nothing(self):
+        """Or the note would be a fixed banner rather than a finding."""
+        self.assertNotIn("provisional=true", self._notes(provisional=False))
