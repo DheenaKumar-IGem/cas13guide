@@ -274,7 +274,18 @@ def _record_biotype(record, default: Universe, flag: str) -> Universe:
 def _target_biotype(request: DesignRequest) -> Universe:
     """What the target records are, as the user said or as the run can tell."""
     if request.target_biotype:
-        return Universe(request.target_biotype)
+        try:
+            return Universe(request.target_biotype)
+        except ValueError:
+            # Its sibling `_record_biotype` names the flag and the valid
+            # values; this one let the bare enum error through, so the same
+            # typo produced a legible refusal on one input and "'x' is not a
+            # valid Universe" on the other.
+            raise DesignRequestError(
+                f"--target-biotype {request.target_biotype!r} is not a "
+                "universe. Use one of: "
+                + ", ".join(sorted(u.value for u in Universe))
+            ) from None
     if request.preset:
         # A preset ships its own biotype -- the shipped ones are miRNAs, and
         # ncrna is what they are. Letting the assay default overrule it made a

@@ -621,6 +621,63 @@ class TestOneBackgroundFileCanHoldSeveralUniverses(unittest.TestCase):
         for item in gaps:
             self.assertNotIn("coding", item["text"])
 
+    def test_an_explicit_target_biotype_beats_what_the_assay_implies(self):
+        """`--target-biotype` was documented in the quickstart and tested by
+        nothing.
+
+        `_target_biotype` prefers an explicit value, then a preset's own
+        biotype, then what the assay implies. Only the last two branches were
+        ever reached: the guard honouring the explicit value never ran once in
+        the whole suite, so nothing established that the flag does anything.
+        """
+        from cas13guide.contract.enums import Universe
+        from cas13guide.services.workflow import DesignRequest, _target_biotype
+
+        implied = _target_biotype(DesignRequest(
+            sequence_text="ACGU", assay="in_vitro_detection"))
+        self.assertEqual(implied, Universe.SYNTHETIC, "fixture sanity")
+
+        explicit = _target_biotype(DesignRequest(
+            sequence_text="ACGU", assay="in_vitro_detection",
+            target_biotype="rrna"))
+        self.assertEqual(explicit, Universe.RRNA)
+        self.assertNotEqual(explicit, implied, "the flag changed nothing")
+
+    def test_an_explicit_target_biotype_beats_a_presets_own(self):
+        """The documented order is explicit, then preset, then assay."""
+        from cas13guide.contract.enums import Universe
+        from cas13guide.contract.presets import preset_ids
+        from cas13guide.services.workflow import DesignRequest, _target_biotype
+
+        preset = sorted(preset_ids())[0]
+        from_preset = _target_biotype(DesignRequest(preset=preset))
+        self.assertEqual(from_preset, Universe.NCRNA, "fixture sanity: miRNA")
+
+        overridden = _target_biotype(DesignRequest(
+            preset=preset, target_biotype="mito"))
+        self.assertEqual(overridden, Universe.MITO)
+
+    def test_an_unknown_target_biotype_names_the_flag_too(self):
+        """Its sibling refusal names the flag and the valid values; this one
+        let the bare enum error through, so the same typo read very
+        differently depending on which input carried it."""
+        from cas13guide.services.workflow import (
+            DesignRequest,
+            DesignRequestError,
+            run_request,
+        )
+
+        with self.assertRaises(DesignRequestError) as caught:
+            run_request(DesignRequest(
+                fasta_path=str(self.home / "t.fa"),
+                target_biotype="ribosomal",
+                task="knockdown", assay=self.ASSAY, effector="RfxCas13d",
+            ))
+        message = str(caught.exception)
+        self.assertIn("--target-biotype", message)
+        self.assertIn("ribosomal", message)
+        self.assertIn("rrna", message)
+
     def test_an_unknown_biotype_names_the_flag_and_the_valid_values(self):
         from cas13guide.services.workflow import DesignRequestError
 
