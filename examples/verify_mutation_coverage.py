@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 128 are
+  "hole" is never an artefact of which modules were chosen. None of the 129 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **128 mutations, 128 caught, 0 holes.**
+Last measured: **129 mutations, 129 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -981,6 +981,13 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         "            return None if value is None else round(float(value), 4)",
         "            return value",
         ["test_io.py"],
+    ),
+    (
+        "the-arc-model-answers-about-mismatched-sites",
+        "src/cas13guide/services/arc_model.py",
+        "            max_mismatches=0,",
+        "            max_mismatches=4,",
+        ["test_arc_model.py"],
     ),
 ]
 

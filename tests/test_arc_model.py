@@ -316,5 +316,95 @@ class TestMissingWeightsAreReportedClearly(unittest.TestCase):
             self.assertIn("fold_0.onnx", str(caught.exception))
 
 
+class TestTheDomainReachesTheEvidence(unittest.TestCase):
+    """The declared domain, observed in a run rather than in the object.
+
+    The model sees a spacer and the folding of its intended target. It never
+    sees a mismatched site, so `domain.max_mismatches` is 0 -- ask it about an
+    off-target and the pipeline must mark the answer out-of-domain and widen
+    the interval, rather than pass an on-target efficacy prediction off as an
+    off-target risk estimate.
+
+    The domain object is asserted above. This asserts the consequence, because
+    a domain that is correct and unconsulted looks the same from inside the
+    model as one that is enforced.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import random
+        import tempfile
+        from pathlib import Path
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        rng = random.Random(31)
+        target = "".join(rng.choice("ACGU") for _ in range(180))
+        # A near-copy: shares most of its sequence, so a 30-mer finds real
+        # sites at a range of mismatch depths. Random filler finds none, and a
+        # fixture with no off-targets could not show this either way.
+        swap = {"A": "G", "G": "A", "C": "U", "U": "C"}
+        paralog = "".join(
+            swap[base] if index % 23 == 7 else base
+            for index, base in enumerate(target)
+        )
+        cls._directory = tempfile.TemporaryDirectory()
+        home = Path(cls._directory.name)
+        eol = chr(10)
+        (home / "t.fa").write_text(">TGT1" + eol + target + eol, encoding="utf-8")
+        (home / "bg.fa").write_text(
+            ">PAR1 biotype=rrna" + eol + paralog + eol, encoding="utf-8")
+
+        def run(use_arc):
+            return run_request(DesignRequest(
+                fasta_path=str(home / "t.fa"),
+                background_path=str(home / "bg.fa"),
+                use_arc=use_arc, effector="RfxCas13d", spacer_length=30,
+                task="knockdown", assay="cell_culture_knockdown",
+                use_structure=False, use_signal=False,
+            )).report
+
+        cls.arc = run(True)
+        cls.heuristic = run(False)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._directory.cleanup()
+
+    def test_the_fixture_produces_off_targets_at_several_depths(self):
+        """Or there is nothing for a domain limit to apply to."""
+        rows = self.arc["off_targets"]
+        self.assertTrue(rows)
+        self.assertTrue(any(row["mismatches"] > 0 for row in rows))
+
+    def test_every_mismatched_site_is_out_of_domain(self):
+        for row in self.arc["off_targets"]:
+            if row["mismatches"] > 0:
+                with self.subTest(locus=row["locus"], mm=row["mismatches"]):
+                    self.assertTrue(
+                        row["ood"],
+                        "the Arc model answered about a mismatched site and "
+                        "the answer was not marked out-of-domain",
+                    )
+
+    def test_a_perfect_site_is_within_it(self):
+        """`supports(RfxCas13d, 30, 0)` is true, so a perfect duplex is not
+        out-of-domain -- otherwise the flag would mean nothing."""
+        perfect = [row for row in self.arc["off_targets"]
+                   if row["mismatches"] == 0]
+        for row in perfect:
+            with self.subTest(locus=row["locus"]):
+                self.assertFalse(row["ood"])
+
+    def test_the_heuristic_marks_none_of_them(self):
+        """So the flag is the Arc model's doing, not the corpus's."""
+        self.assertTrue(self.heuristic["off_targets"])
+        self.assertFalse(
+            any(row["ood"] for row in self.heuristic["off_targets"]),
+            "the heuristic has no such domain limit; if these are flagged the "
+            "test above proves nothing about the Arc model",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
