@@ -293,8 +293,11 @@ def limitations_for_run(
                     "no-accessibility",
                     Severity.WARNING,
                     "No structural accessibility was computed, so a site buried in a "
-                    "stable hairpin is scored the same as an open one. Install "
-                    'ViennaRNA (`pip install "cas13guide[structure]"`) to enable it.',
+                    "stable hairpin is scored the same as an open one. The duplex "
+                    "free energy goes with it -- same dependency, same run -- so "
+                    "`duplex_dg_per_nt` is empty in the exports and its column is "
+                    "absent from the table. Install ViennaRNA "
+                    '(`pip install "cas13guide[structure]"`) to enable both.',
                 )
             )
     elif not getattr(accessibility, "is_independent_evidence", False):

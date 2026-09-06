@@ -226,15 +226,35 @@ def _design(args: argparse.Namespace) -> int:
         )
     if rows:
         robust = "robust" if args.variants else ""
+        # A column every row leaves empty is dropped rather than filled with
+        # `None`. The limitations above the table already say why each one is
+        # absent -- collateral is not predicted for this assay, ViennaRNA was
+        # not installed -- so the word adds nothing but noise, in the one
+        # place this tool otherwise accounts for what it does not know. The
+        # `robust` column has always behaved this way; these now match it.
+        optional = [
+            ("access", "accessibility"),
+            ("dG/nt", "duplex_dg_per_nt"),
+            ("signal", "predicted_signal"),
+        ]
+        shown_columns = [
+            (label, key) for label, key in optional
+            if any(row.get(key) is not None for row in rows)
+        ]
+
+        def cell(row, key):
+            value = row.get(key)
+            return "-" if value is None else str(value)
+
+        heads = "".join(f"{label:>8}" for label, _key in shown_columns)
         print()
-        print(f"{'rank':>4}  {'spacer':32s} {'score':>6} {'access':>7} "
-              f"{'dG/nt':>7} {'signal':>7} {'PFS':>4} {robust:>7}")
+        print(f"{'rank':>4}  {'spacer':32s} {'score':>6}{heads} "
+              f"{'PFS':>4} {robust:>7}")
         for row in rows:
             worst = (f"{row['metrics']['robustness']:.3f}" if args.variants else "")
-            print(f"{row['rank']:>4}  {row['spacer']:32s} {row['score']:>6.2f} "
-                  f"{str(row['accessibility']):>7} {str(row['duplex_dg_per_nt']):>7} "
-                  f"{str(row['predicted_signal']):>7} {str(row['pfs_3prime']):>4} "
-                  f"{worst:>7}")
+            values = "".join(f"{cell(row, key):>8}" for _label, key in shown_columns)
+            print(f"{row['rank']:>4}  {row['spacer']:32s} {row['score']:>6.2f}"
+                  f"{values} {str(row['pfs_3prime']):>4} {worst:>7}")
     elif all_rows:
         # `rows` is the *display* list -- it has been through the distinct-site
         # filter and `--top`. Reporting "no guide cleared the gate" because a
