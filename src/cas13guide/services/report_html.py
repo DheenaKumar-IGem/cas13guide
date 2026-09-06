@@ -48,6 +48,13 @@ SCORE_GLOSSARY: dict[str, tuple[str, str]] = {
 }
 
 #: Ordered columns of the results table.
+def _contexts_of(report: dict) -> tuple[str, ...]:
+    """Deferred import: limitations pulls in the preset tables."""
+    from .limitations import evaluated_contexts
+
+    return evaluated_contexts(report.get("provenance"))
+
+
 TABLE_COLUMNS: tuple[str, ...] = (
     "rank", "spacer", "site", "score", "verdict", "review_tier",
     "required_coverage", "worst_off_target", "accessibility",
@@ -308,7 +315,15 @@ def render_report(
     # describing one run, one of them contradicting the other two.
     has_absolute = any(row.get("predicted_signal_nm") is not None for row in ranked)
     glossary_for_run = dict(SCORE_GLOSSARY)
+    # Robustness over one context is the coverage repeated. The heading says
+    # "worst coverage across every evaluated context -- variants, isoforms,
+    # haplotypes", and with nothing to vary that column is a number about a
+    # question the run never asked. The terminal has always dropped it; this
+    # is the same rule, and the `robustness-unevaluated` WARNING above the
+    # table is what makes dropping it honest rather than quiet.
     columns = TABLE_COLUMNS
+    if len(_contexts_of(report)) == 1:
+        columns = tuple(key for key in columns if key != "robustness")
     if has_absolute:
         glossary_for_run["predicted_signal"] = (
             "Signal",

@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 137 are
+  "hole" is never an artefact of which modules were chosen. None of the 139 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **137 mutations, 137 caught, 0 holes.**
+Last measured: **139 mutations, 139 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -70,6 +70,18 @@ REPO = Path(__file__).resolve().parents[1]
 #: which is most of its wall clock -- an instrument nobody runs documents drift
 #: instead of preventing it.
 MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
+    # ---- robustness, where nothing was varied ----
+    # Over one context the minimum required coverage is the coverage, so the
+    # column reads as a measurement of variation nobody supplied.
+    ("robustness-claimed-with-one-context",
+     "src/cas13guide/services/limitations.py",
+     "    if len(contexts) == 1:", "    if len(contexts) == -1:",
+     ["test_user_facing_surfaces.py"]),
+    ("html-keeps-the-robustness-column",
+     "src/cas13guide/services/report_html.py",
+     "    if len(_contexts_of(report)) == 1:",
+     "    if len(_contexts_of(report)) == -1:",
+     ["test_user_facing_surfaces.py"]),
     # ---- services/workflow.py: the flag reaching the report ----
     # The model's rules are asserted directly and a malformed file raises with
     # the flag named. Between them sits the path a user takes, and dropping

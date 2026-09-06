@@ -94,6 +94,29 @@ def _self_fold_is_proxy(provenance: Any) -> bool:
     return False
 
 
+def evaluated_contexts(provenance: Any) -> tuple[str, ...]:
+    """Which sequence contexts the run built evidence over.
+
+    The ledger records one ``transcriptome`` entry per context, named for it,
+    so a surface can tell a run that compared a reference against isoforms
+    from one that saw a single sequence. Duck-typed like
+    :func:`_self_fold_is_proxy`, for the same reason.
+    """
+    if provenance is None:
+        return ()
+    records = (
+        provenance.get("records", ())
+        if isinstance(provenance, dict)
+        else getattr(provenance, "records", ())
+    )
+    names = []
+    for record in records:
+        get = record.get if isinstance(record, dict) else lambda k: getattr(record, k, None)
+        if get("kind") == "transcriptome":
+            names.append(str(get("name")))
+    return tuple(names)
+
+
 def limitations_for_run(
     spec: ResolvedDesignSpec,
     registry: Any = None,
@@ -473,6 +496,32 @@ def limitations_for_run(
         )
     )
     found.sort(key=lambda item: (_SEVERITY_ORDER[item.severity], item.id))
+    # ---- robustness ----------------------------------------------------
+    # Robustness is the minimum required coverage across every evaluated
+    # context. Over one context that minimum is the coverage, so a run with no
+    # variants reports a robustness equal to its coverage -- a number that
+    # reads as "this guide survives variation" and was computed over no
+    # variation at all. The terminal drops the column; the HTML report showed
+    # it; and nothing anywhere said the question had not been asked.
+    contexts = evaluated_contexts(provenance)
+    # `== 1`, not `<= 1`. A report carrying no transcriptome records at
+    # all -- a caller who assembled the dict by hand -- tells us nothing
+    # about how many contexts ran, and silence is not evidence of one.
+    if len(contexts) == 1:
+        found.append(
+            Limitation(
+                "robustness-unevaluated",
+                Severity.WARNING,
+                "Robustness was not evaluated: evidence was built over one "
+                f"sequence context{'' if not contexts else ' (' + contexts[0] + ')'}, "
+                "so the worst-case coverage across contexts is just the "
+                "coverage and no guide was tested against a variant. A guide "
+                "that fails on an isoform, a haplotype or a circulating strain "
+                "looks identical here to one that does not. Supply them with "
+                "--variants.",
+            )
+        )
+
     return tuple(found)
 
 

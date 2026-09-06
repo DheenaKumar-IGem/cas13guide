@@ -153,5 +153,120 @@ class TestThePanelIntervalReachesTheTerminal(unittest.TestCase):
         self.assertIn("upper = members fail independently", self.result.stdout)
 
 
+class TestRobustnessIsNotClaimedWhereNothingWasVaried(unittest.TestCase):
+    """A number about a question the run never asked.
+
+    Robustness is the minimum required coverage across every evaluated
+    context. Over one context that minimum *is* the coverage, so a run with no
+    variants reported a robustness equal to its coverage -- and the HTML
+    report's tooltip says "A guide that works on the reference and loses one
+    variant shows it here", which nothing here could have shown.
+
+    Found by running `cas13guide serve` and reading the page. The terminal has
+    always dropped the column when `--variants` is absent; the HTML surface did
+    not, and no caveat on any surface said the question had gone unasked, so a
+    reader had nothing to correct the impression with.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import random
+        import tempfile
+        from pathlib import Path
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        rng = random.Random(19)
+
+        def sequence(n):
+            return "".join(rng.choice("ACGU") for _ in range(n))
+
+        cls._directory = tempfile.TemporaryDirectory()
+        home = Path(cls._directory.name)
+        eol = chr(10)
+        reference = sequence(200)
+        (home / "t.fa").write_text(
+            ">TGT1 biotype=coding" + eol + reference + eol, encoding="utf-8")
+        # An isoform: the same transcript with a substitution every 37 nt, so
+        # some windows are hit and others are not.
+        variant = list(reference)
+        for index in range(0, len(variant), 37):
+            variant[index] = rng.choice(
+                [b for b in "ACGU" if b != variant[index]])
+        (home / "var.fa").write_text(
+            ">TGT1_iso2" + eol + "".join(variant) + eol, encoding="utf-8")
+        # Every universe a knockdown assay exposes the guide to, or the run is
+        # REVIEW `universe_unrepresented` throughout and says so instead.
+        rows = []
+        for name, biotype in (("RN18S1", "rrna"), ("MT-CO1", "mito"),
+                              ("LINC01", "ncrna"), ("PREM1", "pre_mrna"),
+                              ("OTHER", "coding")):
+            rows += [">" + name + " biotype=" + biotype, sequence(200)]
+        (home / "bg.fa").write_text(eol.join(rows) + eol, encoding="utf-8")
+
+        def design(variants):
+            return run_request(DesignRequest(
+                fasta_path=str(home / "t.fa"),
+                background_path=str(home / "bg.fa"),
+                assay="cell_culture_knockdown",
+                variants_path=str(home / "var.fa") if variants else None,
+            )).report
+
+        cls.alone = design(False)
+        cls.varied = design(True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._directory.cleanup()
+
+    @staticmethod
+    def _contexts(report):
+        return [record["name"] for record in report["provenance"]["records"]
+                if record["kind"] == "transcriptome"]
+
+    def test_the_fixture_really_evaluates_one_context_and_two(self):
+        """Or neither branch below is the branch it says it is."""
+        self.assertEqual(self._contexts(self.alone), ["reference"])
+        self.assertEqual(len(self._contexts(self.varied)), 2)
+
+    def test_over_one_context_robustness_is_just_the_coverage(self):
+        """The observation itself, so the reason for the rest is on record."""
+        for row in self.alone["ranked"]:
+            metrics = row["metrics"]
+            with self.subTest(guide=row["guide_id"]):
+                self.assertAlmostEqual(metrics["robustness"],
+                                       metrics["required_coverage"], places=9)
+
+    def test_the_run_says_robustness_went_unevaluated(self):
+        found = [item for item in self.alone["limitations"]
+                 if item["id"] == "robustness-unevaluated"]
+        self.assertEqual(len(found), 1)
+        self.assertIn("--variants", found[0]["text"])
+
+    def test_and_does_not_say_it_when_a_variant_was_supplied(self):
+        """Or the caveat is simply always on and says nothing."""
+        self.assertFalse([item for item in self.varied["limitations"]
+                          if item["id"] == "robustness-unevaluated"])
+
+    def test_the_html_report_drops_the_column_it_cannot_fill(self):
+        from cas13guide.services.report_html import render_report
+
+        self.assertNotIn(">Robustness<", render_report(self.alone))
+
+    def test_and_keeps_it_when_there_is_something_to_report(self):
+        from cas13guide.services.report_html import render_report
+
+        self.assertIn(">Robustness<", render_report(self.varied))
+
+    def test_the_other_columns_are_not_disturbed(self):
+        """Dropping one must not take its neighbours with it."""
+        from cas13guide.services.report_html import render_report
+
+        page = render_report(self.alone)
+        for heading in ("Coverage", "Worst off-target", "Score", "Verdict"):
+            with self.subTest(column=heading):
+                self.assertIn(">" + heading + "<", page)
+
+
 if __name__ == "__main__":
     unittest.main()
