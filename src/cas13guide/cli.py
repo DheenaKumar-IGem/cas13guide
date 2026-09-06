@@ -498,7 +498,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     source = design.add_argument_group("input (FR1.1-FR1.3)")
     source.add_argument("--sequence", help="pasted raw or FASTA sequence text")
-    source.add_argument("--fasta", help="FASTA file to read")
+    source.add_argument(
+        "--fasta",
+        help="FASTA file to read. The first record is the target and the "
+             "rest are additional intended targets, unless a record says "
+             "otherwise: `>id class=forbidden` marks a biomarker this "
+             "design must NOT detect, which is how a multiplex panel is "
+             "stated. Classes: required, desired, tolerated, avoid, "
+             "forbidden")
     source.add_argument("--preset", help="built-in target id, e.g. hsa-miR-21-5p")
     source.add_argument("--list-presets", action="store_true",
                         help="list the built-in targets and exit")

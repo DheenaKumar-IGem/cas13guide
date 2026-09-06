@@ -106,7 +106,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1482 tests
+python -m unittest discover -s tests -t tests    # 1495 tests
 pytest                              # same suite under pytest
 ```
 
@@ -908,7 +908,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1482 tests, run under `unittest` or `pytest` — both discover the same set —
+1495 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -920,8 +920,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1482 tests
-python examples/verify_mutation_coverage.py              # 143 mutations, 143 caught
+pytest                                                   # 1495 tests
+python examples/verify_mutation_coverage.py              # 144 mutations, 144 caught
 python examples/verify_vocabulary_coverage.py            # 56 of 56 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -975,7 +975,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 143 are
+against the **whole** suite before being called a hole. None of the 144 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -1719,6 +1719,7 @@ the work was done correctly and the result went nowhere.
 | A display flag decided the exit status | The status came from the list the terminal table prints, after the distinct-site filter and `--top`. So `--top 0` **exited 1 and printed "no guide cleared the gate" beside a CSV holding 322 of them** — and 1 is the code a wrapper script reads as "the run refused everything" | `test_exit_codes_are_a_contract.py` |
 | The advertised kinetics unlock reached no surface a user reads | `absolute_signal()` is a library method and **nothing in `src/` called it**: the pipeline asked `predict()` for a figure, kept the relative score and discarded the nM from the same object. So supplying measured constants — the work the README names as unlocking an absolute figure — changed a warning and produced no number anywhere | `test_kinetics_mass_balance.py` |
 | The caveats reached the reader and not the machine — and not the demo at all | Four CRITICAL limitations apply to an ordinary run, including that the calibration is synthetic so **every PASS is exercisable rather than earned**. `report.json` had no limitations key at all, so a pipeline saw PASS verdicts and calibrated-looking intervals with nothing to qualify either — the one surface where a caveat cannot be inferred from tone. And `cas13guide demo`, the first command anybody runs, printed none of them anywhere: a grep of its whole output for "critical", "warning" or "limitation" returned zero | `test_caveats_reach_every_surface.py` |
+| A multiplex panel could not be stated, and cross-reaction was rewarded | Every door filed record 0 as `REQUIRED` and records 1..n as `DESIRED`. `DESIRED` counts as `is_intended` and `off_target_hazards` filters on `not is_intended`, so **a guide cross-reacting with another panel member was credited to `desired_utility` — a maximised objective — and excluded from the hazard sum entirely**. Measured on a 2 nt-apart pair: utility 0.76 on the *other* biomarker, `worst_off_target` 0.000, burden 0. The machinery for the opposite reading already existed and was unreachable: FORBIDDEN carries hazard weight 5.0 and the gate raises `CREDIBLE_FORBIDDEN_HIT`. `biotype=` was already parsed from a record header for the same kind of reason, so `class=` is the same mechanism — absent it, nothing changes. Measured after: the near-identical member marked `class=forbidden` gives **6 FAIL on `credible_forbidden_hit`**, an unrelated one gives 6 REVIEW and no forbidden hits | `test_panel_members_can_be_forbidden.py` |
 | The browser door could not decline the model that is most of the run | Both doors are thin wrappers over one `run_request`, and the terminal has had `--no-signal` since the flag existed. The web form posted twelve inputs and it was not among them, so a browser user waited out the collateral-signal model — measured **20.4 s against 2.6 s** on a 1 kb target, ranking the identical 746 guides — for a column the same run reports and then says it does not rank on, under a page promising results “in a few seconds”. The capability was always there; only the affordance was missing. No default changed: an unchecked box posts nothing | `test_webapp.py` |
 | Every built-in preset was a dead end that named no way out | The `--preset` flag and the web form’s dropdown are the lowest-friction path in the product, and on the CLI default effector all five presets return **`{'PASS': 0, 'REVIEW': 0, 'FAIL': 1}`** and exit 1. The refusal is correct — a 22–24 nt mature miRNA cannot hold LwaCas13a’s 28 nt spacer, and a length no model was fit at must not be certified. But `RfxCas13d` is fit at 22 and 23 nt and returns **2 REVIEW guides on the same preset**, and nothing said so: the note computed which orthologs publish the *resolved* length, which for a 24 nt target is 24, and ended “No ortholog in this package publishes that length” — a true answer to the wrong question. Both branches now name the ortholog **and** the flag, and a test follows the advice to check it produces candidates | `test_presets.py` |
 | The instrument that catches documentation drift had drifted | `verify_mutation_coverage.py` stated, in the present tense about what the sweep does, that a survivor is re-run “against all 1241 tests”. The suite collected 1,473. `documented_test_counts()` pinned that figure in four places and this sentence was in none of them — which is why it was the one that rotted, exactly as its own docstring records happening before when a fourth statement said 930 while three said 1,247. The sentence **two lines below it** states the mutation count and *is* scraped: one sentence, two numbers, one checked. It is the fifth scraped statement now | `test_documents_agree.py` |

@@ -99,7 +99,10 @@ label.check input{{width:auto;margin:0;flex:0 0 auto}}
   <label for="sequence">Sequence (raw or FASTA)</label>
   <textarea id="sequence" name="sequence" placeholder="AUGCAUGC...  or  &gt;my_target
 AUGCAUGC..."></textarea>
-  <div class="hint">DNA is transcribed to RNA. Anything outside A/C/G/U/T/N is refused.</div>
+  <div class="hint">DNA is transcribed to RNA. Anything outside A/C/G/U/T/N is refused.
+  With several records the first is the target and the rest are also aimed at;
+  mark one <code>&gt;id class=forbidden</code> to say the design must NOT detect it,
+  which is how a multiplex panel is stated.</div>
 
   <div class="row">
     <div><label for="fasta">…or upload a FASTA file</label>

@@ -251,6 +251,38 @@ def _resolve_spacer_length(
     return length
 
 
+def _record_target_class(record, default: TargetClass, flag: str) -> TargetClass:
+    """What one supplied record is to this design.
+
+    ``class=`` in the FASTA description, alongside the ``biotype=`` this file
+    already parses. Without it every door filed record 0 as REQUIRED and the
+    rest as DESIRED, so a multiplex diagnostic panel -- N biomarkers that must
+    be told apart -- could not be stated at all. Worse than unstated: DESIRED
+    counts as ``is_intended``, so a guide cross-reacting with another panel
+    member was credited to ``desired_utility`` and excluded from the off-target
+    hazard.
+
+    The gate machinery for the other reading was already here and unreachable:
+    FORBIDDEN carries a hazard weight of 5.0, and the gate raises
+    CREDIBLE_FORBIDDEN_HIT above ``forbidden_activity_max``.
+
+    ``default`` is the positional rule, so a file with no ``class=`` anywhere
+    behaves exactly as before.
+    """
+    for token in record.description.split():
+        key, sep, value = token.partition("=")
+        if sep and key.lower() == "class":
+            try:
+                return TargetClass(value.strip().lower())
+            except ValueError:
+                raise DesignRequestError(
+                    f"{flag} record {record.name!r} carries "
+                    f"class={value!r}, which is not a target class. Use one "
+                    f"of: {', '.join(c.value for c in TargetClass)}."
+                ) from None
+    return default
+
+
 def _record_biotype(record, default: Universe, flag: str) -> Universe:
     """The universe one supplied record belongs to.
 
@@ -332,9 +364,14 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
                 sequence=record.sequence,
                 # The first record is what the design must hit; the rest are
                 # desirable, not required, so one unusable extra record cannot
-                # fail the whole run.
-                target_class=(
-                    TargetClass.REQUIRED if index == 0 else TargetClass.DESIRED
+                # fail the whole run. A record may override that with `class=`
+                # in its header, which is what makes a multiplex panel -- N
+                # biomarkers to be told apart rather than co-targeted --
+                # expressible through this door at all.
+                target_class=_record_target_class(
+                    record,
+                    TargetClass.REQUIRED if index == 0 else TargetClass.DESIRED,
+                    "--fasta",
                 ),
                 gene=record.name,
                 biotype=target_biotype,
@@ -342,6 +379,13 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
             )
             for index, record in enumerate(records)
         )
+        if not any(t.target_class is TargetClass.REQUIRED for t in targets):
+            raise DesignRequestError(
+                "every record was given a class= other than 'required', so "
+                "there is nothing for the design to hit. Mark the biomarker "
+                "this run is designing against as class=required and the ones "
+                "it must not detect as class=forbidden."
+            )
         return ResolvedDesignSpec(
             contract=TargetContract(task=task, targets=targets),
             profile=EffectorAssayProfile(

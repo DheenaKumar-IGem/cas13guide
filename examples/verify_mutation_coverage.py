@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1482 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 143 are
+  survives is re-run against all 1495 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. None of the 144 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **143 mutations, 143 caught, 0 holes.**
+Last measured: **144 mutations, 144 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -106,6 +106,14 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "src/cas13guide/services/workflow.py",
      "    if not request.panel_dependence_json:", "    if True:",
      ["test_panel_confidence.py"]),
+    # ---- services/workflow.py: a record declaring its class ----
+    # Ignoring the header puts every extra record back to DESIRED, which makes
+    # a cross-reaction with another panel member count as utility instead of
+    # hazard -- the reading that rewards the failure it should catch.
+    ("record-class-header-is-ignored", "src/cas13guide/services/workflow.py",
+     '        if sep and key.lower() == "class":',
+     '        if sep and key.lower() == "__never_matches__":',
+     ["test_panel_members_can_be_forbidden.py"]),
     # ---- services/webapp.py: the control the browser door gained ----
     # A checkbox accepted and ignored is worse than no checkbox: the user
     # believes they declined the model and waits for it anyway.
@@ -864,8 +872,12 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
     (
         "every-background-record-is-coding-again",
         "src/cas13guide/services/workflow.py",
-        "    return default",
-        "    return Universe.CODING",
+        # Widened from a bare `    return default` when
+        # `_record_target_class` was added and ended the same way. The
+        # sweep's own anchor-integrity test caught the ambiguity in the
+        # fast suite, before it could mutate the wrong function.
+        "                    + \", \".join(sorted(u.value for u in Universe))\n                ) from None\n    return default",
+        "                    + \", \".join(sorted(u.value for u in Universe))\n                ) from None\n    return Universe.CODING",
         ["test_subcommands_end_to_end.py", "test_bugfix_regressions_round4.py"],
     ),
     (
