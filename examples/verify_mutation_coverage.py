@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1495 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 144 are
+  "hole" is never an artefact of which modules were chosen. None of the 149 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **144 mutations, 144 caught, 0 holes.**
+Last measured: **149 mutations, 149 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -188,6 +188,35 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "src/cas13guide/services/workflow.py",
      "    rng = random.Random(seed)", "    rng = random.Random(0)",
      ["test_the_demo_demonstrates_something.py"]),
+    # ---- util/seq.py: the primitives everything else reads through ----
+    # A spacer is revcomp of its site, tiling is windows, and QC reads the
+    # other three. The file carried no mutation; each hint below names the
+    # module measured to catch that one, two of them found by re-running the
+    # whole suite after they survived an 8-module subset.
+    ("revcomp-forgets-to-reverse", "src/cas13guide/util/seq.py",
+     "    return complement(seq)[::-1]", "    return complement(seq)",
+     ["test_duplex.py", "test_search.py", "test_io.py"]),
+    ("gc-fraction-counts-a-and-u", "src/cas13guide/util/seq.py",
+     '    return sum(1 for b in seq if b in "GC") / len(seq)',
+     '    return sum(1 for b in seq if b in "AU") / len(seq)',
+     ["test_duplex.py", "test_candidates_qc.py"]),
+    ("max-homopolymer-takes-the-shortest", "src/cas13guide/util/seq.py",
+     '    return max(len(m.group(0)) for m in re.finditer(r"(.)\\1*", seq))',
+     '    return min(len(m.group(0)) for m in re.finditer(r"(.)\\1*", seq))',
+     ["test_orchestrator.py", "test_candidates_qc.py"]),
+    # Silently loses the final tiling site of every transcript. Survived an
+    # 8-module subset; the whole suite catches it in 14 places.
+    ("windows-drops-the-last-one", "src/cas13guide/util/seq.py",
+     "    for i in range(0, len(seq) - size + 1, step):",
+     "    for i in range(0, len(seq) - size, step):",
+     ["test_bugfix_regressions_round4.py", "test_search.py"]),
+    # U-runs of >=4 terminate Pol III transcription of the guide cassette, so
+    # a default of 5 stops flagging the run that actually ends it. One test in
+    # the whole suite catches this, which is worth knowing.
+    ("polyu-terminator-needs-one-more", "src/cas13guide/util/seq.py",
+     "def has_polyu_terminator(seq: str, run: int = 4) -> bool:",
+     "def has_polyu_terminator(seq: str, run: int = 5) -> bool:",
+     ["test_candidates_qc.py"]),
     # ---- metrics/bounds.py: the asymmetric bound algebra ----
     ("bounds-benefit-reads-upper", "src/cas13guide/metrics/bounds.py",
      '    """Read a benefit at its lower confidence bound."""\n    return interval.lower',
