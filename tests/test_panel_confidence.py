@@ -490,5 +490,136 @@ class TestTheWindowSizeMinimumIsTheDefaultOne(unittest.TestCase):
         self.assertEqual(success.trials, 20)
 
 
+class TestTheFlagReachesTheReport(unittest.TestCase):
+    """The file, through a design, to the number a reader sees.
+
+    Every rule about dependence is asserted above against `PanelDependence`
+    built in the test, and the workflow raises with the flag named when the
+    file is malformed. The path between them -- a JSON file changing what a
+    run reports -- had nothing on it, which is where this session's
+    `--blast-db` defect lived: the flag parsed, the index was right, and the
+    wiring scored the run's own target.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        import random
+        import tempfile
+        from pathlib import Path
+
+        rng = random.Random(19)
+
+        def sequence(n):
+            return "".join(rng.choice("ACGU") for _ in range(n))
+
+        cls._directory = tempfile.TemporaryDirectory()
+        home = Path(cls._directory.name)
+        eol = chr(10)
+        (home / "t.fa").write_text(
+            ">TGT1 biotype=coding" + eol + sequence(200) + eol,
+            encoding="utf-8")
+        # Every universe a knockdown assay exposes the guide to. With any of
+        # them missing from the corpus the run is REVIEW `universe_unrepresented`
+        # on every guide -- correctly, it did not look there -- the PASS-only
+        # panel is empty, and there is no confidence interval to be about.
+        rows = []
+        for name, biotype in (("RN18S1", "rrna"), ("MT-CO1", "mito"),
+                              ("LINC01", "ncrna"), ("PREM1", "pre_mrna"),
+                              ("OTHER", "coding")):
+            rows += [">" + name + " biotype=" + biotype, sequence(200)]
+        (home / "bg.fa").write_text(eol.join(rows) + eol, encoding="utf-8")
+        for name, provisional in (("measured", False), ("provisional", True)):
+            (home / (name + ".json")).write_text(json.dumps({
+                "common_cause_beta": 0.35,
+                "source": "replicate panel runs, n=12",
+                "provisional": provisional,
+            }), encoding="utf-8")
+        cls.home = home
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        def design(dependence=None):
+            return run_request(DesignRequest(
+                fasta_path=str(home / "t.fa"),
+                background_path=str(home / "bg.fa"),
+                assay="cell_culture_knockdown",
+                panel_dependence_json=(
+                    None if dependence is None
+                    else str(home / (dependence + ".json"))),
+            )).report
+
+        cls.reports = {
+            "none": design(),
+            "measured": design("measured"),
+            "provisional": design("provisional"),
+        }
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._directory.cleanup()
+
+    def _target(self, which):
+        confidence = (self.reports[which].get("panel") or {}).get("confidence")
+        self.assertTrue(confidence and confidence["targets"],
+                        f"the {which} run reported no panel confidence at all")
+        return confidence["targets"][0]
+
+    def test_the_fixture_produces_a_panel_to_talk_about(self):
+        """Or every assertion below is about an absent object."""
+        for which in self.reports:
+            with self.subTest(run=which):
+                self.assertTrue(
+                    (self.reports[which].get("panel") or {}).get("guides"))
+
+    def test_without_a_file_there_is_no_point_estimate(self):
+        self.assertIsNone(self._target("none")["point"])
+
+    def test_a_measured_value_puts_one_in_the_report(self):
+        point = self._target("measured")["point"]
+        self.assertIsNotNone(
+            point, "the file was read and the report did not change")
+        target = self._target("measured")
+        self.assertGreaterEqual(point, target["lower"])
+        self.assertLessEqual(point, target["upper"])
+
+    def test_a_provisional_value_is_read_and_still_refused(self):
+        """The file parses -- an unknown key raises, so it was read -- and the
+        number is withheld anyway."""
+        self.assertIsNone(self._target("provisional")["point"])
+
+    def test_the_interval_itself_does_not_move(self):
+        """beta collapses the interval to a point; it does not redraw it."""
+        for which in ("measured", "provisional"):
+            with self.subTest(run=which):
+                for end in ("lower", "upper"):
+                    self.assertAlmostEqual(self._target(which)[end],
+                                           self._target("none")[end], places=9)
+
+    def test_the_ledger_says_which_of_the_two_it_was(self):
+        """A point estimate whose provenance is not recorded is a number with
+        no account of where it came from."""
+        def dependence(which):
+            return next(
+                record["detail"]["dependence"]
+                for record in self.reports[which]["provenance"]["records"]
+                if record.get("name") == "panel_confidence")
+
+        self.assertIn("measured", dependence("measured"))
+        self.assertEqual(dependence("none"), "unmeasured")
+        self.assertEqual(dependence("provisional"), "unmeasured")
+
+    def test_the_caveat_goes_away_only_when_the_number_arrives(self):
+        """The WARNING exists to explain why an interval is all there is."""
+        def has_caveat(which):
+            return any(
+                item["id"] == "panel-dependence-unmeasured"
+                for item in self.reports[which].get("limitations", ()))
+
+        self.assertTrue(has_caveat("none"))
+        self.assertTrue(has_caveat("provisional"))
+        self.assertFalse(has_caveat("measured"))
+
+
 if __name__ == "__main__":
     unittest.main()
