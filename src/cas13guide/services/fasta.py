@@ -344,14 +344,24 @@ def ranked_rows(report_dict: dict) -> list[dict]:
     for entry in report_dict.get("ranked", []):
         row = {column: entry.get(column) for column in RANKED_COLUMNS}
         metrics = entry.get("metrics") or {}
-        row["required_coverage"] = metrics.get("required_coverage")
+        # Rounded like every neighbour in this file. They arrived straight
+        # from the metrics dict while `score`, `accessibility` and the rest
+        # were rounded upstream, so a row read "score 9.7221 ...
+        # required_coverage 0.7643548423917778" -- sixteen significant figures
+        # for a conformal bound calibrated on two hundred synthetic points,
+        # in the file somebody orders oligos from. The report dict keeps the
+        # full value for anything that wants it.
+        def _shown(value):
+            return None if value is None else round(float(value), 4)
+
+        row["required_coverage"] = _shown(metrics.get("required_coverage"))
         # The CSV is the file oligos are ordered from, and it carried the
         # reference coverage while omitting the minimum across contexts. A
         # guide that reaches no site in a supplied variant was indistinguishable
         # in it from one that reaches every site.
-        row["robustness"] = metrics.get("robustness")
-        row["worst_off_target"] = metrics.get("worst_off_target")
-        row["cumulative_burden"] = metrics.get("cumulative_burden")
+        row["robustness"] = _shown(metrics.get("robustness"))
+        row["worst_off_target"] = _shown(metrics.get("worst_off_target"))
+        row["cumulative_burden"] = _shown(metrics.get("cumulative_burden"))
         for key in ("reasons", "qc_warnings", "detail"):
             value = row.get(key)
             if isinstance(value, (list, tuple)):

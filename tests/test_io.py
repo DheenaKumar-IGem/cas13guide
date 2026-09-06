@@ -434,5 +434,64 @@ class TestReviewGuidesReachTheRanking(unittest.TestCase):
             self.assertIn(guide.guide_id, passing)
 
 
+class TestTheCsvDoesNotClaimSixteenDigits(unittest.TestCase):
+    """The metric columns are rounded like every other number in the file.
+
+    They arrived straight from the metrics dict while `score`,
+    `accessibility` and the rest were rounded upstream, so a row read
+    "score 9.7221 ... required_coverage 0.7643548423917778" -- sixteen
+    significant figures for a conformal bound calibrated on two hundred
+    synthetic points, in the file somebody orders oligos from.
+
+    Not a false number, but a number wearing more precision than it has, in a
+    package whose whole manner is refusing to do that. The report dict keeps
+    the full value for anything that wants it.
+    """
+
+    @staticmethod
+    def _rows(metrics):
+        from cas13guide.services.fasta import ranked_rows
+
+        return ranked_rows({
+            "ranked": [{
+                "rank": 1, "guide_id": "g_abc",
+                "spacer": "AUGCAUGCAUGCAUGCAUGCAU", "score": 7.0,
+                "verdict": "REVIEW", "review_tier": "R2",
+                "spans_junction": False, "pfs_3prime": "A",
+                "pfs_preferred": True, "accessibility": 0.48,
+                "duplex_dg_per_nt": -1.9, "predicted_signal": 0.13,
+                "reasons": [], "qc_warnings": [], "metrics": metrics,
+            }],
+        })
+
+    def _row(self):
+        return self._rows({
+            "required_coverage": 0.7643548423917778,
+            "robustness": 0.7643548423917778,
+            "worst_off_target": 0.4164970462485115,
+            "cumulative_burden": 0.4164970462485115,
+        })[0]
+
+    def test_every_metric_column_is_rounded(self):
+        row = self._row()
+        for column in ("required_coverage", "robustness", "worst_off_target",
+                       "cumulative_burden"):
+            with self.subTest(column=column):
+                self.assertEqual(row[column], round(row[column], 4))
+                self.assertLessEqual(len(str(row[column]).split(".")[-1]), 4)
+
+    def test_the_value_is_still_the_right_one(self):
+        """Rounded, not replaced."""
+        row = self._row()
+        self.assertAlmostEqual(row["required_coverage"], 0.7644, places=4)
+        self.assertAlmostEqual(row["worst_off_target"], 0.4165, places=4)
+
+    def test_a_missing_metric_stays_missing(self):
+        """`None` must not become 0.0: absent and zero are different answers,
+        and this package spends a great deal of effort keeping them apart."""
+        row = self._rows({"required_coverage": None})[0]
+        self.assertIsNone(row["required_coverage"])
+
+
 if __name__ == "__main__":
     unittest.main()
