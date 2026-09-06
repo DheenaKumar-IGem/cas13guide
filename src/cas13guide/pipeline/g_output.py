@@ -425,6 +425,20 @@ def _validation_plan(
     spec: ResolvedDesignSpec,
     off_target_rows: tuple[dict, ...] = (),
 ) -> tuple[str, ...]:
+    if not panel.guides:
+        # A protocol for a panel that does not exist. With nothing through the
+        # gate this read "Transfect the 0-guide panel alongside 0
+        # composition-matched non-targeting controls", then went on to
+        # quantify knockdown of it and sequence its off-targets -- four steps
+        # a reader cannot take, printed directly beneath the shortfall saying
+        # why there is no panel. Same shape as the explorer line that pointed
+        # at a table the page did not contain.
+        return (
+            "There is no panel to validate: nothing cleared the gate, so this "
+            "run has no protocol to offer. The shortfalls above say what was "
+            "missing, and the ranked table is triage rather than a "
+            "recommendation.",
+        )
     plan = [
         f"Transfect the {panel.size}-guide panel alongside "
         f"{len(controls)} composition-matched non-targeting controls.",

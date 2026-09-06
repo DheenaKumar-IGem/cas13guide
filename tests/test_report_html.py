@@ -348,7 +348,12 @@ class TestAnEmptyExplorerIsNotACleanOne(unittest.TestCase):
         from cas13guide.pipeline.g_output import _validation_plan
         from cas13guide.pipeline.optimizer import Panel
 
-        panel = Panel(guides=(), coverage={}, objective=0.0, guarantee="none")
+        # A panel with a member: an empty one short-circuits to "no panel to
+        # validate", which is the more fundamental absence and says nothing
+        # about the explorer. This branch is about a run that *has* something
+        # to validate and no table to point at.
+        panel = Panel(guides=(object(),), coverage={}, objective=0.0,
+                      guarantee="none")
         plan = _validation_plan(panel, (), make_spec(), off_target_rows=())
         # "off-target homology" appears in the collateral step too.
         [line] = [step for step in plan if "off-target explorer" in step]
@@ -356,6 +361,58 @@ class TestAnEmptyExplorerIsNotACleanOne(unittest.TestCase):
         self.assertIn("about the corpus", line)
         self.assertIn("background", line)
         self.assertNotIn("explorer table;", line)
+
+
+class TestAnEmptyPanelGetsNoProtocol(unittest.TestCase):
+    """A wet-lab protocol for a panel that does not exist.
+
+    With nothing through the gate the plan read "Transfect the 0-guide panel
+    alongside 0 composition-matched non-targeting controls", then went on to
+    quantify knockdown of it and sequence its off-targets: four steps a reader
+    cannot take, printed directly beneath the shortfall explaining why there
+    is no panel.
+
+    Same shape as the explorer line that pointed at a table the page did not
+    contain, and found the same way -- by reading a run's report rather than
+    by any instrument.
+    """
+
+    @staticmethod
+    def _plan(guides):
+        from cas13guide.pipeline.g_output import _validation_plan
+        from cas13guide.pipeline.optimizer import Panel
+
+        panel = Panel(guides=tuple(guides), coverage={}, objective=0.0,
+                      guarantee="none")
+        return _validation_plan(panel, (), make_spec())
+
+    def test_an_empty_panel_says_there_is_nothing_to_validate(self):
+        [line] = self._plan([])
+        self.assertIn("no panel to validate", line)
+        self.assertIn("nothing cleared the gate", line)
+
+    def test_it_does_not_ask_the_reader_to_transfect_nothing(self):
+        plan = " ".join(self._plan([]))
+        self.assertNotIn("0-guide panel", plan)
+        self.assertNotIn("Transfect", plan)
+        self.assertNotIn("RT-qPCR", plan)
+
+    def test_it_points_at_what_would_explain_the_absence(self):
+        """A refusal with no direction is a dead end."""
+        [line] = self._plan([])
+        self.assertIn("shortfalls", line)
+        self.assertIn("triage", line)
+
+    def test_a_real_panel_still_gets_its_protocol(self):
+        """Or the branch above would be satisfied by never offering one.
+
+        `Panel.size` is `len(self.guides)` and the plan reads no attribute of
+        a member, so a placeholder is enough to distinguish "has members" from
+        "has none" -- which is the only thing being tested here.
+        """
+        plan = " ".join(self._plan([object()]))
+        self.assertIn("Transfect the 1-guide panel", plan)
+        self.assertIn("RT-qPCR", plan)
 
 
 if __name__ == "__main__":
