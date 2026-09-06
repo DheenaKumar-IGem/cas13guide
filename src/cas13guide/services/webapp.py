@@ -88,6 +88,9 @@ button{{background:var(--accent);color:#fff;border:0;border-radius:8px;
 padding:11px 20px;font:inherit;font-weight:600;cursor:pointer;margin-top:18px}}
 button:hover{{opacity:.9}}
 .hint{{color:var(--muted);font-size:.8rem;margin-top:3px}}
+label.check{{display:flex;align-items:center;gap:8px;font-weight:500;
+  margin:18px 0 0;cursor:pointer}}
+label.check input{{width:auto;margin:0;flex:0 0 auto}}
 </style></head><body><div class="wrap">
 <h1>Cas13 guide design</h1>
 <div class="sub">Paste a sequence, upload a FASTA file, or pick a built-in target.</div>
@@ -137,10 +140,19 @@ AUGCAUGC..."></textarea>
       <input id="min_accessibility" name="min_accessibility" type="number" step="0.05"
              min="0" max="1" value="0"></div>
   </div>
+  <label class="check" for="skip_signal">
+    <input type="checkbox" name="skip_signal" id="skip_signal">
+    Skip the collateral-signal model</label>
+  <p class="hint">It is most of the wall clock -- a kilobase target runs
+  roughly eight times faster without it, and ranks the same guides -- and the
+  column it produces is reported but not ranked on, because with the
+  placeholder constants that ship here it is a rescaled copy of two numbers
+  already in the ranking.</p>
   <button type="submit">Design guides</button>
 </form>
-<p class="hint" style="margin-top:26px">A typical target returns in a few seconds.
-The run happens in this request, so the page will wait.</p>
+<p class="hint" style="margin-top:26px">A short target returns in a few seconds;
+a kilobase takes considerably longer with the signal model on. The run happens
+in this request, so the page will wait.</p>
 </div></body></html>"""
 
 
@@ -213,6 +225,11 @@ def _request_from_fields(fields: dict[str, Any]) -> DesignRequest:
         spacer_length=_number(fields, "spacer_length", int),
         max_mismatches=_number(fields, "max_mismatches", int, 4),
         min_accessibility=_number(fields, "min_accessibility", float, 0.0),
+        # The terminal has had `--no-signal` since the flag existed; this door
+        # did not, so a browser user waited out 86% of the run for a column the
+        # same run then says it does not rank on. An unchecked box posts
+        # nothing, so absence is the default and the default is unchanged.
+        use_signal="skip_signal" not in fields,
     )
 
 

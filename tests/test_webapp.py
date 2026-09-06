@@ -546,5 +546,66 @@ class TestTheBrowserDoorCanSupplyAnOffTargetCorpus(unittest.TestCase):
                 self.assertEqual(biotype, expected[locus], locus)
 
 
+class TestTheFormCanSkipTheSignalModel(unittest.TestCase):
+    """A control the terminal had and this door did not.
+
+    `--no-signal` exists on the CLI. The form posted twelve inputs and this was
+    not one of them, so the browser user had no way to decline the
+    collateral-signal model -- most of the wall clock on any real target, and
+    the source of a column the run reports and then says it does not rank on.
+
+    Both doors are thin wrappers over `services/workflow.run_request`, so the
+    capability was always there; only the affordance was missing.
+    """
+
+    def _fields(self, **extra):
+        base = {
+            "sequence": ">T1\n" + ("ACGUUGCAUGGAUCCAUAGGACUCGGUAAUGCCAUG" * 6),
+            "preset": "", "background_biotype": "coding",
+            "effector": "LwaCas13a", "assay": "in_vitro_detection",
+            "task": "detection", "max_mismatches": "4",
+            "min_accessibility": "0",
+        }
+        base.update(extra)
+        return base
+
+    def test_the_form_offers_the_control(self):
+        from cas13guide.services.webapp import _form_page
+
+        self.assertIn('name="skip_signal"', _form_page())
+
+    def test_leaving_it_unchecked_keeps_the_signal_model(self):
+        """An unchecked box posts nothing, so absence must mean the default."""
+        from cas13guide.services.webapp import _request_from_fields
+
+        request = _request_from_fields(self._fields())
+        self.assertTrue(request.use_signal)
+
+    def test_checking_it_turns_the_model_off(self):
+        from cas13guide.services.webapp import _request_from_fields
+
+        request = _request_from_fields(self._fields(skip_signal="on"))
+        self.assertFalse(request.use_signal)
+
+    def test_the_choice_reaches_the_report(self):
+        """Not just the request object -- the column it controls.
+
+        Measured on a 1 kb target: 20.4 s with the model against 2.6 s
+        without, ranking the same 746 guides.
+        """
+        from cas13guide.services.webapp import _request_from_fields
+        from cas13guide.services.workflow import run_request
+
+        with_signal = run_request(_request_from_fields(self._fields())).report
+        without = run_request(
+            _request_from_fields(self._fields(skip_signal="on"))).report
+
+        self.assertTrue(with_signal["ranked"], "fixture ranked nothing")
+        self.assertEqual(len(with_signal["ranked"]), len(without["ranked"]),
+                         "skipping the signal model changed which guides rank")
+        self.assertIsNotNone(with_signal["ranked"][0]["predicted_signal"])
+        self.assertIsNone(without["ranked"][0]["predicted_signal"])
+
+
 if __name__ == "__main__":
     unittest.main()
