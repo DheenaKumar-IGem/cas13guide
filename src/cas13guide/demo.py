@@ -220,31 +220,19 @@ def main() -> DesignReport:
     # not predicted at all. `design` prints all four. This is the first command
     # anybody runs, and a tool whose argument is that it says what it could not
     # establish cannot have its showcase say nothing.
-    from .services.limitations import as_lines, limitations_for_run
+    #
+    # Read off the report rather than reassembled here. This call used to be
+    # made twice, once here and once in the design path, and the two had
+    # drifted: only that one passed `self_identical_loci`, so this surface
+    # could not raise the off-target-may-be-the-target CRITICAL at all.
+    from .services.limitations import as_lines
 
-    limitations = limitations_for_run(
-        spec,
-        registry=registry,
-        calibration=calibration,
-        bound=report.search_bound,
-        universe_gaps=report.universe_gaps,
-        panel_size=len(report.panel.guides),
-        panel_confidence=report.panel_confidence,
-        provenance=report.provenance,
-    )
-    if limitations:
+    if report.limitations:
         print("\n--- what this run does not establish ---")
-        for line in as_lines(limitations):
+        for line in as_lines(report.limitations):
             print(f"  {line}")
 
     data = report.to_dict()
-    # Structured, not the rendered lines: a caller switching on severity should
-    # not have to parse "CRITICAL: " off the front of a sentence.
-    data["limitations"] = [
-        {"id": item.id, "severity": item.severity.value,
-         "text": item.text, "source": item.source}
-        for item in limitations
-    ]
 
     destination = Path("report.json")
     destination.write_text(json.dumps(data, indent=2, default=str))

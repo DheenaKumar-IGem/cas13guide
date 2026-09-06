@@ -23,6 +23,7 @@ from cas13guide.contract.spec import (
     TargetSpec,
 )
 from cas13guide.pipeline.orchestrator import DesignContext, run_design
+from cas13guide.services.limitations import as_lines
 from cas13guide.services.calibration import CalibrationService
 from cas13guide.services.registry import (
     HeuristicCas13Model,
@@ -157,6 +158,17 @@ def main() -> None:
         print("  The floor is the best member; the ceiling assumes they fail")
         print("  independently, which guides on one transcript do not. No point")
         print("  estimate is offered without a measured common-cause fraction.")
+
+    # This script printed two verdict tables, a ranking and a detection
+    # probability with no caveats anywhere in its output. The calibration here
+    # is a fitted screen rather than a stand-in, so the synthetic CRITICAL
+    # does not apply -- but the ones about collateral, about what the
+    # off-target search covered, and about the noisy-OR ceiling do, and a
+    # trained model does not retire any of them.
+    if trained_report.limitations:
+        print("\n--- what this run does not establish ---")
+        for line in as_lines(trained_report.limitations):
+            print(f"  {line}")
 
 
 if __name__ == "__main__":

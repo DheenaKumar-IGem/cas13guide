@@ -282,9 +282,8 @@ def limitations_for_run(
                     f"An accessibility floor of {floor:.2f} was requested, and "
                     "no accessibility was computed, so the floor was NOT "
                     "applied -- no guide was held back for being buried. "
-                    'Install ViennaRNA (`pip install "cas13guide[structure]"`) '
-                    "or drop the floor, but do not read this run as having "
-                    "enforced it.",
+                    f"{_structure_remedy()} Either way, do not read this run "
+                    "as having enforced it.",
                 )
             )
         else:
@@ -296,8 +295,7 @@ def limitations_for_run(
                     "stable hairpin is scored the same as an open one. The duplex "
                     "free energy goes with it -- same dependency, same run -- so "
                     "`duplex_dg_per_nt` is empty in the exports and its column is "
-                    "absent from the table. Install ViennaRNA "
-                    '(`pip install "cas13guide[structure]"`) to enable both.',
+                    f"absent from the table. {_structure_remedy()}",
                 )
             )
     elif not getattr(accessibility, "is_independent_evidence", False):
@@ -486,3 +484,21 @@ def worst_severity(limitations: Sequence[Limitation]) -> Severity | None:
     if not limitations:
         return None
     return min(limitations, key=lambda item: _SEVERITY_ORDER[item.severity]).severity
+
+def _structure_remedy() -> str:
+    """What to actually do about a run with no accessibility.
+
+    Two different situations reach the reader as one. If ViennaRNA is missing,
+    install it. If it is present, the run declined to fold -- `--no-structure`,
+    or a caller that supplied `NullAccessibilityModel` -- and installing it
+    again does nothing. This used to say "Install ViennaRNA" in both cases,
+    which on a machine that already had it was advice that could not work.
+    """
+    from .accessibility import folding_engine_available
+
+    if folding_engine_available():
+        return ("ViennaRNA is installed, so this run declined to fold rather "
+                "than being unable to: drop `--no-structure`, or supply an "
+                "accessibility model instead of NullAccessibilityModel.")
+    return ('Install ViennaRNA (`pip install "cas13guide[structure]"`) to '
+            "enable it.")

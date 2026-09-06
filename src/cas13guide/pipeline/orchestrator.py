@@ -18,7 +18,7 @@ it never silently reports a truncated search as a complete one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from ..contract.enums import ReasonCode, TargetClass, Universe, Verdict
@@ -152,6 +152,8 @@ def run_design(
     """Run the full pipeline, backtracking within budget."""
     if not contexts:
         raise ValueError("at least one context is required")
+    # Limitations are attached to the report at the end of this function; see
+    # `_with_limitations`.
     self_fold = _self_fold_energy()
     reference = next((c for c in contexts if c.name == "reference"), contexts[0])
 
@@ -442,12 +444,50 @@ def run_design(
         dependence=confidence.dependence_version or "unmeasured",
     )
 
-    return build_report(
-        assessments, ranked, panel, controls, spec, ledger,
-        shortfalls=tuple(telemetry.shortfalls),
-        pareto_frontier=frontier_ids,
-        search_bound=bound,
-        universe_gaps=universe_gaps,
-        self_identical_loci=self_identical,
-        panel_confidence=confidence,
+    return _with_limitations(
+        build_report(
+            assessments, ranked, panel, controls, spec, ledger,
+            shortfalls=tuple(telemetry.shortfalls),
+            pareto_frontier=frontier_ids,
+            search_bound=bound,
+            universe_gaps=universe_gaps,
+            self_identical_loci=self_identical,
+            panel_confidence=confidence,
+        ),
+        spec, registry, calibration,
     )
+
+
+def _with_limitations(
+    report: DesignReport,
+    spec: ResolvedDesignSpec,
+    registry: ModelRegistry,
+    calibration: CalibrationService,
+) -> DesignReport:
+    """Attach what this run could not establish, once, here.
+
+    ``limitations_for_run`` takes nine arguments and every surface used to
+    assemble them itself. Two did -- the CLI/web path and ``demo.py`` -- and
+    the two calls had already drifted: only the first passed
+    ``self_identical_loci``, so ``cas13guide demo`` could not raise the
+    off-target-may-be-the-target CRITICAL whatever the run found. Two shipped
+    examples never made the call at all and printed a ranking, a panel and
+    predicted probabilities with no caveats anywhere in their output.
+
+    Everything the call wants beyond the three arguments above is a field of
+    the report, so there is nothing for a caller to supply and nothing for a
+    caller to forget.
+    """
+    from ..services.limitations import limitations_for_run
+
+    return replace(report, limitations=limitations_for_run(
+        spec,
+        registry=registry,
+        calibration=calibration,
+        bound=report.search_bound,
+        universe_gaps=report.universe_gaps,
+        self_identical_loci=report.self_identical_loci,
+        panel_size=len(report.panel.guides),
+        panel_confidence=report.panel_confidence,
+        provenance=report.provenance,
+    ))

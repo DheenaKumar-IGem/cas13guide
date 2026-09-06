@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 131 are
+  "hole" is never an artefact of which modules were chosen. None of the 134 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **131 mutations, 131 caught, 0 holes.**
+Last measured: **134 mutations, 134 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -70,6 +70,26 @@ REPO = Path(__file__).resolve().parents[1]
 #: which is most of its wall clock -- an instrument nobody runs documents drift
 #: instead of preventing it.
 MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
+    # ---- the caveats, and the one place they are assembled ----
+    # `report.json` is the surface where a caveat cannot be inferred from tone.
+    ("report-drops-its-limitations", "src/cas13guide/pipeline/g_output.py",
+     "                for item in self.limitations",
+     "                for item in ()",
+     ["test_caveats_reach_every_surface.py",
+      "test_the_demo_demonstrates_something.py"]),
+    # The exact argument demo.py's copy of this call omitted, which is why
+    # `cas13guide demo` could not raise off-target-may-be-the-target at all.
+    ("limitations-stop-seeing-self-identical-loci",
+     "src/cas13guide/pipeline/orchestrator.py",
+     "        self_identical_loci=report.self_identical_loci,",
+     "        self_identical_loci=None,",
+     ["test_blast.py"]),
+    # Advice that cannot work: on a machine with ViennaRNA installed, a run
+    # with no accessibility told the reader to install ViennaRNA.
+    ("structure-remedy-ignores-what-is-installed",
+     "src/cas13guide/services/limitations.py",
+     "    if folding_engine_available():", "    if False:",
+     ["test_caveats_reach_every_surface.py"]),
     # ---- services/workflow.py: the one stand-in calibration ----
     # There were two of these and the copy in demo.py drifted from this three
     # times, each drift losing something this path had gained. A calibration

@@ -137,5 +137,144 @@ class TestTheReportDictCarriesThem(unittest.TestCase):
         self.assertIn("critical", severities)
 
 
+class TestEveryShippedExampleSaysWhatItCannotEstablish(unittest.TestCase):
+    """Running to completion is not the same as demonstrating something.
+
+    `examples/` is documentation that executes, and two of the three scripts
+    printed a ranking, a panel and predicted probabilities with no caveats
+    anywhere in their output -- the finding at the top of this file, in the
+    siblings it was never re-run against. `demo_diagnostic.py` also prints a
+    predicted collateral signal per guide, and its stand-in calibration set
+    neither `synthetic` nor `source`, so the CRITICAL saying every interval
+    rests on generated data could not fire even had the block been printed.
+
+    A test that only checks the exit code cannot see any of that, and there
+    was one: `test_panel_site_consistency.TestExamplesStillRun` runs
+    `demo_diagnostic.py` and asserts it returns 0.
+    """
+
+    #: Every script under `examples/` that runs a design and shows its result.
+    #: The `verify_*` scripts are instruments rather than showcases; they
+    #: report on the package instead of recommending guides from it.
+    SHOWCASES = ("demo_knockdown.py", "demo_diagnostic.py", "demo_trained.py")
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent / "examples"
+        cls.output = {}
+        for name in cls.SHOWCASES:
+            script = root / name
+            if not script.exists():
+                continue
+            with tempfile.TemporaryDirectory() as directory:
+                # Scratch cwd: demo_knockdown writes report.json beside it.
+                cls.output[name] = subprocess.run(
+                    [sys.executable, str(script)], cwd=directory,
+                    capture_output=True, text=True, timeout=600,
+                )
+
+    def test_they_are_all_here_to_be_checked(self):
+        """Or a missing script would pass this class by being absent."""
+        self.assertEqual(sorted(self.output), sorted(self.SHOWCASES))
+
+    def test_each_one_runs(self):
+        for name, result in self.output.items():
+            with self.subTest(script=name):
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+
+    def test_each_one_prints_the_block(self):
+        for name, result in self.output.items():
+            with self.subTest(script=name):
+                self.assertIn("what this run does not establish", result.stdout)
+
+    def test_each_one_carries_a_critical(self):
+        """The block existing is not the same as it saying anything.
+
+        Every one of these runs the built-in heuristic or searches a corpus it
+        was handed, so a CRITICAL applies to all three.
+        """
+        for name, result in self.output.items():
+            with self.subTest(script=name):
+                self.assertIn("CRITICAL:", result.stdout)
+
+    def test_the_diagnostic_says_its_calibration_is_synthetic(self):
+        """Its stand-in set neither `synthetic` nor `source`, so this could
+        not fire whatever the run did. It shares the one builder now."""
+        self.assertIn("calibrated on SYNTHETIC data",
+                      self.output["demo_diagnostic.py"].stdout)
+
+    def test_the_structure_remedy_reaches_a_real_run(self):
+        """The helper is asserted next door; this is it arriving in output.
+
+        `demo_knockdown.py` runs the demo, whose registry uses
+        NullAccessibilityModel deliberately, so the no-accessibility WARNING
+        is raised on every run of it and carries whichever remedy applies to
+        the machine the suite is on.
+        """
+        from cas13guide.services.limitations import _structure_remedy
+
+        self.assertIn(_structure_remedy(),
+                      self.output["demo_knockdown.py"].stdout)
+
+    def test_the_trained_one_does_not(self):
+        """The other direction, which is what makes the flag mean something.
+
+        `demo_trained.py` fits a model on a screen and calibrates on held-out
+        rows of it, so the synthetic CRITICAL must be absent -- otherwise the
+        assertion above is satisfied by a caveat that is simply always on.
+        """
+        stdout = self.output["demo_trained.py"].stdout
+        self.assertIn("what this run does not establish", stdout)
+        self.assertNotIn("calibrated on SYNTHETIC data", stdout)
+
+
+class TestTheStructureRemedyMatchesTheSituation(unittest.TestCase):
+    """A caveat that tells you to install what you already have.
+
+    On a machine with ViennaRNA 2.7.2 installed, a run with no accessibility
+    said `Install ViennaRNA (pip install "cas13guide[structure]")`. Following
+    that changes nothing: the demo builds its registry with
+    `NullAccessibilityModel` on purpose and `--no-structure` opts out the same
+    way. The limitation keys on `accessibility/none`, which is what both a
+    missing engine and a declined one look like from where it stands, and it
+    named only the first cause.
+
+    Its neighbour `accessibility-floor-inert` exists because a generic warning
+    "never connected the two". Same fix, one layer up.
+    """
+
+    def _remedy(self, installed):
+        from cas13guide.services import accessibility, limitations
+
+        original = accessibility.folding_engine_available
+        accessibility.folding_engine_available = lambda: installed
+        try:
+            return limitations._structure_remedy()
+        finally:
+            accessibility.folding_engine_available = original
+
+    def test_without_the_engine_it_says_to_install_it(self):
+        remedy = self._remedy(False)
+        self.assertIn("Install ViennaRNA", remedy)
+        self.assertIn("cas13guide[structure]", remedy)
+
+    def test_with_the_engine_it_does_not(self):
+        remedy = self._remedy(True)
+        self.assertNotIn("Install ViennaRNA", remedy)
+        self.assertIn("declined to fold", remedy)
+        self.assertIn("--no-structure", remedy)
+
+    def test_the_probe_answers_for_this_environment(self):
+        """Whichever way, it agrees with whether the import works."""
+        from cas13guide.services.accessibility import folding_engine_available
+
+        try:
+            import RNA  # noqa: F401
+
+            present = True
+        except ImportError:
+            present = False
+        self.assertEqual(folding_engine_available(), present)
+
 if __name__ == "__main__":
     unittest.main()

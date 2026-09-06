@@ -839,41 +839,14 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         except Exception:
             profile = ()
 
-    from .limitations import as_lines, limitations_for_run
+    # Read off the report, which computes them once in `run_design`. This
+    # used to assemble the nine-argument call here, and `demo.py` assembled a
+    # second one that had already drifted from it.
+    from .limitations import as_lines
 
-    found = limitations_for_run(
-        spec,
-        registry=registry,
-        calibration=calibration_service,
-        bound=weakest_bound,
-        universe_gaps=gaps,
-        self_identical_loci=report.self_identical_loci,
-        panel_size=len(data.get("panel", {}).get("guides", ())),
-        panel_confidence=report.panel_confidence,
-        provenance=data.get("provenance"),
-    )
+    found = report.limitations
     notes = as_lines(found) + notes
 
-    # The terminal, the HTML report and the export headers all carried these.
-    # The machine-readable report did not -- `report.json` had no limitations
-    # key at all, so a pipeline reading it saw PASS verdicts and calibrated
-    # intervals with nothing saying the calibration was synthetic and every
-    # PASS therefore exercisable rather than earned. That is the one surface
-    # where a caveat cannot be inferred from tone, and it was the only surface
-    # without them.
-    #
-    # Structured rather than rendered: `notes` is the prose form and is already
-    # in the exports. A caller switching on severity should not have to parse
-    # "CRITICAL: " off the front of a sentence.
-    data["limitations"] = [
-        {
-            "id": limitation.id,
-            "severity": limitation.severity.value,
-            "text": limitation.text,
-            "source": limitation.source,
-        }
-        for limitation in found
-    ]
 
     return DesignOutcome(
         report=data, records=records, spec=spec, notes=notes, profile=profile,

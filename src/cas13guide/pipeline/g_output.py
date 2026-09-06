@@ -231,6 +231,13 @@ class DesignReport:
     #: what it means is that the guide's intended site is being scored as a
     #: perfect off-target under an accession nothing can match.
     self_identical_loci: frozenset = frozenset()
+    #: What this run could not establish, computed once by ``run_design`` and
+    #: carried rather than reassembled. ``limitations_for_run`` takes nine
+    #: arguments and every surface used to call it itself: two did, their two
+    #: calls had already drifted from each other, and two shipped examples
+    #: printed no caveats at all. A report that carries them cannot be
+    #: displayed without them.
+    limitations: tuple[Any, ...] = field(default_factory=tuple)
     #: How many distinct (guide, locus) off-target pairs were found, before the
     #: explorer's row cap. `off_target_rows` holds at most fifty of them, and
     #: without this nothing downstream could tell fifty of fifty from fifty of
@@ -251,6 +258,16 @@ class DesignReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            # Structured rather than rendered: a caller switching on severity
+            # should not have to parse "CRITICAL: " off the front of a
+            # sentence. Emitted here so the machine-readable report carries
+            # them for every surface, rather than for the two that remembered
+            # to paste them in afterwards.
+            "limitations": [
+                {"id": item.id, "severity": item.severity.value,
+                 "text": item.text, "source": item.source}
+                for item in self.limitations
+            ],
             "spec_fingerprint": self.spec_fingerprint,
             "verdict_counts": self.verdict_counts,
             "review_rate": round(self.review_rate, 4),

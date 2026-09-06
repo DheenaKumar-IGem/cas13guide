@@ -165,3 +165,18 @@ class StaticAccessibilityModel:
             return None
         window = profile[start : start + length]
         return sum(window) / len(window)
+
+def folding_engine_available() -> bool:
+    """Whether ViennaRNA can be imported at all.
+
+    Distinguishes the two situations that reach a reader identically. A run
+    with no accessibility either could not compute it or was not asked to, and
+    ``accessibility/none`` is what both look like from the registry. The
+    remedies share no steps, so ``services/limitations.py`` asks this before
+    telling anyone to install anything.
+    """
+    try:
+        import RNA  # noqa: F401
+    except ImportError:  # pragma: no cover - environment dependent
+        return False
+    return True
