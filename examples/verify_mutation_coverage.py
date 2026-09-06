@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 134 are
+  "hole" is never an artefact of which modules were chosen. None of the 135 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **134 mutations, 134 caught, 0 holes.**
+Last measured: **135 mutations, 135 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -70,6 +70,14 @@ REPO = Path(__file__).resolve().parents[1]
 #: which is most of its wall clock -- an instrument nobody runs documents drift
 #: instead of preventing it.
 MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
+    # ---- cli.py: the CI gate's own fixture ----
+    # Reverting to the hardcoded label files 0-to-4-mismatch cases under a
+    # stratum named mm1-2, and the gate stops exercising the strata the
+    # design path routes into.
+    ("check-files-every-case-under-one-stratum", "src/cas13guide/cli.py",
+     "                    stratum=stratum_of(site_str),",
+     '                    stratum="RfxCas13d|cell_culture_knockdown|mm1-2",',
+     ["test_subcommands_end_to_end.py"]),
     # ---- the caveats, and the one place they are assembled ----
     # `report.json` is the surface where a caveat cannot be inferred from tone.
     ("report-drops-its-limitations", "src/cas13guide/pipeline/g_output.py",

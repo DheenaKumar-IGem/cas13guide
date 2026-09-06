@@ -45,9 +45,30 @@ def _check(args: argparse.Namespace) -> int:
     from .util.seq import revcomp
 
     spacer = "GCAUUGCUGUGGAGCUGAAGUC"
-    stratum = "RfxCas13d|cell_culture_knockdown|mm1-2"
+    effector, assay = "RfxCas13d", "cell_culture_knockdown"
     model = HeuristicCas13Model()
     rng = random.Random(args.seed)
+
+    def stratum_of(site: str) -> str:
+        """The regime this site is actually in.
+
+        Every case used to be filed under a hardcoded `...|mm1-2` while the
+        generator draws 0 to 4 mismatches: measured, mm0 73, mm1-2 153,
+        mm3+ 74, so about half the stratum was not the regime it was named
+        for, and the printed `coverage[...|mm1-2:0.920]` read as a statement
+        about mm1-2 that was marginal coverage over a mixture.
+
+        The pooling was not hiding a failure -- split conformal is marginally
+        valid whatever the pool, and pooled and per-regime coverage both hold
+        under noise that widens with depth and under a model simply wrong past
+        two mismatches. What it did not do was exercise the three strata the
+        design path uses, so a change to `mismatch_regime` or to stratum
+        routing was invisible here.
+        """
+        return CalibrationService.stratum_key(
+            effector, assay,
+            CalibrationService.mismatch_regime(
+                profile_duplex(spacer, site).n_mismatch))
 
     def make_cases(n: int) -> list[BenchmarkCase]:
         out = []
@@ -63,7 +84,7 @@ def _check(args: argparse.Namespace) -> int:
                     spacer=spacer,
                     target_site=site_str,
                     observed_activity=min(1.0, max(0.0, pred + rng.gauss(0, 0.12))),
-                    stratum=stratum,
+                    stratum=stratum_of(site_str),
                 )
             )
         return out
@@ -71,7 +92,8 @@ def _check(args: argparse.Namespace) -> int:
     calibration = CalibrationService()
     for case in make_cases(300):
         calibration.add_observation(
-            stratum, model.predict(spacer, profile_duplex(spacer, case.target_site), None),
+            case.stratum,
+            model.predict(spacer, profile_duplex(spacer, case.target_site), None),
             case.observed_activity,
         )
 

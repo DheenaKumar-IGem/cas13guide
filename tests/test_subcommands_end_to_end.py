@@ -89,6 +89,68 @@ class TestTheCheckCommand(unittest.TestCase):
     def test_no_traceback_reaches_the_user(self):
         self.assertNotIn("Traceback", run("check").stderr)
 
+    def test_it_covers_every_regime_the_design_path_stratifies_on(self):
+        """One stratum was validated and it was misnamed.
+
+        The generator draws 0 to 4 mismatches and every case was filed under a
+        hardcoded `...|mm1-2` -- measured, mm0 73, mm1-2 153, mm3+ 74 -- so
+        the printed `coverage[...|mm1-2:0.920]` read as a figure for that
+        regime and was marginal coverage over a mixture of all three.
+
+        The pooling was not hiding a failure. Split conformal is marginally
+        valid whatever the pool, and pooled and per-regime coverage both hold
+        under noise widening with mismatch depth and under a model simply
+        wrong past two mismatches. What it did not do was exercise the strata
+        the pipeline routes into, so a change to `mismatch_regime` was
+        invisible to the gate that exists to catch calibration changes.
+        """
+        stdout = run("check").stdout
+        for regime in ("mm0", "mm1-2", "mm3+"):
+            with self.subTest(regime=regime):
+                self.assertIn(
+                    f"RfxCas13d|cell_culture_knockdown|{regime}:", stdout)
+
+    def test_each_reported_stratum_holds_the_regime_it_names(self):
+        """The label, against the data behind it.
+
+        Asked of the generator rather than the printed line, because a name
+        being present says nothing about what was filed under it -- which is
+        exactly how the old one passed for as long as it did.
+        """
+        import random
+
+        from cas13guide.services.calibration import CalibrationService
+        from cas13guide.services.registry import HeuristicCas13Model
+        from cas13guide.util.duplex import profile_duplex
+        from cas13guide.util.seq import revcomp
+
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
+        rng = random.Random(0)
+        model = HeuristicCas13Model()
+        seen = set()
+        for _ in range(300):
+            site = list(revcomp(spacer))
+            for _ in range(rng.randint(0, 4)):
+                index = rng.randrange(len(site))
+                site[index] = rng.choice(
+                    [b for b in "AUGC" if b != site[index]])
+            site_text = "".join(site)
+            depth = profile_duplex(spacer, site_text).n_mismatch
+            regime = CalibrationService.mismatch_regime(depth)
+            seen.add(regime)
+            with self.subTest(depth=depth):
+                if depth == 0:
+                    self.assertEqual(regime, "mm0")
+                elif depth <= 2:
+                    self.assertEqual(regime, "mm1-2")
+                else:
+                    self.assertEqual(regime, "mm3+")
+        self.assertEqual(seen, {"mm0", "mm1-2", "mm3+"},
+                         "the generator no longer spans all three, so the "
+                         "test above could pass on one regime")
+        self.assertGreater(model.predict(spacer, profile_duplex(
+            spacer, revcomp(spacer)), None), 0.0, "fixture sanity")
+
 
 class TestTheTrainCommand(unittest.TestCase):
     """Ingest a screen, run the acceptance gate, report."""
