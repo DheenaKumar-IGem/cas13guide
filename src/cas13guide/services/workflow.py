@@ -245,7 +245,8 @@ def _resolve_spacer_length(
         raise DesignRequestError(
             f"{preset.preset_id} ({preset.length} nt) is too short for any "
             f"spacer {effector.value} tolerates. Design against an amplicon "
-            "instead."
+            "instead: amplify the target and pass the product with "
+            "--fasta."
         )
     return length
 

@@ -208,13 +208,16 @@ def designability(
             f"{preset.length} nt target cannot hold a {length} nt spacer. "
             f"{effector.value} tolerates {params.spacer_length_range[0]}-"
             f"{params.spacer_length_range[1]} nt; try a shorter spacer, or "
-            "design against an amplicon (see amplicon_target)."
+            "design against an amplicon -- amplify the target and pass "
+            "the product with --fasta, or build one with "
+            "amplicon_target()."
         )
     elif n < 5:
         note = (
             f"only {n} window(s): a mature miRNA is barely longer than the "
             "spacer, so there is almost nothing to choose between. An amplicon "
-            "target restores normal tiling."
+            "target restores normal tiling: amplify the target and pass "
+            "the product with --fasta."
         )
     else:
         note = f"{n} windows available."

@@ -294,5 +294,104 @@ class TestTheResolvedLengthIsCanonicalWhereOneFits(unittest.TestCase):
                 self.assertTrue(low <= chosen <= high)
 
 
+class TestTheAmpliconAdviceNamesAWayToTakeIt(unittest.TestCase):
+    """Advice a reader can act on, and a check that acting on it works.
+
+    Four messages recommend designing against an amplicon. There is no
+    `--amplicon` flag -- deliberately, because `amplicon_target` takes the
+    flanking context from the caller: it is a property of the assay design and
+    not of the miRNA, so the package will not invent it. The route is
+    therefore the ordinary one, amplify and pass the product with `--fasta`,
+    and none of the four said so. One pointed a terminal reader at a Python
+    function.
+
+    This package names the flag everywhere else a caveat has a remedy: the
+    universe CRITICAL names `--background`, the panel one names
+    `--panel-dependence`, and `accessibility-floor-inert` exists precisely
+    because a warning "never connected the two".
+    """
+
+    def _notes(self):
+        from cas13guide.contract.enums import Effector
+        from cas13guide.contract.presets import (
+            MIRNA_PRESETS, designability, get_preset,
+        )
+
+        for preset_id in MIRNA_PRESETS:
+            preset = get_preset(preset_id)
+            for effector in Effector:
+                yield preset, effector, designability(preset, effector).note
+
+    def test_some_preset_is_actually_told_to_use_one(self):
+        """Or every assertion below passes over an empty set."""
+        recommending = [note for _p, _e, note in self._notes()
+                        if "amplicon" in note]
+        self.assertTrue(recommending,
+                        "no preset recommends an amplicon, so this class is "
+                        "asserting nothing")
+
+    def test_every_note_that_recommends_one_says_how_to_supply_it(self):
+        for preset, effector, note in self._notes():
+            if "amplicon" not in note:
+                continue
+            with self.subTest(preset=preset.preset_id, effector=effector.value):
+                self.assertIn("--fasta", note)
+
+    def test_the_refusal_a_caller_gets_says_it_too(self):
+        """The fourth message, which no shipped preset reaches.
+
+        `_resolve_spacer_length` raises only when no spacer the ortholog
+        tolerates fits the target, and the five bundled miRNAs are 22-24 nt
+        against minimums of 20-22, so every pair finds a length. The guard is
+        for a shorter preset or a stricter ortholog, and it carried the same
+        advice with no route in it, so it is exercised where it lives.
+        """
+        from cas13guide.contract.enums import Effector
+        from cas13guide.services import workflow
+
+        original = workflow.largest_designable_spacer_length
+        workflow.largest_designable_spacer_length = lambda *a, **k: None
+        try:
+            with self.assertRaises(workflow.DesignRequestError) as caught:
+                workflow._resolve_spacer_length(
+                    workflow.DesignRequest(preset="hsa-miR-21-5p"),
+                    Effector.LWA_CAS13A, [])
+        finally:
+            workflow.largest_designable_spacer_length = original
+        self.assertIn("amplicon", str(caught.exception))
+        self.assertIn("--fasta", str(caught.exception))
+
+    def test_following_it_restores_normal_tiling(self):
+        """The advice, taken.
+
+        A 204 nt amplicon around the same 24 nt mature miRNA tiles at the
+        canonical spacer length and produces candidates, which is what the
+        note promises. Without this the messages could name any flag at all.
+        """
+        import random
+        import tempfile
+        from pathlib import Path
+
+        from cas13guide.contract.presets import get_preset
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        preset = get_preset("hsa-miR-21-5p")
+        rng = random.Random(7)
+        flank = lambda n: "".join(rng.choice("ACGU") for _ in range(n))  # noqa: E731
+        sequence = flank(90) + preset.sequence + flank(90)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "amplicon.fa"
+            path.write_text(">miR21_amplicon biotype=ncrna" + chr(10)
+                            + sequence + chr(10), encoding="utf-8")
+            report = run_request(DesignRequest(
+                fasta_path=str(path), effector="LwaCas13a",
+                assay="in_vitro_detection", task="detection",
+            )).report
+        assessed = sum(report["verdict_counts"].values())
+        self.assertGreater(assessed, 20,
+                           "the amplicon did not tile, so the advice is wrong")
+        self.assertTrue(report["ranked"], "nothing ranked")
+
+
 if __name__ == "__main__":
     unittest.main()

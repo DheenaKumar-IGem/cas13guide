@@ -226,7 +226,8 @@ def run_design(
         telemetry.shortfalls.append(
             f"{', '.join(untileable)} shorter than the {spec.spacer_length} nt "
             "spacer, so no window fits and they were never tiled. Use a shorter "
-            "spacer, or design against an amplicon."
+            "spacer, or design against an amplicon -- amplify the target "
+            "and pass the product with --fasta."
         )
         telemetry.reason_codes.append(ReasonCode.TARGET_TOO_SHORT_TO_TILE)
     envelope = spec.thresholds.required_search_mismatches
