@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 141 are
+  survives is re-run against all 1478 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. None of the 142 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **141 mutations, 141 caught, 0 holes.**
+Last measured: **142 mutations, 142 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -106,6 +106,15 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "src/cas13guide/services/workflow.py",
      "    if not request.panel_dependence_json:", "    if True:",
      ["test_panel_confidence.py"]),
+    # ---- contract/presets.py: the ortholog that fits ----
+    # Every built-in preset is 22-24 nt and only RfxCas13d is fit at a length
+    # that short, so on the CLI default all five refused without naming the
+    # one ortholog in the same package that can design against them.
+    ("preset-refusal-drops-the-effector-flag",
+     "src/cas13guide/contract/presets.py",
+     '                f" {\', \'.join(covered_by)} publishes {length} nt"\n                f" -- try --effector {covered_by[0]}."',
+     '                f" {\', \'.join(covered_by)} publishes {length} nt."',
+     ["test_presets.py"]),
     # ---- contract/presets.py: advice with a route in it ----
     # Four messages recommend an amplicon and there is no --amplicon flag,
     # deliberately: amplicon_target takes the flanking context from the caller

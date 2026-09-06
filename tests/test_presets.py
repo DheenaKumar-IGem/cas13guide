@@ -393,5 +393,110 @@ class TestTheAmpliconAdviceNamesAWayToTakeIt(unittest.TestCase):
         self.assertTrue(report["ranked"], "nothing ranked")
 
 
+class TestARefusedPresetNamesAnOrtholoqThatFits(unittest.TestCase):
+    """The dropdown is the lowest-friction path and every option refused.
+
+    A 22-24 nt mature miRNA cannot hold LwaCas13a's 28 nt spacer, so the run
+    is right to refuse: a length no model was fit at leaves the activity
+    interval unnarrowed, and benefit read at its lower bound cannot clear the
+    coverage gate. What it did not do was say that RfxCas13d, in this same
+    package, is fit at 22 and 23 nt and can design against the very same
+    target.
+
+    The note already computed which orthologs publish the *resolved* length.
+    For a 24 nt target that is 24, nobody publishes 24, and the sentence
+    stopped at "No ortholog in this package publishes that length" -- a true
+    answer to the wrong question.
+    """
+
+    def _designabilities(self):
+        from cas13guide.contract.enums import Effector
+        from cas13guide.contract.presets import (
+            MIRNA_PRESETS, designability, get_preset,
+            largest_designable_spacer_length,
+        )
+
+        # The resolved length, as `workflow._resolve_spacer_length` computes
+        # it. Called without one, `designability` uses the ortholog's canonical
+        # length, takes the "target cannot hold a 28 nt spacer" branch, and
+        # never reaches the out-of-domain sentence the CLI actually prints.
+        for preset_id in MIRNA_PRESETS:
+            preset = get_preset(preset_id)
+            for effector in Effector:
+                length = largest_designable_spacer_length(preset, effector)
+                yield preset, effector, designability(preset, effector, length)
+
+    def test_some_preset_is_actually_refused(self):
+        """Or every assertion below passes over an empty set."""
+        refused = [note for _p, _e, d in self._designabilities()
+                   if not d.canonical_length for note in [d.note]]
+        self.assertTrue(refused, "no preset is out of domain on any ortholog, "
+                                 "so this class asserts nothing")
+
+    def test_every_refusal_names_an_ortholog_that_fits(self):
+        for preset, effector, found in self._designabilities():
+            if found.canonical_length:
+                continue
+            with self.subTest(preset=preset.preset_id, effector=effector.value):
+                self.assertIn("try --effector", found.note)
+
+    def test_the_named_ortholog_really_is_fit_at_a_length_that_fits(self):
+        """The claim in the sentence, checked against the effector table."""
+        import re
+
+        from cas13guide.contract.effectors import EFFECTORS
+
+        by_name = {e.value: p for e, p in EFFECTORS.items()}
+        checked = 0
+        for preset, effector, found in self._designabilities():
+            named = re.search(r"try --effector (\w+)", found.note)
+            if not named:
+                continue
+            checked += 1
+            with self.subTest(preset=preset.preset_id, effector=effector.value):
+                suggested = named.group(1)
+                self.assertNotEqual(suggested, effector.value,
+                                    "suggested the ortholog that just refused")
+                self.assertTrue(
+                    any(s <= preset.length
+                        for s in by_name[suggested].spacer_lengths),
+                    f"{suggested} has no canonical length fitting "
+                    f"{preset.length} nt",
+                )
+        self.assertGreater(checked, 0, "no suggestion was made anywhere")
+
+    def test_an_ortholog_that_already_fits_is_offered_nothing(self):
+        """Or the sentence is boilerplate rather than a diagnosis."""
+        for preset, effector, found in self._designabilities():
+            if not found.canonical_length:
+                continue
+            with self.subTest(preset=preset.preset_id, effector=effector.value):
+                self.assertNotIn("try --effector", found.note)
+
+    def test_following_the_advice_produces_candidates(self):
+        """The advice, taken -- because a flag that changes nothing is worse
+        than no flag. Measured: LwaCas13a gives FAIL 1, RfxCas13d gives
+        REVIEW 2 on the same preset."""
+        import re
+
+        from cas13guide.contract.enums import Effector
+        from cas13guide.contract.presets import (
+            designability, get_preset, largest_designable_spacer_length,
+        )
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        preset = get_preset("hsa-miR-21-5p")
+        length = largest_designable_spacer_length(preset, Effector.LWA_CAS13A)
+        note = designability(preset, Effector.LWA_CAS13A, length).note
+        named = re.search(r"try --effector (\w+)", note)
+        self.assertIsNotNone(named, "the default ortholog offered no way out")
+
+        report = run_request(DesignRequest(
+            preset="hsa-miR-21-5p", effector=named.group(1),
+        )).report
+        self.assertTrue(report["ranked"],
+                        "the ortholog the run recommended still ranks nothing")
+
+
 if __name__ == "__main__":
     unittest.main()

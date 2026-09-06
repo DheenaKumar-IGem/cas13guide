@@ -106,7 +106,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1473 tests
+python -m unittest discover -s tests -t tests    # 1478 tests
 pytest                              # same suite under pytest
 ```
 
@@ -908,7 +908,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1473 tests, run under `unittest` or `pytest` — both discover the same set —
+1478 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -920,8 +920,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1473 tests
-python examples/verify_mutation_coverage.py              # 141 mutations, 141 caught
+pytest                                                   # 1478 tests
+python examples/verify_mutation_coverage.py              # 142 mutations, 142 caught
 python examples/verify_vocabulary_coverage.py            # 56 of 56 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -975,7 +975,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 141 are
+against the **whole** suite before being called a hole. None of the 142 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -1719,6 +1719,8 @@ the work was done correctly and the result went nowhere.
 | A display flag decided the exit status | The status came from the list the terminal table prints, after the distinct-site filter and `--top`. So `--top 0` **exited 1 and printed "no guide cleared the gate" beside a CSV holding 322 of them** — and 1 is the code a wrapper script reads as "the run refused everything" | `test_exit_codes_are_a_contract.py` |
 | The advertised kinetics unlock reached no surface a user reads | `absolute_signal()` is a library method and **nothing in `src/` called it**: the pipeline asked `predict()` for a figure, kept the relative score and discarded the nM from the same object. So supplying measured constants — the work the README names as unlocking an absolute figure — changed a warning and produced no number anywhere | `test_kinetics_mass_balance.py` |
 | The caveats reached the reader and not the machine — and not the demo at all | Four CRITICAL limitations apply to an ordinary run, including that the calibration is synthetic so **every PASS is exercisable rather than earned**. `report.json` had no limitations key at all, so a pipeline saw PASS verdicts and calibrated-looking intervals with nothing to qualify either — the one surface where a caveat cannot be inferred from tone. And `cas13guide demo`, the first command anybody runs, printed none of them anywhere: a grep of its whole output for "critical", "warning" or "limitation" returned zero | `test_caveats_reach_every_surface.py` |
+| Every built-in preset was a dead end that named no way out | The `--preset` flag and the web form’s dropdown are the lowest-friction path in the product, and on the CLI default effector all five presets return **`{'PASS': 0, 'REVIEW': 0, 'FAIL': 1}`** and exit 1. The refusal is correct — a 22–24 nt mature miRNA cannot hold LwaCas13a’s 28 nt spacer, and a length no model was fit at must not be certified. But `RfxCas13d` is fit at 22 and 23 nt and returns **2 REVIEW guides on the same preset**, and nothing said so: the note computed which orthologs publish the *resolved* length, which for a 24 nt target is 24, and ended “No ortholog in this package publishes that length” — a true answer to the wrong question. Both branches now name the ortholog **and** the flag, and a test follows the advice to check it produces candidates | `test_presets.py` |
+| The instrument that catches documentation drift had drifted | `verify_mutation_coverage.py` stated, in the present tense about what the sweep does, that a survivor is re-run “against all 1241 tests”. The suite collected 1,473. `documented_test_counts()` pinned that figure in four places and this sentence was in none of them — which is why it was the one that rotted, exactly as its own docstring records happening before when a fourth statement said 930 while three said 1,247. The sentence **two lines below it** states the mutation count and *is* scraped: one sentence, two numbers, one checked. It is the fifth scraped statement now | `test_documents_agree.py` |
 | The absolute figure reached every surface but the default one | The row further down records `absolute_signal()` reaching no surface a user reads, and its fix reached `report.json`, the CSV and the HTML report — which adds an `nM` column whenever a row carries one. It did not reach the ranking table `cas13guide design` prints by default. So a run with measured constants **dropped the PLACEHOLDER CRITICAL, told the reader the restriction had lifted, and showed the same relative `signal` as before**: 0.0044, where the CSV beside it said 2.2161 nM. The column-selection rule that drops `access` and `dG/nt` when nothing fills them was already there; this figure was simply not among the columns it considered | `test_ranking_table_columns.py` |
 | The training gate asked for six transcripts and needed thirty-eight | `cas13guide train` reports its criteria in order: `transcript groups 12 (need 6)` **PASS**, then `calibration transcripts 2 (need 8)` **FAIL**. Calibration groups are a subset of all groups, so `min_groups=6` admitted screens that `min_calibration_groups=8` could not possibly accept — and the split takes a fifth of the groups, so the real floor is 38. Measured at 720 rows: 6 transcripts give 1 calibration transcript, 12 give 2, 24 give 5, 48 give 10. **The number was already known**: `tests/test_acceptance.screen()` carries the comment "40 transcripts so the calibration split gets >= 8 independent groups", so the fixture was built to the real requirement while the figure printed to whoever ran the command stayed at 6 | `test_acceptance.py` |
 | A Robustness column where nothing had been varied | Found by running `cas13guide serve` and reading the page. Robustness is the minimum required coverage across every evaluated context, so over one context it **is** the coverage — the HTML report showed `0.7647` beside a Coverage of `0.7647` on every row, under a tooltip promising "worst coverage across every evaluated context — variants, isoforms, haplotypes". With a variant supplied the same guide reports 0.7644 and 0.7644, equal again because it is genuinely robust: **the same equality means two different things and only one is a measurement**. The terminal has always dropped the column when `--variants` is absent; this surface did not, and no caveat anywhere said robustness had gone unevaluated | `test_user_facing_surfaces.py` |

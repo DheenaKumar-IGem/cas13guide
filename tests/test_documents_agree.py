@@ -35,16 +35,22 @@ import verify_the_documented_numbers as documents  # noqa: E402
 
 
 class TestTheTestCountIsStatedOnce(unittest.TestCase):
-    """Four places say how many tests there are. They must be one number.
+    """Five places say how many tests there are. They must be one number.
 
     It was three until a fourth turned up stating 930 -- the ``unittest
     discover`` line, which the scraper's pytest-anchored pattern never saw,
     four lines above prose promising that both runners discover the same set.
+
+    Then a fifth turned up saying 1241 while the other four said 1473: the
+    mutation sweep's own header, describing what it does to a survivor. The
+    instrument written to catch documentation drift had drifted, in the same
+    sentence whose *other* number -- the mutation count -- was scraped and
+    correct. Both are checked now.
     """
 
     def test_every_document_states_it(self):
         counts = documents.documented_test_counts()
-        self.assertEqual(len(counts), 4, f"found {sorted(counts)}")
+        self.assertEqual(len(counts), 5, f"found {sorted(counts)}")
 
     def test_they_agree_with_each_other(self):
         counts = documents.documented_test_counts()

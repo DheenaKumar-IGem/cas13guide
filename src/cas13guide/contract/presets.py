@@ -242,11 +242,35 @@ def designability(
             "narrowed at all, and since benefit is read at its lower bound the "
             "guide is refused rather than certified."
         )
-        note += (
-            f" {', '.join(covered_by)} publishes {length} nt."
-            if covered_by
-            else " No ortholog in this package publishes that length."
-        )
+        if covered_by:
+            # Naming the ortholog is half of it; the reader still has to be
+            # told what to do with the name. Every other remedy in this package
+            # names its flag.
+            note += (
+                f" {', '.join(covered_by)} publishes {length} nt"
+                f" -- try --effector {covered_by[0]}."
+            )
+        else:
+            # "Who publishes 24 nt?" is the wrong question once the answer is
+            # nobody. The useful one is which ortholog could design against
+            # *this target* at a length it was actually fit at -- and for a
+            # mature miRNA that is RfxCas13d at 22/23 nt, while the CLI default
+            # is LwaCas13a at 28. Every built-in preset is 22-24 nt, so on the
+            # default every one of them refused and none of them said this.
+            fits = sorted(
+                (other.value, min(s for s in other_params.spacer_lengths
+                                  if s <= preset.length))
+                for other, other_params in EFFECTORS.items()
+                if other is not effector
+                and any(s <= preset.length for s in other_params.spacer_lengths)
+            )
+            note += " No ortholog in this package publishes that length."
+            if fits:
+                offer = ", ".join(f"{name} at {best} nt" for name, best in fits)
+                note += (
+                    f" {offer} is fit at a length this {preset.length} nt "
+                    f"target can hold -- try --effector {fits[0][0]}."
+                )
     return Designability(
         preset_id=preset.preset_id,
         target_length=preset.length,

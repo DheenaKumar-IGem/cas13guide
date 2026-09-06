@@ -100,6 +100,16 @@ def documented_test_counts() -> dict[str, int]:
     cell = re.search(r'<td class="est">([\d,]+) tests', page)
     if cell:
         found["landing page"] = int(cell.group(1).replace(",", ""))
+    # A fifth statement, in the mutation sweep's own header, describing what
+    # the sweep does to a survivor. It said 1241 while the other four said
+    # 1473, for the same reason the unittest line once said 930: nothing
+    # scraped it. The sentence two lines below it states the mutation count and
+    # *is* scraped by `stated_mutation_counts`, so one sentence carried two
+    # figures and only one of them was checked.
+    sweep = (ROOT / "examples" / "verify_mutation_coverage.py").read_text(encoding="utf-8")
+    survivor = re.search(r"re-run against all (\d{3,5}) tests", sweep)
+    if survivor:
+        found["mutation sweep header"] = int(survivor.group(1))
     return found
 
 
