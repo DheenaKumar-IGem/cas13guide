@@ -293,8 +293,25 @@ class ResolvedDesignSpec(_Frozen):
 
     @property
     def requires_discrimination(self) -> bool:
-        """Allele/SNV tasks need the ratio constraint, not two thresholds."""
-        return self.contract.task is Task.ALLELE
+        """Allele/SNV tasks need the ratio constraint, not two thresholds.
+
+        So does any contract that declares a FORBIDDEN target, whatever its
+        task. A multiplex diagnostic panel is that case: ``class=forbidden`` on
+        the other biomarkers states this guide must not detect them, and they
+        differ from the intended one by a base or two -- so thresholding
+        ``LCB(on)`` and ``UCB(off)`` independently fails every guide for
+        exactly the reason it does on an allele. The ratio is the question in
+        both, and keying only on the task label left it computable and
+        uncomputed for the panel.
+
+        Read off the contract's shape rather than its label alone, so a
+        contract with no FORBIDDEN target is untouched: ``discrimination_margin``
+        stays ``None`` and no threshold applies, as before.
+        """
+        return (
+            self.contract.task is Task.ALLELE
+            or bool(self.contract.by_class(TargetClass.FORBIDDEN))
+        )
 
     def fingerprint(self) -> str:
         """Stable content hash. Two identical designs share a fingerprint."""

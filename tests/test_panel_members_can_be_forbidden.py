@@ -197,5 +197,160 @@ class TestBothDoorsSayTheSyntaxExists(unittest.TestCase):
         self.assertIn("class=forbidden", _form_page())
 
 
+class TestTheRatioIsAskedForAPanelToo(unittest.TestCase):
+    """`discrimination_margin` is the better answer, and it was switched off.
+
+    `requires_discrimination` read the task label alone, so an allele contract
+    got the ratio and a multiplex detection panel did not -- however its
+    records were classed. The two cases are the same shape: targets a base or
+    two apart, where thresholding LCB(on) and UCB(off) independently fails
+    every guide and only their ratio carries the question.
+
+    Keyed on the contract's shape now, so a contract with no FORBIDDEN target
+    is untouched and the metric stays None exactly as before.
+    """
+
+    @staticmethod
+    def _spec(task, classes):
+        from cas13guide.contract.enums import (
+            AssayType, Effector, TargetClass, Task, Universe,
+        )
+        from cas13guide.contract.spec import (
+            ContextScope, EffectorAssayProfile, ResolvedDesignSpec,
+            TargetContract, TargetSpec,
+        )
+
+        targets = tuple(
+            TargetSpec(target_id=f"t{index}", sequence="ACGU" * 8,
+                       target_class=cls)
+            for index, cls in enumerate(classes)
+        )
+        return ResolvedDesignSpec(
+            contract=TargetContract(task=task, targets=targets),
+            profile=EffectorAssayProfile(
+                effector=Effector.RFX_CAS13D,
+                assay=AssayType.IN_VITRO_DETECTION),
+            context=ContextScope(organism="H", genome_build="G",
+                                 annotation_version="v",
+                                 declared_universes=frozenset({Universe.NCRNA})),
+        )
+
+    def test_a_detection_panel_with_a_forbidden_member_asks_for_it(self):
+        from cas13guide.contract.enums import TargetClass, Task
+
+        spec = self._spec(Task.DETECTION,
+                          [TargetClass.REQUIRED, TargetClass.FORBIDDEN])
+        self.assertTrue(spec.requires_discrimination)
+
+    def test_a_detection_panel_without_one_does_not(self):
+        """The guard that keeps this additive: no FORBIDDEN, no change."""
+        from cas13guide.contract.enums import TargetClass, Task
+
+        spec = self._spec(Task.DETECTION,
+                          [TargetClass.REQUIRED, TargetClass.DESIRED])
+        self.assertFalse(spec.requires_discrimination)
+
+    def test_an_allele_task_still_asks_for_it_on_the_label_alone(self):
+        """The original condition, kept: an allele contract qualifies whether
+        or not this particular one happens to declare a FORBIDDEN target."""
+        from cas13guide.contract.enums import TargetClass, Task
+
+        spec = self._spec(Task.ALLELE, [TargetClass.REQUIRED])
+        self.assertTrue(spec.requires_discrimination)
+
+    def test_every_task_qualifies_once_a_record_is_forbidden(self):
+        """It is a property of what was declared, not of what it was called."""
+        from cas13guide.contract.enums import TargetClass, Task
+
+        for task in Task:
+            with self.subTest(task=task.value):
+                spec = self._spec(
+                    task, [TargetClass.REQUIRED, TargetClass.FORBIDDEN])
+                self.assertTrue(spec.requires_discrimination)
+
+
+class TestTheRatioReachesTheVerdict(unittest.TestCase):
+    """Through a real design, because the property that matters is the verdict.
+
+    The class above asserts the flag. This asserts that turning it on changes
+    what the run says about a guide that cannot tell two biomarkers apart --
+    which is the whole point of computing the ratio.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        from pathlib import Path
+
+        from cas13guide.services.workflow import DesignRequest, run_request
+
+        # Two bases apart, both outside the seed. RfxCas13d is fit at 22 nt,
+        # so the run is in-domain and the verdict is about discrimination
+        # rather than about an unvalidated spacer length.
+        required = "UAACACUGUCUGGUAAAGAUGG"
+        near = "UAACACUGUCUGGUAACGAUGU"
+        cls._directory = tempfile.TemporaryDirectory()
+        home = Path(cls._directory.name)
+        eol = chr(10)
+        (home / "forbidden.fa").write_text(
+            ">miR141 class=required" + eol + required + eol
+            + ">miR200a class=forbidden" + eol + near + eol, encoding="utf-8")
+        (home / "unclassed.fa").write_text(
+            ">miR141" + eol + required + eol + ">miR200a" + eol + near + eol,
+            encoding="utf-8")
+
+        def design(name):
+            return run_request(DesignRequest(
+                fasta_path=str(home / name), effector="RfxCas13d",
+                assay="in_vitro_detection", task="detection")).report
+
+        cls.forbidden = design("forbidden.fa")
+        cls.unclassed = design("unclassed.fa")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._directory.cleanup()
+
+    @staticmethod
+    def _reasons(report):
+        return {code for row in (report.get("rejected") or [])
+                for code in (row.get("reasons") or [])}
+
+    def test_unclassed_the_cross_reaction_is_still_credited(self):
+        """The state this exists to change, kept on record.
+
+        Left unclassed the second biomarker is DESIRED, DESIRED counts as
+        `is_intended`, and the hit feeds `desired_utility` -- a maximised
+        objective -- while contributing nothing to the hazard.
+        """
+        ranked = self.unclassed["ranked"]
+        self.assertTrue(ranked, "nothing ranked, so this shows nothing")
+        metrics = ranked[0]["metrics"]
+        self.assertGreater(metrics["desired_utility"], 0.0)
+        self.assertEqual(metrics["worst_off_target"], 0.0)
+        self.assertIsNone(metrics["discrimination_margin"],
+                          "no FORBIDDEN target, so the ratio must stay absent")
+
+    def test_classed_forbidden_the_ratio_is_what_refuses_it(self):
+        reasons = self._reasons(self.forbidden)
+        self.assertIn("discrimination_margin_insufficient", reasons)
+
+    def test_and_the_hazard_gate_fires_as_well(self):
+        """Two independent readings of the same fact, both now reachable."""
+        self.assertIn("credible_forbidden_hit", self._reasons(self.forbidden))
+
+    def test_the_two_runs_differ_only_in_those_headers(self):
+        """Or the comparison is about something else."""
+        import re
+        from pathlib import Path
+
+        home = Path(self._directory.name)
+        strip = lambda text: re.sub(r" class=\w+", "",  # noqa: E731
+                                    text.replace(chr(13), ""))
+        self.assertEqual(
+            strip((home / "forbidden.fa").read_text(encoding="utf-8")),
+            strip((home / "unclassed.fa").read_text(encoding="utf-8")))
+
+
 if __name__ == "__main__":
     unittest.main()

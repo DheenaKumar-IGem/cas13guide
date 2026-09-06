@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1495 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 149 are
+  survives is re-run against all 1503 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. None of the 150 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **149 mutations, 149 caught, 0 holes.**
+Last measured: **150 mutations, 150 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -188,6 +188,18 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "src/cas13guide/services/workflow.py",
      "    rng = random.Random(seed)", "    rng = random.Random(0)",
      ["test_the_demo_demonstrates_something.py"]),
+    # ---- contract/spec.py: who gets the ratio ----
+    # Narrowing this back to the task label leaves `discrimination_margin`
+    # computable and uncomputed for a multiplex panel, which is the one
+    # question that panel exists to ask.
+    ("discrimination-only-for-the-allele-label",
+     "src/cas13guide/contract/spec.py",
+     "        return (\n"
+     "            self.contract.task is Task.ALLELE\n"
+     "            or bool(self.contract.by_class(TargetClass.FORBIDDEN))\n"
+     "        )",
+     "        return self.contract.task is Task.ALLELE",
+     ["test_panel_members_can_be_forbidden.py"]),
     # ---- util/seq.py: the primitives everything else reads through ----
     # A spacer is revcomp of its site, tiling is windows, and QC reads the
     # other three. The file carried no mutation; each hint below names the
