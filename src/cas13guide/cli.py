@@ -258,6 +258,13 @@ def _design(args: argparse.Namespace) -> int:
             ("access", "accessibility"),
             ("dG/nt", "duplex_dg_per_nt"),
             ("signal", "predicted_signal"),
+            # Cleaved reporter in nM, present only when measured kinetic
+            # constants were supplied -- which is what supplying them is for.
+            # The figure reached `report.json`, the CSV and the HTML report and
+            # not this table, so the surface most people read said the
+            # PLACEHOLDER caveat had lifted and showed the same relative
+            # `signal` as before. The rule above drops it on every other run.
+            ("nM", "predicted_signal_nm"),
         ]
         shown_columns = [
             (label, key) for label, key in optional

@@ -134,5 +134,68 @@ class TestTheRunSaysWhyAColumnIsMissing(RankingTableTestCase):
         self.assertIn("Collateral (trans) cleavage is not predicted", text)
 
 
+class TestTheAbsoluteFigureReachesTheTable(RankingTableTestCase):
+    """Supplying measured kinetic constants is supposed to unlock a number.
+
+    The README records `absolute_signal()` reaching no surface a user reads as
+    a defect already fixed: the pipeline asked `predict()` for a figure, kept
+    the relative score and discarded the nM from the same object. The fix
+    reached `report.json`, the CSV and the HTML report -- which adds an nM
+    column when any row carries one -- and not this table, which is what
+    `cas13guide design` prints by default.
+
+    So a run with measured constants dropped the PLACEHOLDER CRITICAL, told
+    the reader the restriction had lifted, and showed them the same relative
+    `signal` as before.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+
+        from cas13guide.services.kinetics import PROVISIONAL_CONSTANTS
+        from dataclasses import asdict
+
+        super().setUpClass()
+        for name, provisional in (("measured", False), ("provisional", True)):
+            values = asdict(PROVISIONAL_CONSTANTS)
+            values["provisional"] = provisional
+            values["source"] = "illustrative, for this test"
+            (cls.home / (name + ".json")).write_text(
+                json.dumps(values), encoding="utf-8")
+
+    def _detection_table(self, *extra):
+        return self.table("--assay", "in_vitro_detection", "--task",
+                          "detection", *extra)
+
+    def test_without_constants_there_is_no_nm_column(self):
+        header, _rows = self._detection_table()
+        self.assertIn("signal", header)
+        self.assertNotIn("nM", header)
+
+    def test_measured_constants_put_one_there(self):
+        header, rows = self._detection_table(
+            "--kinetics-constants", str(self.home / "measured.json"))
+        self.assertIn("nM", header)
+        self.assertTrue(rows)
+        # A number, not a dash: the column is only shown when rows carry one.
+        self.assertRegex(rows[0], r"[0-9]+[.][0-9]+")
+
+    def test_the_relative_signal_stays_beside_it(self):
+        """The absolute figure is an addition, not a replacement: only the
+        relative one is comparable across runs."""
+        header, _rows = self._detection_table(
+            "--kinetics-constants", str(self.home / "measured.json"))
+        self.assertIn("signal", header)
+
+    def test_provisional_constants_unlock_nothing(self):
+        """`absolute_signal` refuses while the values are stand-ins, so the
+        column must go with it -- otherwise the caveat and the table disagree.
+        """
+        header, _rows = self._detection_table(
+            "--kinetics-constants", str(self.home / "provisional.json"))
+        self.assertNotIn("nM", header)
+
+
 if __name__ == "__main__":
     unittest.main()
