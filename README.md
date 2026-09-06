@@ -106,7 +106,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1420 tests
+python -m unittest discover -s tests -t tests    # 1433 tests
 pytest                              # same suite under pytest
 ```
 
@@ -236,17 +236,51 @@ returned PASS 272 under the identical synthetic calibration. So did
 cleared the flag, because nothing downstream read it.
 
 The reason now counts off-target loci only, which is what the report's own
-glossary already said it meant. PASS, the panel, its controls and the FR6.3
-interval are reachable from the documented command again. The shortfall message
-stays, and the test that guards it now arranges an empty panel deliberately — a
-background paralog every window also hits — rather than inheriting one from a
-defect.
+glossary already said it meant. The shortfall message stays, and the test that
+guards it arranges an empty panel deliberately — a background paralog every
+window also hits — rather than inheriting one from a defect:
 
 ```
   ! no panel: guides ranked but none PASSed the gate, and the panel is
-    PASS-only. The rows below are candidates to triage, not a recommendation.
-  ! no feasible panel covers required target(s): t_tgt
+    PASS-only. The rows above are candidates to triage, not a recommendation.
+  ! panel stopped at 0/3: no remaining guide added coverage without violating
+    spacing/diversity constraints
+  ! no feasible panel covers required target(s): t1
 ```
+
+**And then `cas13guide demo` went on printing that shortfall anyway**, for a
+second and unrelated reason. Its verdicts were `PASS 0 / REVIEW 81 / FAIL 27`
+with `calibration_unsupported` on every survivor — so no panel, no controls,
+no validation plan, and a near-identical block quoted in this file as the
+demo's own transcript. Near-identical because each surface writes that first
+line itself: the demo prints it above the table and says "the rows below", the
+CLI prints it under the table and says "above". One word apart, which is what
+made the quote look like it had a source.
+
+The cause was not in the pipeline. `demo.py` kept its own copy of the design
+path's stand-in calibration, and the copy called `add_observation` without a
+`group=` label. A stratum with no group labels has zero independent units,
+`groups_ok` is False, and `calibration.py` marks every interval out-of-domain
+— correctly. The guard fired, on data that could not satisfy it, on the one
+command `--help` sends a new reader to.
+
+That copy had drifted twice before, each time losing something this path had
+gained: the `synthetic` flag, so the demo dropped the CRITICAL qualifying every
+number it printed, and the provenance, recorded as "unstated". A calibration
+missing a field still answers, so nothing raised on any of the three occasions,
+and the suite did run the demo — it checked exit 0, that the headings appeared,
+and that the verdict counts summed above zero. All three hold for a demo that
+demonstrates nothing: `--- panel ---` prints its heading whether or not a panel
+follows, and 0 + 81 + 27 > 0.
+
+There is now one `build_synthetic_calibration` and two thin callers, so a
+fourth drift has nowhere to happen; the seed it records also builds it, which
+the demo's shared module-level RNG meant was not true before. The documented
+command reaches `PASS 81 / REVIEW 0 / FAIL 27`, a 3-guide panel at 0.981
+coverage, its controls and its plan — still under the CRITICAL saying the
+calibration is synthetic and every PASS therefore exercisable rather than
+earned. `test_the_demo_demonstrates_something.py` asserts the end of the
+pipeline is reached, rather than that the run survived it.
 
 ## What a panel is worth (FR6.3)
 
@@ -296,13 +330,22 @@ calibration rows, so that is what the panel is worth:
 
 ```
 --- panel detection probability (FR6.3) ---
-  t_tgt: [0.523, 0.523]  from 1 member(s): g_2a2018f21c=0.523
+  t_tgt: [0.523, 0.773]  from 2 member(s): g_2a2018f21c=0.523, g_3bf3b6b517=0.523
 ```
 
-Floor equals ceiling there because the spacing constraint left one member, and
-one guide raises no independence question. Add a second member of the same
-quality and the two ends separate — `[0.523, 0.772]` — which is the whole
-disagreement made visible: the old number would have printed `0.772` alone.
+Two members of equal quality, and the two ends separate: the floor is what the
+panel is worth if they fail together, the ceiling if they fail independently.
+That gap is the disagreement made visible — the old single number would have
+printed `0.773` alone, the optimistic end, with nothing marking it as one end.
+
+This block used to show a one-member panel, where floor equals ceiling and one
+guide raises no independence question at all. That was not a property of the
+example. `select_panel` was being handed the Pareto frontier rather than the
+guides that passed, so it chose from a few dozen candidates where it should
+have chosen from hundreds, and the spacing constraint ran out of room almost
+at once. The illustration of the interval had been reduced, by a defect
+somewhere else entirely, to the one case where an interval cannot show
+anything.
 
 Collapsing that to a single number takes the common-cause fraction `beta` of
 the standard beta-factor reliability model (IEC 61508-6): each member's failure
@@ -865,7 +908,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1420 tests, run under `unittest` or `pytest` — both discover the same set —
+1433 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -877,8 +920,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1420 tests
-python examples/verify_mutation_coverage.py              # 129 mutations, 129 caught
+pytest                                                   # 1433 tests
+python examples/verify_mutation_coverage.py              # 131 mutations, 131 caught
 python examples/verify_vocabulary_coverage.py            # 55 of 55 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -932,7 +975,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 129 are
+against the **whole** suite before being called a hole. None of the 131 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also

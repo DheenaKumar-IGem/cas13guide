@@ -23,7 +23,7 @@ Two things make the result trustworthy rather than flattering:
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
   survives is re-run against all 1241 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 129 are
+  "hole" is never an artefact of which modules were chosen. None of the 131 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **129 mutations, 129 caught, 0 holes.**
+Last measured: **131 mutations, 131 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -70,6 +70,23 @@ REPO = Path(__file__).resolve().parents[1]
 #: which is most of its wall clock -- an instrument nobody runs documents drift
 #: instead of preventing it.
 MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
+    # ---- services/workflow.py: the one stand-in calibration ----
+    # There were two of these and the copy in demo.py drifted from this three
+    # times, each drift losing something this path had gained. A calibration
+    # missing a field still answers, so none of the three raised.
+    ("calibration-seeding-drops-the-group-label",
+     "src/cas13guide/services/workflow.py",
+     '            calibration.add_observation(key, observed, truth,\n'
+     '                                        group=f"T{i % 12:02d}")',
+     "            calibration.add_observation(key, observed, truth)",
+     ["test_the_demo_demonstrates_something.py",
+      "test_demo_runs_and_matches_the_readme.py", "test_calibration.py"]),
+    # Without this the recorded seed does not rebuild what it labels, which is
+    # the one thing a provenance field exists to do.
+    ("calibration-seeding-ignores-its-seed",
+     "src/cas13guide/services/workflow.py",
+     "    rng = random.Random(seed)", "    rng = random.Random(0)",
+     ["test_the_demo_demonstrates_something.py"]),
     # ---- metrics/bounds.py: the asymmetric bound algebra ----
     ("bounds-benefit-reads-upper", "src/cas13guide/metrics/bounds.py",
      '    """Read a benefit at its lower confidence bound."""\n    return interval.lower',

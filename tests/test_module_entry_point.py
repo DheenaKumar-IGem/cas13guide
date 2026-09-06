@@ -8,11 +8,43 @@ the failure mode is that the interpreter cannot resolve the package as a module
 at all, and only an out-of-process run sees that.
 """
 
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+README = Path(__file__).resolve().parent.parent / "README.md"
+
+
+def _squash(text: str) -> str:
+    """Collapse whitespace, so a line wrapped for the README still matches."""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _readme_shortfall_quotes() -> list[str]:
+    """Every ``!`` line inside a fenced block in the README."""
+    text = README.read_text(encoding="utf-8")
+    # The language tag matters: without it the closing fence of one block pairs
+    # with the opening of the next, and every block is misaligned.
+    quoted: list[str] = []
+    for block in re.findall(r"```[a-z]*\n(.*?)```", text, re.DOTALL):
+        current: list[str] = []
+        for line in block.splitlines():
+            if line.lstrip().startswith("!"):
+                if current:
+                    quoted.append(" ".join(current))
+                current = [line.strip().lstrip("!").strip()]
+            elif current and line.startswith("    "):
+                # Continuation lines are indented under their "!" line.
+                current.append(line.strip())
+            elif current:
+                quoted.append(" ".join(current))
+                current = []
+        if current:
+            quoted.append(" ".join(current))
+    return quoted
 
 #: A 400 nt target with room for real tiling. Fixed rather than random
 #: so the verdict mix under the built-in models is the same every run.
@@ -124,3 +156,27 @@ class TestTheTerminalSaysWhenThereIsNoRecommendation(unittest.TestCase):
 
     def test_the_shortfall_itself_reaches_the_terminal(self):
         self.assertIn("no feasible panel", self.result.stdout)
+
+    def test_the_readme_quotes_this_run_and_not_some_other(self):
+        """The README shows this block; pin it against the run that prints it.
+
+        It used to be pinned against ``cas13guide demo``, and passed, because
+        the demo printed the same shortfall -- not by arrangement, but because
+        its own stand-in calibration could not certify anything and the
+        PASS-only panel was therefore always empty. Fixing the demo left the
+        quote with no producer. That is how a transcript ends up documenting a
+        defect: it was checked, continuously, against the wrong run.
+
+        Checked in one direction only. The README is asserted against the
+        command's output, never the command against the README, because a
+        transcript is a record of what happened.
+        """
+        quoted = _readme_shortfall_quotes()
+        self.assertGreaterEqual(len(quoted), 2,
+                                "the README quotes none, so this is vacuous")
+        printed = _squash(self.result.stdout)
+        for line in quoted:
+            with self.subTest(quoted=line[:55]):
+                self.assertIn(
+                    _squash(line), printed,
+                    "the README quotes a line this run does not print")

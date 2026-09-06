@@ -88,38 +88,27 @@ def build_world() -> tuple[Transcriptome, Transcriptome, dict[str, str]]:
     return reference, variant, {"TGT1": "t_tgt"}
 
 
-#: What generates the stand-in below. Named here so the ledger and the
-#: limitation both read it from one place.
-_SYNTHETIC_SOURCE = {
-    "kind": "synthetic",
-    "seed": 11,
-    "n_per_stratum": 120,
-    "noise_sd": 0.13,
-}
+#: What generates the stand-in below. These reach the ledger and the
+#: limitation through the builder, which records them itself rather than
+#: leaving a caller to keep a parallel dict in step.
+_SYNTHETIC = {"seed": 11, "n_per_stratum": 120, "noise_sd": 0.13}
 
 
 def seed_calibration(spec: ResolvedDesignSpec) -> CalibrationService:
-    """Stand in for held-out tiling-screen data."""
-    cs = CalibrationService()
-    # Marked, not merely described. `limitations.py` reads this flag to decide
-    # whether to raise the CRITICAL that every conformal interval here rests on
-    # generated data -- and `services/workflow.seed_calibration` sets it while
-    # this one did not, so the demo printed three of the four CRITICALs that
-    # apply to it and dropped the one that qualifies every number on the page.
-    # The `source` mapping is the same fact for the provenance ledger, which
-    # recorded this calibration as "unstated" for the same reason.
-    cs.synthetic = True
-    cs.source = dict(_SYNTHETIC_SOURCE)
-    effector = spec.profile.effector.value
-    assay = spec.profile.assay.value
-    # Strata are error regimes (mismatch depth), not intent labels.
-    for regime in ("mm0", "mm1-2", "mm3+"):
-        key = CalibrationService.stratum_key(effector, assay, regime)
-        for _ in range(120):
-            truth = RNG.random()
-            pred = min(1.0, max(0.0, truth + RNG.gauss(0, 0.13)))
-            cs.add_observation(key, pred, truth)
-    return cs
+    """Stand in for held-out tiling-screen data.
+
+    A thin caller now. This used to be its own copy of the design path's
+    seeding, and it drifted from it three times -- most recently by omitting
+    the group label, which left every stratum with zero independent units, so
+    every interval came back out-of-domain and every guide landed R3
+    `calibration_unsupported`. The demo could not reach a PASS, its PASS-only
+    panel was necessarily empty, and the README quoted that shortfall as the
+    demo's transcript.
+    """
+    from .services.workflow import build_synthetic_calibration
+
+    return build_synthetic_calibration(
+        spec.profile.effector.value, spec.profile.assay.value, **_SYNTHETIC)
 
 
 def main() -> DesignReport:

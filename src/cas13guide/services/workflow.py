@@ -569,24 +569,34 @@ def _panel_dependence(request: DesignRequest):
         ) from exc
 
 
-def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
-    """A stand-in calibration so bounds exist at all.
+def build_synthetic_calibration(effector, assay, *, seed, n_per_stratum,
+                                noise_sd):
+    """The stand-in calibration, in one place.
 
-    Synthetic on purpose and *marked* as such -- ``calibration.synthetic`` is
-    set below, and ``services/limitations.py`` reads that flag to raise the
-    CRITICAL synthetic-calibration limitation. This used to point at
-    :data:`STANDING_CAVEATS`, which is the empty tuple: the pointer outlived
-    the constant it named by the commit that emptied it. Group labels are
-    supplied so the group-adequacy check is actually exercised rather than
-    switching itself off.
+    There were two of these: this one and a copy in ``demo.py``. Every time
+    this path gained a requirement the copy silently failed it, and because a
+    calibration that is missing something still answers, nothing raised. Three
+    defects came out of that drift -- the ``synthetic`` flag the demo did not
+    set, so it dropped the CRITICAL qualifying every number it printed; the
+    provenance the ledger recorded as "unstated"; and the group labels, whose
+    absence made every interval out-of-domain and put the demo permanently at
+    zero PASS with an empty panel.
+
+    Group labels are supplied so the group-adequacy check is actually
+    exercised rather than switching itself off. ``synthetic`` is set here
+    rather than described, because ``services/limitations.py`` reads the flag:
+    the warning appears because the calibration *is* synthetic, and goes away
+    when it stops being.
+
+    ``seed`` builds a generator of its own. The demo drew its calibration from
+    a module-level RNG shared with its sequence generation, so the seed its
+    ledger recorded did not determine the calibration it labelled -- only that
+    seed *plus* every prior draw did.
     """
     from .calibration import CalibrationService
 
-    rng = random.Random(request.seed)
+    rng = random.Random(seed)
     calibration = CalibrationService()
-    # Marked rather than described. services/limitations.py reads this flag, so
-    # the warning appears because the calibration *is* synthetic, not because a
-    # caller remembered to add a banner -- and it disappears when it stops being.
     calibration.synthetic = True
     # The parameters that generate this set, attached to the object that
     # carries it. Seed and noise decide every conformal interval, and therefore
@@ -597,19 +607,30 @@ def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
     # provenance, which is the one thing provenance exists to make impossible.
     calibration.source = {
         "kind": "synthetic",
-        "seed": request.seed,
-        "n_per_stratum": request.calibration_n,
-        "noise_sd": request.calibration_noise,
+        "seed": seed,
+        "n_per_stratum": n_per_stratum,
+        "noise_sd": noise_sd,
     }
+    # Strata are error regimes (mismatch depth), not intent labels.
     for regime in ("mm0", "mm1-2", "mm3+"):
-        key = CalibrationService.stratum_key(
-            spec.profile.effector.value, spec.profile.assay.value, regime
-        )
-        for i in range(request.calibration_n):
+        key = CalibrationService.stratum_key(effector, assay, regime)
+        for i in range(n_per_stratum):
             truth = rng.random()
-            observed = min(1.0, max(0.0, truth + rng.gauss(0, request.calibration_noise)))
-            calibration.add_observation(key, observed, truth, group=f"T{i % 12:02d}")
+            observed = min(1.0, max(0.0, truth + rng.gauss(0, noise_sd)))
+            calibration.add_observation(key, observed, truth,
+                                        group=f"T{i % 12:02d}")
     return calibration
+
+
+def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
+    """A stand-in calibration so bounds exist at all, from the request."""
+    return build_synthetic_calibration(
+        spec.profile.effector.value,
+        spec.profile.assay.value,
+        seed=request.seed,
+        n_per_stratum=request.calibration_n,
+        noise_sd=request.calibration_noise,
+    )
 
 
 def run_request(request: DesignRequest) -> DesignOutcome:
