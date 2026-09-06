@@ -495,7 +495,6 @@ def limitations_for_run(
             "a good candidate, not a certainty. Order several and test them.",
         )
     )
-    found.sort(key=lambda item: (_SEVERITY_ORDER[item.severity], item.id))
     # ---- robustness ----------------------------------------------------
     # Robustness is the minimum required coverage across every evaluated
     # context. Over one context that minimum is the coverage, so a run with no
@@ -521,6 +520,8 @@ def limitations_for_run(
                 "--variants.",
             )
         )
+
+    found.sort(key=lambda item: (_SEVERITY_ORDER[item.severity], item.id))
 
     return tuple(found)
 

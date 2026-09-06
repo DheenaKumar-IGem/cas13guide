@@ -243,6 +243,21 @@ class TestRobustnessIsNotClaimedWhereNothingWasVaried(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("--variants", found[0]["text"])
 
+    def test_it_sorts_with_the_other_warnings(self):
+        """Severity orders the list, so a reader who stops early reads what
+        matters. `limitations_for_run` sorts before returning, and appending
+        after that sort put this one below the INFO notes in every real run --
+        which the ordering test could not see, because its fixture supplies no
+        provenance and so never raises this caveat.
+        """
+        rank = {"critical": 0, "warning": 1, "info": 2}
+        found = self.alone["limitations"]
+        self.assertIn("robustness-unevaluated",
+                      [item["id"] for item in found])
+        positions = [rank[item["severity"]] for item in found]
+        self.assertEqual(positions, sorted(positions),
+                         "limitations are not ordered by severity")
+
     def test_and_does_not_say_it_when_a_variant_was_supplied(self):
         """Or the caveat is simply always on and says nothing."""
         self.assertFalse([item for item in self.varied["limitations"]
