@@ -93,7 +93,11 @@ class TestRejectsBadScreens(unittest.TestCase):
             )
             for e in screen(n_transcripts=20, step=10)
         ]
-        report = evaluate_dataset(noise, seed=5, probe_split_bias=False)
+        # `min_groups` held at the old default: the criterion under test is
+        # the skill one, and the derived floor (38, so the calibration split
+        # can hold 8) would stop this screen two criteria earlier.
+        report = evaluate_dataset(noise, seed=5, min_groups=6,
+                                  probe_split_bias=False)
         self.assertFalse(report.accepted)
         skill = next(c for c in report.criteria if c.name == "grouped CV spearman")
         self.assertFalse(skill.passed)
@@ -105,6 +109,63 @@ class TestRejectsBadScreens(unittest.TestCase):
         text = report.summary()
         self.assertIn("REJECTED", text)
         self.assertIn("[FAIL]", text)
+
+
+class TestTheGroupFloorIsTheOneTheSplitNeeds(unittest.TestCase):
+    """`min_groups` was 6 and `min_calibration_groups` is 8.
+
+    Calibration groups are a subset of all groups, so any screen with 6 or 7
+    transcripts passed the second criterion and could not possibly pass the
+    fifth. And the split takes a fifth of the groups, so the real floor is 38.
+
+    Measured at 720 rows throughout: 6 transcripts yield 1 calibration
+    transcript, 12 yield 2, 24 yield 5, 48 yield 10. The number was already
+    known -- `screen()` above carries the comment "40 transcripts so the
+    calibration split gets >= 8 independent groups" -- while the figure printed
+    to whoever ran `cas13guide train` stayed at 6.
+    """
+
+    def test_the_default_floor_is_solved_rather_than_stated(self):
+        from cas13guide.services.training import groups_needed_for_calibration
+
+        report = evaluate_dataset(screen(n_transcripts=4), min_rows=1,
+                                  probe_split_bias=False)
+        criterion = next(c for c in report.criteria
+                         if c.name == "transcript groups")
+        self.assertEqual(criterion.threshold, float(groups_needed_for_calibration(8)))
+        self.assertGreater(criterion.threshold, 8.0,
+                           "a floor below the calibration count it feeds "
+                           "cannot be satisfied by any screen")
+
+    def test_that_floor_is_exactly_where_the_split_turns_over(self):
+        """37 is short by one calibration transcript; 38 is not."""
+        from cas13guide.services.training import (
+            CALIBRATION_FRACTION, groups_needed_for_calibration,
+        )
+
+        floor = groups_needed_for_calibration(8)
+        self.assertGreaterEqual(
+            max(1, int(round(CALIBRATION_FRACTION * floor))), 8)
+        self.assertLess(
+            max(1, int(round(CALIBRATION_FRACTION * (floor - 1)))), 8)
+
+    def test_a_screen_below_it_is_refused_before_a_model_is_fitted(self):
+        """The point of moving the number: fail early, with the true figure,
+        rather than after training on a criterion five rows further down."""
+        report = evaluate_dataset(screen(n_transcripts=12, step=6), min_rows=1,
+                                  probe_split_bias=False)
+        self.assertFalse(report.accepted)
+        self.assertFalse(next(c for c in report.criteria
+                              if c.name == "transcript groups").passed)
+        self.assertIsNone(report.result, "a model was fitted anyway")
+
+    def test_the_criterion_says_why_that_many(self):
+        report = evaluate_dataset(screen(n_transcripts=4), min_rows=1,
+                                  probe_split_bias=False)
+        note = next(c for c in report.criteria
+                    if c.name == "transcript groups").note
+        self.assertIn("fifth", note)
+        self.assertIn("8", note)
 
 
 class TestCoverageIsMeasuredNotAssumed(unittest.TestCase):
@@ -126,8 +187,14 @@ class TestCoverageIsMeasuredNotAssumed(unittest.TestCase):
         self.assertIn("unreliable", criterion.note)
 
     def test_too_few_calibration_transcripts_is_flagged(self):
+        # `min_groups=6` on purpose. The default is now derived from
+        # `min_calibration_groups` and the split's fifth -- 38 transcripts --
+        # so a screen that reaches this criterion in a failing state is one
+        # whose caller lowered the floor. That is the case this guards, and
+        # without the argument the run stops at `transcript groups` instead.
         report = evaluate_dataset(
-            screen(n_transcripts=12, step=6), seed=5, min_rows=1, probe_split_bias=False
+            screen(n_transcripts=12, step=6), seed=5, min_rows=1,
+            min_groups=6, probe_split_bias=False,
         )
         criterion = next(
             c for c in report.criteria if c.name == "calibration transcripts"

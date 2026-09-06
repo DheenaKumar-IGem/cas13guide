@@ -34,15 +34,19 @@ def run(*args, cwd=None):
     )
 
 
-def screen_csv(path: Path, rows: int = 360, groups: int = 12) -> Path:
+def screen_csv(path: Path, rows: int = 800, groups: int = 40) -> Path:
     """A screen with enough transcripts and spread to be trainable.
 
     At least 300 rows, because the acceptance gate refuses a smaller screen
     before it reaches the criteria this exercises. Spacers vary so the model
-    has something to learn, and activity tracks a
-    weak function of GC content so the acceptance gate sees real signal rather
-    than noise -- the point is to exercise the command, not to smuggle a model
-    past its own gate.
+    has something to learn, and activity tracks a weak function of GC content
+    so the acceptance gate sees real signal rather than noise -- the point is
+    to exercise the command, not to smuggle a model past its own gate.
+
+    40 transcripts, not 12. Conformal calibration is measured on a held-out
+    fifth of them and needs 8, so a screen needs 38 before it can reach the
+    later criteria at all -- this helper claimed to be "enough to be trainable"
+    at 12, where the run stops at the second criterion of six.
     """
     import random
 
@@ -155,22 +159,42 @@ class TestTheCheckCommand(unittest.TestCase):
 class TestTheTrainCommand(unittest.TestCase):
     """Ingest a screen, run the acceptance gate, report."""
 
-    def test_a_good_screen_is_read_and_summarised(self):
+    ROWS, GROUPS = 800, 40
+
+    @classmethod
+    def setUpClass(cls):
         with tempfile.TemporaryDirectory() as directory:
-            path = screen_csv(Path(directory) / "screen.csv")
-            result = run("train", str(path))
-        self.assertIn("read 360 rows", result.stdout)
-        self.assertIn("12 transcript group(s)", result.stdout)
-        self.assertNotIn("Traceback", result.stderr)
+            path = screen_csv(Path(directory) / "screen.csv",
+                              rows=cls.ROWS, groups=cls.GROUPS)
+            cls.result = run("train", str(path))
+
+    def test_a_good_screen_is_read_and_summarised(self):
+        """Read off the fixture rather than transcribed from one run of it.
+
+        These were the literals 360 and 12, which is the screen this helper
+        used to build -- one the gate stops at its second criterion, because
+        conformal calibration needs 8 of a held-out fifth of the transcripts.
+        """
+        self.assertIn(f"read {self.ROWS} rows", self.result.stdout)
+        self.assertIn(f"{self.GROUPS} transcript group(s)", self.result.stdout)
+        self.assertNotIn("Traceback", self.result.stderr)
 
     def test_it_reports_each_acceptance_criterion(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = screen_csv(Path(directory) / "screen.csv")
-            result = run("train", str(path))
-        self.assertIn("conformal coverage", result.stdout)
-        self.assertTrue(
-            "[PASS]" in result.stdout or "[FAIL]" in result.stdout, result.stdout
-        )
+        for name in ("rows", "transcript groups", "grouped CV spearman",
+                     "held-out spearman", "calibration transcripts",
+                     "conformal coverage"):
+            with self.subTest(criterion=name):
+                self.assertIn(name, self.result.stdout)
+
+    def test_a_good_screen_is_accepted(self):
+        """The helper is named for producing one; nothing checked that it did.
+
+        At 12 transcripts every run of it was REJECTED at the second of six
+        criteria, so the four below it -- the skill checks, the calibration
+        group count, the conformal coverage the gate exists for -- never ran.
+        """
+        self.assertIn("dataset ACCEPTED", self.result.stdout)
+        self.assertNotIn("[FAIL]", self.result.stdout)
 
     def test_every_printed_criterion_agrees_with_its_own_numbers(self):
         """The eighth pass found a criterion printing PASS beside a value below

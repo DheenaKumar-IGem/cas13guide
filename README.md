@@ -106,7 +106,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1464 tests
+python -m unittest discover -s tests -t tests    # 1469 tests
 pytest                              # same suite under pytest
 ```
 
@@ -908,7 +908,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1464 tests, run under `unittest` or `pytest` — both discover the same set —
+1469 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -920,8 +920,8 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1464 tests
-python examples/verify_mutation_coverage.py              # 139 mutations, 139 caught
+pytest                                                   # 1469 tests
+python examples/verify_mutation_coverage.py              # 140 mutations, 140 caught
 python examples/verify_vocabulary_coverage.py            # 56 of 56 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
@@ -975,7 +975,7 @@ subtle: disabling a whole check is caught by any competent suite and proves
 nothing, so half of these instead move a boundary one step, swap a bound for its
 opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
 or take the right operation on the wrong variable. And a survivor is confirmed
-against the **whole** suite before being called a hole. None of the 139 are
+against the **whole** suite before being called a hole. None of the 140 are
 caught only by the full run today, because each hint names the module *measured*
 to catch it rather than the one a reader would guess — which is not always the
 same module, and where they differ the difference is worth seeing. That also
@@ -1213,9 +1213,9 @@ somebody checks the table in the module docstring still describes the machine.
 ### A second batch, aimed at the constants
 
 Constants are where the first batch's one real hole was, so the second went
-looking for more of them. Thirty-five module-level numbers decide something in
+looking for more of them. Thirty-six module-level numbers decide something in
 this package. Twenty-nine of them had never been mutated when this batch was
-written, and twenty-one still have not. Six were picked for
+written, and twenty-two still have not. Six were picked for
 deciding something a user sees, and each was moved by a plausible amount rather
 than a wild one — the question is whether the suite notices a threshold
 shifting, not whether it notices the code breaking. **All six survived a green
@@ -1719,6 +1719,7 @@ the work was done correctly and the result went nowhere.
 | A display flag decided the exit status | The status came from the list the terminal table prints, after the distinct-site filter and `--top`. So `--top 0` **exited 1 and printed "no guide cleared the gate" beside a CSV holding 322 of them** — and 1 is the code a wrapper script reads as "the run refused everything" | `test_exit_codes_are_a_contract.py` |
 | The advertised kinetics unlock reached no surface a user reads | `absolute_signal()` is a library method and **nothing in `src/` called it**: the pipeline asked `predict()` for a figure, kept the relative score and discarded the nM from the same object. So supplying measured constants — the work the README names as unlocking an absolute figure — changed a warning and produced no number anywhere | `test_kinetics_mass_balance.py` |
 | The caveats reached the reader and not the machine — and not the demo at all | Four CRITICAL limitations apply to an ordinary run, including that the calibration is synthetic so **every PASS is exercisable rather than earned**. `report.json` had no limitations key at all, so a pipeline saw PASS verdicts and calibrated-looking intervals with nothing to qualify either — the one surface where a caveat cannot be inferred from tone. And `cas13guide demo`, the first command anybody runs, printed none of them anywhere: a grep of its whole output for "critical", "warning" or "limitation" returned zero | `test_caveats_reach_every_surface.py` |
+| The training gate asked for six transcripts and needed thirty-eight | `cas13guide train` reports its criteria in order: `transcript groups 12 (need 6)` **PASS**, then `calibration transcripts 2 (need 8)` **FAIL**. Calibration groups are a subset of all groups, so `min_groups=6` admitted screens that `min_calibration_groups=8` could not possibly accept — and the split takes a fifth of the groups, so the real floor is 38. Measured at 720 rows: 6 transcripts give 1 calibration transcript, 12 give 2, 24 give 5, 48 give 10. **The number was already known**: `tests/test_acceptance.screen()` carries the comment "40 transcripts so the calibration split gets >= 8 independent groups", so the fixture was built to the real requirement while the figure printed to whoever ran the command stayed at 6 | `test_acceptance.py` |
 | A Robustness column where nothing had been varied | Found by running `cas13guide serve` and reading the page. Robustness is the minimum required coverage across every evaluated context, so over one context it **is** the coverage — the HTML report showed `0.7647` beside a Coverage of `0.7647` on every row, under a tooltip promising "worst coverage across every evaluated context — variants, isoforms, haplotypes". With a variant supplied the same guide reports 0.7644 and 0.7644, equal again because it is genuinely robust: **the same equality means two different things and only one is a measurement**. The terminal has always dropped the column when `--variants` is absent; this surface did not, and no caveat anywhere said robustness had gone unevaluated | `test_user_facing_surfaces.py` |
 | The advice to use an amplicon named no way to supply one | `design --preset hsa-miR-21-5p` refuses correctly — 24 nt, one window, outside `LwaCas13a`’s published length — and says "An amplicon target restores normal tiling". There is no `--amplicon` flag, deliberately: `amplicon_target` takes the flanking context from the caller because it belongs to the assay and not to the miRNA. So the route is the ordinary one, amplify and pass the product with `--fasta`, and **none of the four messages saying this mentioned it**; the shortest pointed a terminal reader at `amplicon_target`, a Python function. Measured, a 204 nt amplicon around that same miRNA tiles to 177 candidates at the canonical spacer and exits 0, which is what the note promises | `test_presets.py` |
 | The CI coverage gate validated one stratum, and it was misnamed | `cas13guide check` draws sites at 0 to 4 mismatches and filed every one under a hardcoded `...|mm1-2`. Measured, that set is **mm0 73, mm1-2 153, mm3+ 74** — about half the stratum is not the regime it is named for — and the printed `coverage[...|mm1-2:0.920]` reads as a figure for mm1-2 while being marginal coverage over a mixture. The pooling was **not** hiding a failure, which is worth saying because it is the first thing to suspect: split conformal is marginally valid whatever the pool, and pooled and per-regime coverage both hold under noise that widens with mismatch depth (sd `0.04 + 0.09n`) and under a model simply wrong past two mismatches (sd 0.03 then 0.45). What the gate did not do was exercise the three strata the design path routes into, so a change to `mismatch_regime` was invisible to the command that exists to catch calibration changes | `test_subcommands_end_to_end.py` |
