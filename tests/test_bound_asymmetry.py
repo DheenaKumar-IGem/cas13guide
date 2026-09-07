@@ -124,5 +124,68 @@ class TestAnIntervalContainsItsOwnEstimate(unittest.TestCase):
             Interval(point=0.5, lower=0.8, upper=0.2)
 
 
+class TestTheNonNegativityGuardFiresOnWhatItNames(unittest.TestCase):
+    """`hazard_product` requires non-negative factors and did not check for them.
+
+    It tested `iv.upper < 0`, which rejects only an interval lying entirely
+    below zero. An interval straddling zero -- negative lower, non-negative
+    upper -- passed, and for those inputs multiplying the uppers does not
+    bound the product: the extreme is reached at the two *lower* ends when
+    both are negative.
+
+    The factors in a real run cannot be negative, so this never produced a
+    wrong hazard. It is pinned because the guard is the thing that says so.
+    """
+
+    @staticmethod
+    def _interval(lower, upper):
+        from cas13guide.models.evidence import Interval
+
+        point = min(max(0.0, lower), upper)
+        return Interval(point=point, lower=lower, upper=upper)
+
+    def test_an_interval_straddling_zero_is_refused(self):
+        from cas13guide.metrics.bounds import hazard_product
+
+        with self.assertRaises(ValueError):
+            hazard_product(self._interval(-5.0, 2.0), self._interval(-4.0, 3.0))
+
+    def test_the_value_it_used_to_return_was_not_a_bound(self):
+        """The reason the guard matters, stated as arithmetic.
+
+        Had it not raised, multiplying the uppers gives 6.0 while the product
+        of the two lower ends is 20.0 -- so the returned figure would have
+        been below the maximum it claimed to bound.
+        """
+        import itertools
+
+        a, b = (-5.0, 2.0), (-4.0, 3.0)
+        multiplying_uppers = a[1] * b[1]
+        true_max = max(x * y for x, y in itertools.product(a, b))
+        self.assertLess(multiplying_uppers, true_max)
+
+    def test_an_entirely_negative_interval_is_still_refused(self):
+        """The case the old check did catch, kept."""
+        from cas13guide.metrics.bounds import hazard_product
+
+        with self.assertRaises(ValueError):
+            hazard_product(self._interval(-5.0, -2.0))
+
+    def test_non_negative_factors_are_unaffected(self):
+        """The only shape a real run produces, so nothing moves."""
+        from cas13guide.metrics.bounds import hazard_product
+
+        got = hazard_product(self._interval(0.2, 0.6),
+                             self._interval(0.3, 0.9), scale=2.0)
+        self.assertAlmostEqual(got, 0.6 * 0.9 * 2.0, places=12)
+
+    def test_a_zero_lower_bound_is_allowed(self):
+        """`>= 0` is the precondition, not `> 0` -- an unknown factor reads
+        [0, 1] and must stay usable."""
+        from cas13guide.metrics.bounds import hazard_product
+
+        self.assertAlmostEqual(hazard_product(self._interval(0.0, 1.0)), 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

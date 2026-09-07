@@ -90,7 +90,18 @@ def hazard_product(*intervals: Interval, scale: float = 1.0) -> float:
     """
     out = scale
     for iv in intervals:
-        if iv.upper < 0:
+        # ``lower``, not ``upper``. The precondition is that every factor is
+        # non-negative, and an interval straddling zero satisfies `upper >= 0`
+        # while violating it -- so the guard passed exactly the inputs it
+        # exists to reject. Multiplying uppers is an upper bound on the product
+        # only when no factor can be negative: for [-5, 2] and [-4, 3] the
+        # product reaches 20 at the two lower ends, while the old code returned
+        # 2 x 3 = 6 and called it a bound.
+        #
+        # Latent rather than active -- the three real factors (UCB activity,
+        # UCB expression, hazard weight) are non-negative by construction -- but
+        # a guard that cannot fire in the case it names is not a guard.
+        if iv.lower < 0:
             raise ValueError("hazard_product requires non-negative quantities")
         out *= iv.upper
     return out
