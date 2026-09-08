@@ -31,10 +31,33 @@ from ..contract.spec import (
 )
 from .fasta import SequenceInputError, SequenceRecord, parse_sequence_input, read_fasta
 
-#: Universes declared for a design run. Deliberately the full set: declaring
-#: fewer would quietly narrow the universe-adequacy gate, which is the check
-#: that stops a suspiciously clean off-target report from passing.
+#: The index *filter*: every universe is admitted, so no locus the user
+#: supplied is excluded from the search. This is the job the name was right
+#: for.
+#:
+#: It was also passed as ``declared_universes``, the caller's assertion of what
+#: the corpus covers, with a comment saying declaring fewer "would quietly
+#: narrow the universe-adequacy gate". The opposite was true. `universe_gaps`
+#: computes ``(required | declared) - searched``; declaring everything and
+#: searching a corpus of one ncrna locus gave ``ALL - ALL``, because the index
+#: reported its filter as what it had searched. The gate returned no gap on
+#: every run the CLI has ever done, and the report told the user off-targets
+#: had been searched over rrna and mito -- the two highest hazard weights in
+#: the package -- against sequences that were never loaded.
 ALL_UNIVERSES: frozenset[Universe] = frozenset(Universe)
+
+#: What the target record is, when the user has not said. Keyed on the assay
+#: because that is the only evidence available: an in-vitro detection run is
+#: designed against a supplied amplicon, an antiviral run against a viral
+#: genome, a knockdown run against a cellular transcript. Every value here was
+#: previously ``NCRNA`` regardless of assay, which is why an in-vitro run
+#: covered neither universe its own assay is exposed to.
+TARGET_BIOTYPE_BY_ASSAY: dict[AssayType, Universe] = {
+    AssayType.IN_VITRO_DETECTION: Universe.SYNTHETIC,
+    AssayType.ANTIVIRAL: Universe.VIRAL,
+    AssayType.CELL_CULTURE_KNOCKDOWN: Universe.CODING,
+    AssayType.IN_VIVO_KNOCKDOWN: Universe.CODING,
+}
 
 #: Kept as the module's public name for callers that imported it, but the
 #: caveats a run actually carries are now *derived* from that run -- see
@@ -55,13 +78,35 @@ class DesignRequest:
 
     sequence_text: str | None = None
     fasta_path: str | Path | None = None
+    #: An uploaded FASTA's *text*, as the browser supplies it. Distinct from
+    #: ``sequence_text`` so the one-source guard can see it: the web form used
+    #: to fold the two together, which put the upload beyond the guard's reach
+    #: and silently dropped it whenever the textarea was also filled -- the
+    #: precise behaviour the guard was added to stop, on the door it was added
+    #: for. Text rather than a path, so the upload keeps going through
+    #: ``parse_sequence_input`` and the two doors stay identical.
+    fasta_text: str | None = None
     preset: str | None = None
     variants_path: str | Path | None = None
     variants_text: str | None = None
     background_path: str | Path | None = None
+    #: An uploaded background FASTA's *text*, as the browser supplies it.
+    #: Distinct from ``background_path`` for the same reason ``variants_text``
+    #: is distinct from ``variants_path``: the two doors must reach the same
+    #: code, and a browser has no path to give.
+    background_text: str | None = None
 
     effector: str = "LwaCas13a"
     assay: str = "in_vitro_detection"
+    #: What the supplied sequences are. The universe-adequacy gate asks whether
+    #: the corpus covers what the assay exposes the guide to, and it can only
+    #: be answered by labelling the sequences -- a declaration cannot buy
+    #: coverage, because the gate reads what the index holds.
+    target_biotype: str | None = None
+    background_biotype: str = "coding"
+    #: Comma-separated subject ids that `--blast-db` should treat as this run's
+    #: own target rather than as off-targets.
+    blast_self: str = ""
     task: str = "detection"
     spacer_length: int | None = None
     max_mismatches: int = 4
@@ -84,6 +129,11 @@ class DesignRequest:
     #: runs on placeholders and ``absolute_signal()`` refuses -- which was
     #: unreachable-by-design until now, because nothing plumbed a path through.
     kinetics_json: str | None = None
+    #: Path to a JSON file holding a measured common-cause fraction for panel
+    #: members (FR6.3). Without one the panel's detection probability is
+    #: reported as the interval it honestly is, and no point estimate is
+    #: offered -- see ``services/panel_confidence.py``.
+    panel_dependence_json: str | None = None
     #: Use the Arc RNAtargeting CNN instead of the built-in heuristic. Needs
     #: onnxruntime and gpu-contrafold, RfxCas13d, and a 30 nt spacer -- the only
     #: configuration the network was trained on. Refuses loudly otherwise
@@ -119,8 +169,46 @@ class DesignOutcome:
 
 
 def _read_records(request: DesignRequest) -> list[SequenceRecord]:
+    # A run designs against one target source. This used to return on the first
+    # of preset > fasta > sequence that was set, so supplying two meant the
+    # other was read by nobody and mentioned by nobody -- not in the notes, the
+    # shortfalls, or the export header. The web form offers all three at once,
+    # and argparse puts them in one group with no exclusion, so it is reachable
+    # from both doors. Refusing is the only honest answer: guessing which one
+    # the user meant is how a report ends up being about a target they did not
+    # think they were designing.
+    supplied = [
+        flag
+        for flag, present in (
+            ("--preset", bool(request.preset)),
+            (
+                "--fasta",
+                bool(request.fasta_path)
+                or bool(request.fasta_text and request.fasta_text.strip()),
+            ),
+            ("--sequence", bool(request.sequence_text and request.sequence_text.strip())),
+        )
+        if present
+    ]
+    if len(supplied) > 1:
+        raise DesignRequestError(
+            f"{', '.join(supplied)} were all supplied, and a run designs against "
+            "one target source. Pick one -- otherwise the report would be about "
+            "a target you may not have chosen, with nothing saying so."
+        )
     if request.preset:
-        preset = get_preset(request.preset)
+        try:
+            preset = get_preset(request.preset)
+        except KeyError as exc:
+            # get_preset's KeyError is right for a library caller and wrong
+            # here: run_request documents DesignRequestError, and cli._design
+            # catches exactly that. `_read_fasta_or_fail` below was added to
+            # close this hole for --background and --variants and left the
+            # branch directly above it open, so dropping the "-5p" off a preset
+            # id still produced a traceback where the same typo on --fasta
+            # produced a located message. args[0] rather than str(exc), which
+            # would wrap the whole hint in repr quotes.
+            raise DesignRequestError(exc.args[0]) from exc
         return [
             SequenceRecord(
                 name=preset.preset_id,
@@ -130,6 +218,8 @@ def _read_records(request: DesignRequest) -> list[SequenceRecord]:
         ]
     if request.fasta_path:
         return read_fasta(request.fasta_path)
+    if request.fasta_text and request.fasta_text.strip():
+        return parse_sequence_input(request.fasta_text)
     if request.sequence_text and request.sequence_text.strip():
         return parse_sequence_input(request.sequence_text)
     raise DesignRequestError(
@@ -155,9 +245,101 @@ def _resolve_spacer_length(
         raise DesignRequestError(
             f"{preset.preset_id} ({preset.length} nt) is too short for any "
             f"spacer {effector.value} tolerates. Design against an amplicon "
-            "instead."
+            "instead: amplify the target and pass the product with "
+            "--fasta."
         )
     return length
+
+
+def _record_target_class(record, default: TargetClass, flag: str) -> TargetClass:
+    """What one supplied record is to this design.
+
+    ``class=`` in the FASTA description, alongside the ``biotype=`` this file
+    already parses. Without it every door filed record 0 as REQUIRED and the
+    rest as DESIRED, so a multiplex diagnostic panel -- N biomarkers that must
+    be told apart -- could not be stated at all. Worse than unstated: DESIRED
+    counts as ``is_intended``, so a guide cross-reacting with another panel
+    member was credited to ``desired_utility`` and excluded from the off-target
+    hazard.
+
+    The gate machinery for the other reading was already here and unreachable:
+    FORBIDDEN carries a hazard weight of 5.0, and the gate raises
+    CREDIBLE_FORBIDDEN_HIT above ``forbidden_activity_max``.
+
+    ``default`` is the positional rule, so a file with no ``class=`` anywhere
+    behaves exactly as before.
+    """
+    for token in record.description.split():
+        key, sep, value = token.partition("=")
+        if sep and key.lower() == "class":
+            try:
+                return TargetClass(value.strip().lower())
+            except ValueError:
+                raise DesignRequestError(
+                    f"{flag} record {record.name!r} carries "
+                    f"class={value!r}, which is not a target class. Use one "
+                    f"of: {', '.join(c.value for c in TargetClass)}."
+                ) from None
+    return default
+
+
+def _record_biotype(record, default: Universe, flag: str) -> Universe:
+    """The universe one supplied record belongs to.
+
+    ``biotype=`` in the FASTA description labels a single record, so one file
+    can hold the several universes an assay is exposed to; ``default`` is what
+    the caller said about the file as a whole. Without this a corpus could
+    cover at most two universes -- the target's and the background's -- and
+    cell_culture_knockdown is exposed to five, so the adequacy gate was
+    unsatisfiable through this door however the user labelled the file.
+    """
+    for token in record.description.split():
+        key, sep, value = token.partition("=")
+        if sep and key.lower() == "biotype":
+            try:
+                return Universe(value.strip().lower())
+            except ValueError:
+                raise DesignRequestError(
+                    f"{flag} record {record.name!r} carries "
+                    f"biotype={value!r}, which is not a universe. Use one of: "
+                    + ", ".join(sorted(u.value for u in Universe))
+                ) from None
+    return default
+
+
+def _target_biotype(request: DesignRequest) -> Universe:
+    """What the target records are, as the user said or as the run can tell."""
+    if request.target_biotype:
+        try:
+            return Universe(request.target_biotype)
+        except ValueError:
+            # Its sibling `_record_biotype` names the flag and the valid
+            # values; this one let the bare enum error through, so the same
+            # typo produced a legible refusal on one input and "'x' is not a
+            # valid Universe" on the other.
+            raise DesignRequestError(
+                f"--target-biotype {request.target_biotype!r} is not a "
+                "universe. Use one of: "
+                + ", ".join(sorted(u.value for u in Universe))
+            ) from None
+    if request.preset:
+        # A preset ships its own biotype -- the shipped ones are miRNAs, and
+        # ncrna is what they are. Letting the assay default overrule it made a
+        # run disagree with `to_target_spec` about the same preset, so the
+        # tests that use `to_target_spec` would have been describing a target
+        # no run produces.
+        try:
+            return get_preset(request.preset).biotype
+        except KeyError:
+            # An unknown preset id has its own legible message further in.
+            pass
+    try:
+        return TARGET_BIOTYPE_BY_ASSAY[AssayType(request.assay)]
+    except ValueError:
+        # An unknown assay string is rejected with a legible message further
+        # in; returning a default here keeps that message the one the user
+        # sees, rather than a KeyError from this helper.
+        return Universe.NCRNA
 
 
 def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
@@ -165,26 +347,45 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
     try:
         effector = Effector(request.effector)
         assay = AssayType(request.assay)
+        target_biotype = _target_biotype(request)
         task = Task(request.task)
     except ValueError as exc:
         raise DesignRequestError(str(exc)) from exc
 
     spacer_length = _resolve_spacer_length(request, effector, notes)
-    targets = tuple(
-        TargetSpec(
-            target_id=record.name,
-            sequence=record.sequence,
-            # The first record is what the design must hit; the rest are
-            # desirable, not required, so one unusable extra record cannot
-            # fail the whole run.
-            target_class=TargetClass.REQUIRED if index == 0 else TargetClass.DESIRED,
-            gene=record.name,
-            biotype=Universe.NCRNA,
-            expression=request.expression,
-        )
-        for index, record in enumerate(records)
-    )
+    # Inside the guard below, not above it: TargetSpec validates too (expression
+    # is ge=0), so `--expression -5` raised a raw pydantic ValidationError while
+    # the adjacent `--spacer-length 30` rejection produced a clean message. One
+    # function, two contracts.
     try:
+        targets = tuple(
+            TargetSpec(
+                target_id=record.name,
+                sequence=record.sequence,
+                # The first record is what the design must hit; the rest are
+                # desirable, not required, so one unusable extra record cannot
+                # fail the whole run. A record may override that with `class=`
+                # in its header, which is what makes a multiplex panel -- N
+                # biomarkers to be told apart rather than co-targeted --
+                # expressible through this door at all.
+                target_class=_record_target_class(
+                    record,
+                    TargetClass.REQUIRED if index == 0 else TargetClass.DESIRED,
+                    "--fasta",
+                ),
+                gene=record.name,
+                biotype=target_biotype,
+                expression=request.expression,
+            )
+            for index, record in enumerate(records)
+        )
+        if not any(t.target_class is TargetClass.REQUIRED for t in targets):
+            raise DesignRequestError(
+                "every record was given a class= other than 'required', so "
+                "there is nothing for the design to hit. Mark the biomarker "
+                "this run is designing against as class=required and the ones "
+                "it must not detect as class=forbidden."
+            )
         return ResolvedDesignSpec(
             contract=TargetContract(task=task, targets=targets),
             profile=EffectorAssayProfile(
@@ -194,7 +395,15 @@ def build_spec(request: DesignRequest, records: Sequence[SequenceRecord],
                 organism=request.organism,
                 genome_build=request.genome_build,
                 annotation_version=request.annotation,
-                declared_universes=ALL_UNIVERSES,
+                # The one universe this function can assert: the target's.
+                # The background is deliberately absent. What it contributes is
+                # *measured* -- the index reports the universes it holds, which
+                # is the whole point of that bound -- so declaring it adds
+                # nothing the gate reads and can only invent a gap. It did:
+                # adding the file-level --background-biotype here declared
+                # `coding` for a background whose every record was labelled
+                # rrna or mito, and the run reported coding as unsearched.
+                declared_universes=frozenset({target_biotype}),
             ),
             thresholds=Thresholds(
                 required_search_mismatches=request.max_mismatches,
@@ -217,18 +426,43 @@ def build_registry(request: DesignRequest, notes: list[str], spec=None, records=
             from .accessibility import ViennaRNAAccessibilityModel
             from .thermodynamics import ViennaRNADuplexEnergyModel
 
-            accessibility = ViennaRNAAccessibilityModel()
+            accessibility = ViennaRNAAccessibilityModel()   # type: ignore[assignment]
             extra["energy"] = ViennaRNADuplexEnergyModel()
         except Exception as exc:
             notes.append(
                 f"Structural scoring is OFF ({exc}). Accessibility and duplex "
                 'energy will be blank. Install with: pip install "cas13guide[structure]"'
             )
+    if request.kinetics_json and not request.use_signal:
+        # Two flags that contradict each other. The file was not read at all,
+        # so a malformed one passed unnoticed -- a typo in a scripted pipeline
+        # would surface only when somebody removed --no-signal, on a run that
+        # had "worked" for weeks. Validate it either way, and say it went
+        # unused rather than ignoring it in silence.
+        from .kinetics import KineticConstants
+
+        try:
+            KineticConstants.from_json(request.kinetics_json)
+        except (OSError, ValueError, TypeError) as exc:
+            raise DesignRequestError(
+                f"--kinetics-constants {request.kinetics_json}: {exc}"
+            ) from exc
+        notes.append(
+            f"Kinetic constants were supplied ({request.kinetics_json}) and "
+            "signal prediction is off, so they were NOT used and no signal "
+            "was predicted. Drop --no-signal to use them."
+        )
+
     if request.use_signal:
         from .kinetics import CollateralKineticsModel, KineticConstants
 
         if request.kinetics_json:
-            constants = KineticConstants.from_json(request.kinetics_json)
+            try:
+                constants = KineticConstants.from_json(request.kinetics_json)
+            except (OSError, ValueError, TypeError) as exc:
+                raise DesignRequestError(
+                    f"--kinetics-constants {request.kinetics_json}: {exc}"
+                ) from exc
             extra["kinetics"] = CollateralKineticsModel(constants)
             if constants.provisional:
                 notes.append(
@@ -277,12 +511,29 @@ def _reference_index(request: DesignRequest, world):
             "it as your assertion about what the database covers"
         )
 
-    index = BlastOffTargetIndex(database=request.blast_db, universes=universes)
+    self_ids = frozenset(
+        name.strip() for name in request.blast_self.split(",") if name.strip()
+    )
+    index = BlastOffTargetIndex(
+        database=request.blast_db, universes=universes, self_ids=self_ids
+    )
     try:
         index.ensure_available()
     except BlastUnavailable as exc:
         raise DesignRequestError(str(exc)) from exc
-    return index
+    # Unioned with the local scan, never substituted for it. The same index
+    # answers both of the pipeline's questions -- where does this guide bind
+    # off-target, and does it bind its intended target at all -- and a BLAST
+    # database can only answer the first: it never sees this run's
+    # Transcriptome, and its subject ids are accessions that `annotate_hit`
+    # cannot match to the run's target ids. Substituting it left every guide
+    # with no on-target evidence, so `--blast-db` FAILed every candidate:
+    # measured 39/39 FAIL against 28 REVIEW for the identical design without
+    # the flag. A flag that fails everything looks exactly like a target with
+    # no usable guides.
+    from .indexes import UnionSearchIndex
+
+    return UnionSearchIndex([ExhaustiveScanIndex(world, ALL_UNIVERSES), index])
 
 
 def _build_arc_model(request: DesignRequest, spec, records):
@@ -329,30 +580,102 @@ def _build_arc_model(request: DesignRequest, spec, records):
         raise DesignRequestError(f"could not build the Arc model: {exc}") from exc
 
 
-def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
-    """A stand-in calibration so bounds exist at all.
+def _read_fasta_or_fail(path, flag: str) -> list[SequenceRecord]:
+    """``read_fasta``, with the failure typed the way callers are told it is.
 
-    Synthetic on purpose and flagged as such in :data:`STANDING_CAVEATS`. Group
-    labels are supplied so the group-adequacy check is actually exercised rather
-    than switching itself off.
+    ``run_request`` documents that it raises :class:`DesignRequestError` on bad
+    input, and ``cli._design`` catches exactly that to print a located message
+    instead of a traceback. ``_read_records`` upheld it for ``--fasta`` and the
+    other file arguments did not, so the identical typo produced a clean
+    message on one flag and a stack trace on the next.
+    """
+    try:
+        return read_fasta(path)
+    except SequenceInputError as exc:
+        raise DesignRequestError(f"{flag} {path}: {exc}") from exc
+
+
+def _panel_dependence(request: DesignRequest):
+    """The measured common-cause fraction for FR6.3, if one was supplied.
+
+    ``None`` is a first-class answer here rather than a default value: the
+    panel confidence model reports an interval without it, and a number with
+    it. Nothing in this package knows what beta is for your assay.
+    """
+    if not request.panel_dependence_json:
+        return None
+    from .panel_confidence import PanelDependence
+
+    try:
+        return PanelDependence.from_json(request.panel_dependence_json)
+    except (OSError, ValueError, TypeError) as exc:
+        raise DesignRequestError(
+            f"--panel-dependence {request.panel_dependence_json}: {exc}"
+        ) from exc
+
+
+def build_synthetic_calibration(effector, assay, *, seed, n_per_stratum,
+                                noise_sd):
+    """The stand-in calibration, in one place.
+
+    There were two of these: this one and a copy in ``demo.py``. Every time
+    this path gained a requirement the copy silently failed it, and because a
+    calibration that is missing something still answers, nothing raised. Three
+    defects came out of that drift -- the ``synthetic`` flag the demo did not
+    set, so it dropped the CRITICAL qualifying every number it printed; the
+    provenance the ledger recorded as "unstated"; and the group labels, whose
+    absence made every interval out-of-domain and put the demo permanently at
+    zero PASS with an empty panel.
+
+    Group labels are supplied so the group-adequacy check is actually
+    exercised rather than switching itself off. ``synthetic`` is set here
+    rather than described, because ``services/limitations.py`` reads the flag:
+    the warning appears because the calibration *is* synthetic, and goes away
+    when it stops being.
+
+    ``seed`` builds a generator of its own. The demo drew its calibration from
+    a module-level RNG shared with its sequence generation, so the seed its
+    ledger recorded did not determine the calibration it labelled -- only that
+    seed *plus* every prior draw did.
     """
     from .calibration import CalibrationService
 
-    rng = random.Random(request.seed)
+    rng = random.Random(seed)
     calibration = CalibrationService()
-    # Marked rather than described. services/limitations.py reads this flag, so
-    # the warning appears because the calibration *is* synthetic, not because a
-    # caller remembered to add a banner -- and it disappears when it stops being.
     calibration.synthetic = True
+    # The parameters that generate this set, attached to the object that
+    # carries it. Seed and noise decide every conformal interval, and therefore
+    # every metric read at a bound, every verdict and the panel -- and they
+    # appeared in no recorded field: not the ledger, not the fingerprint (they
+    # are request knobs, not spec), not the export headers. Two runs differing
+    # only in seed disagreed on 50 verdicts while carrying byte-identical
+    # provenance, which is the one thing provenance exists to make impossible.
+    calibration.source = {
+        "kind": "synthetic",
+        "seed": seed,
+        "n_per_stratum": n_per_stratum,
+        "noise_sd": noise_sd,
+    }
+    # Strata are error regimes (mismatch depth), not intent labels.
     for regime in ("mm0", "mm1-2", "mm3+"):
-        key = CalibrationService.stratum_key(
-            spec.profile.effector.value, spec.profile.assay.value, regime
-        )
-        for i in range(request.calibration_n):
+        key = CalibrationService.stratum_key(effector, assay, regime)
+        for i in range(n_per_stratum):
             truth = rng.random()
-            observed = min(1.0, max(0.0, truth + rng.gauss(0, request.calibration_noise)))
-            calibration.add_observation(key, observed, truth, group=f"T{i % 12:02d}")
+            observed = min(1.0, max(0.0, truth + rng.gauss(0, noise_sd)))
+            calibration.add_observation(key, observed, truth,
+                                        group=f"T{i % 12:02d}")
     return calibration
+
+
+def seed_calibration(request: DesignRequest, spec: ResolvedDesignSpec):
+    """A stand-in calibration so bounds exist at all, from the request."""
+    return build_synthetic_calibration(
+        spec.profile.effector.value,
+        spec.profile.assay.value,
+        seed=request.seed,
+        n_per_stratum=request.calibration_n,
+        noise_sd=request.calibration_noise,
+    )
 
 
 def run_request(request: DesignRequest) -> DesignOutcome:
@@ -371,45 +694,184 @@ def run_request(request: DesignRequest) -> DesignOutcome:
     registry = build_registry(request, notes, spec=spec, records=records)
 
     world = Transcriptome(request.genome_build, request.annotation)
+    target_biotype = _target_biotype(request)
     for record in records:
-        world.add(Locus(record.name, record.sequence, Universe.NCRNA,
+        world.add(Locus(record.name, record.sequence, target_biotype,
                         gene=record.name, expression=request.expression))
+    background_loci: list[Locus] = []
+    # Every --background record used to be CODING whatever it was, so the two
+    # highest hazard weights in DEFAULT_HAZARD_BY_BIOTYPE -- rRNA at 2.0 and
+    # mito at 1.5 -- were unreachable from the CLI: a user who supplied rRNA
+    # as off-target evidence had it weighted 1.0, like any transcript.
+    background_biotype = Universe(request.background_biotype)
+    background_records: list[SequenceRecord] = []
     if request.background_path:
-        for record in read_fasta(request.background_path):
-            world.add(Locus(record.name, record.sequence, Universe.CODING,
-                            gene=record.name, expression=None))
+        background_records = _read_fasta_or_fail(
+            request.background_path, "--background")
+    elif request.background_text and request.background_text.strip():
+        try:
+            background_records = parse_sequence_input(
+                request.background_text, default_name="background"
+            )
+        except SequenceInputError as exc:
+            raise DesignRequestError(f"background: {exc}") from exc
+    if background_records:
+        for record in background_records:
+            background_loci.append(Locus(
+                record.name, record.sequence,
+                # Per record, so one pulled corpus can hold the rRNA, mito and
+                # ncRNA the assay is exposed to rather than one universe at a
+                # time. See `_record_biotype`.
+                _record_biotype(record, background_biotype, "--background"),
+                gene=record.name, expression=None))
+    # Captured before the loop, because the loop grows `world`: testing
+    # membership against it made the *second* of two background records sharing
+    # a name take the target-collision branch, which silently dropped a locus
+    # the user supplied as off-target evidence and then told them a target was
+    # involved when none was. Duplicate names in a pulled background corpus are
+    # the ordinary concatenated-file case `services/fasta.py` refuses to
+    # deduplicate, so this is a routine input, and the note travels into every
+    # export header -- a false statement outliving the session.
+    target_names = {record.name for record in records}
+    seen_background: set[str] = set()
+    #: The background records this run actually accepted. `background_loci` is
+    #: everything the file held, including the records rejected below -- and it
+    #: was the list handed to `variant_contexts`, so a record dropped from the
+    #: reference world for colliding with a target's name was still added to
+    #: every *variant* world, where the name does not collide. The run printed
+    #: "the background copy ignored" and then searched the target against it:
+    #: adding `--variants` to an otherwise identical request took
+    #: worst_off_target from 0.000 to 0.571, with the note still saying
+    #: otherwise. The filtered list is what the contexts get.
+    accepted_background: list[Locus] = []
+    for locus in background_loci:
+        if locus.locus_id in seen_background:
+            notes.append(
+                f"--background holds more than one record named "
+                f"{locus.locus_id!r}. Only the first is searched -- the others "
+                "are dropped, because a world keys loci by name and cannot tell "
+                "them apart. Rename them so each is its own locus."
+            )
+            continue
+        seen_background.add(locus.locus_id)
+        if locus.locus_id in target_names:
+            # Transcriptome.add overwrites by locus_id, so a background record
+            # sharing a target's name replaced the target's own sequence,
+            # biotype and expression -- and `locus_to_target` still pointed at
+            # it, so the run searched the target against something that was not
+            # it. Measured: PASS 97 -> 0 from adding the target's own record to
+            # the background FASTA, with nothing said. The route is ordinary: a
+            # background corpus pulled from the same annotation contains the
+            # target's transcript id. `variant_contexts` already guards this;
+            # the non-variant path did not, so the two disagreed.
+            notes.append(
+                f"--background record {locus.locus_id!r} shares a name with a "
+                "target record. The target is kept and the background copy "
+                "ignored -- rename it if they are meant to be different loci."
+            )
+            continue
+        world.add(locus)
+        accepted_background.append(locus)
 
+    reference_index = _reference_index(request, world)
     contexts = [
         DesignContext(
-            "reference", world, _reference_index(request, world),
+            "reference", world, reference_index,
             {record.name: record.name for record in records},
         )
     ]
 
     variant_records: list[SequenceRecord] = []
     if request.variants_path:
-        variant_records = read_fasta(request.variants_path)
+        variant_records = _read_fasta_or_fail(request.variants_path, "--variants")
     elif request.variants_text and request.variants_text.strip():
-        variant_records = parse_sequence_input(request.variants_text, default_name="variant")
+        try:
+            variant_records = parse_sequence_input(
+                request.variants_text, default_name="variant"
+            )
+        except SequenceInputError as exc:
+            raise DesignRequestError(f"variants: {exc}") from exc
     if variant_records:
         from .conservation import summarize_conservation, variant_contexts
 
         combined = [records[0]] + variant_records
-        summary = summarize_conservation(
-            combined, spec.spacer_length, max_mismatches=request.conserved_mismatches
-        )
+        try:
+            summary = summarize_conservation(
+                combined, spec.spacer_length, max_mismatches=request.conserved_mismatches
+            )
+        except ValueError as exc:
+            raise DesignRequestError(f"--variants: {exc}") from exc
         notes.append(f"Conservation across {len(variant_records)} variant(s): "
                      f"{summary.summary()}")
-        contexts = variant_contexts(
-            combined, ALL_UNIVERSES, target_id=records[0].name,
-            biotype=Universe.NCRNA, expression=request.expression,
-        )
+
+        # The variant contexts REPLACE the reference one, so whatever the
+        # caller loaded has to travel with them. It used to not: each variant
+        # world held that variant and nothing else, and the index was rechosen
+        # locally -- so `--background` was parsed and dropped and `--blast-db`
+        # was validated (ensure_available() and all) and never queried. Adding
+        # `--variants` to an otherwise identical request turned an off-target
+        # report into a vacuously clean one, which is the worst direction for
+        # this particular number to be wrong in.
+        def index_for(variant_world):
+            # Rebuilt per world, because the variant sequence exists only
+            # inside that world. Reusing the reference index looked safe -- a
+            # BLAST database really is corpus-independent -- and was exactly
+            # wrong for that reason: an index that cannot see the context's own
+            # loci cannot find the variant, so robustness (a min of coverage
+            # across contexts) collapsed to 0.000 for every guide.
+            return _reference_index(request, variant_world)
+
+        # Wrapped for the same reason summarize_conservation above is: both
+        # refuse a variant set they cannot tell apart, and both are reached
+        # with user-supplied FASTA, so the refusal has to arrive as the type
+        # run_request documents rather than as a ValueError from two modules
+        # down.
+        try:
+            contexts = variant_contexts(
+                combined, ALL_UNIVERSES, target_id=records[0].name,
+                # The same biotype the reference world files the target under.
+                # Hardcoding NCRNA here while `_target_biotype` decided it
+                # there gave the target two universes: adding --variants to an
+                # otherwise identical cell_culture run took 223 PASS to 223
+                # REVIEW, reporting `coding` as a universe the search did not
+                # cover, because no variant world held a coding locus.
+                biotype=target_biotype, expression=request.expression,
+                background=accepted_background, extra_targets=records[1:],
+                index_for=index_for,
+                genome_build=request.genome_build, annotation=request.annotation,
+            )
+        except ValueError as exc:
+            raise DesignRequestError(f"--variants: {exc}") from exc
 
     calibration_service = seed_calibration(request, spec)
-    report = run_design(
-        spec, contexts, registry, calibration_service,
-        panel_size=request.panel_size,
-    )
+    from .blast import BlastUnavailable
+    from .kinetics import StiffKineticsError
+
+    try:
+        report = run_design(
+            spec, contexts, registry, calibration_service,
+            panel_size=request.panel_size,
+            panel_dependence=_panel_dependence(request),
+        )
+    except StiffKineticsError as exc:
+        # Raised from inside stage E, long after the JSON was validated, so it
+        # escaped run_request untyped and the CLI printed a traceback. The
+        # trigger is not exotic: kinetics.py names k_on = 1 /nM/s as an
+        # ordinary measured association rate, and --kinetics-constants is
+        # advertised as the flag that unlocks absolute signal -- so the flag
+        # that is supposed to reward real constants punished them.
+        raise DesignRequestError(
+            f"--kinetics-constants {request.kinetics_json}: {exc}"
+        ) from exc
+    except BlastUnavailable as exc:
+        # The same shape as the kinetics case above, one subsystem over, and
+        # missed when that one was fixed. `_reference_index` guards blastn's
+        # absence at *construction*; an ambiguity code in a subject is raised
+        # at *search* time, outside that guard, so it escaped as a traceback
+        # and exit 1 -- the status documented as "nothing survived the gate".
+        # The database is third-party and the user cannot edit it, so this is
+        # reachable on the module's intended use.
+        raise DesignRequestError(str(exc)) from exc
     data = report.to_dict()
     weakest_bound = report.search_bound
     gaps = report.universe_gaps
@@ -422,17 +884,14 @@ def run_request(request: DesignRequest) -> DesignOutcome:
         except Exception:
             profile = ()
 
-    from .limitations import as_lines, limitations_for_run
+    # Read off the report, which computes them once in `run_design`. This
+    # used to assemble the nine-argument call here, and `demo.py` assembled a
+    # second one that had already drifted from it.
+    from .limitations import as_lines
 
-    found = limitations_for_run(
-        spec,
-        registry=registry,
-        calibration=calibration_service,
-        bound=weakest_bound,
-        universe_gaps=gaps,
-        panel_size=len(data.get("panel", {}).get("guides", ())),
-    )
+    found = report.limitations
     notes = as_lines(found) + notes
+
 
     return DesignOutcome(
         report=data, records=records, spec=spec, notes=notes, profile=profile,

@@ -10,7 +10,9 @@ running as a three-fold ensemble.
 Verified, not assumed
 ---------------------
 ``tests/test_arc_model.py`` drives 133 guides from the reference implementation
-and reproduces its scores to **0.0** difference. That fixture is the gate: four
+and reproduces its **logits** bit-for-bit -- 133/133, difference exactly 0.0 --
+and its scores to ``<1e-6`` (measured max 5.96e-08, the last bits of a float32
+sigmoid, not an adapter difference). That fixture is the gate: four
 things here keep every tensor shape valid and every score in range while being
 wrong, and only end-to-end parity catches them.
 
@@ -273,7 +275,7 @@ class ArcEnsemble:
         """Mean logit across the three folds, one per guide.
 
         Averaged in **logit** space. Averaging the sigmoids is the natural-looking
-        alternative and it is wrong by up to 0.499 of score.
+        alternative and it is wrong by up to 0.037 of score, mean 0.007.
         """
         if len(spacers) != len(features):
             raise ValueError("spacers and features must be the same length")

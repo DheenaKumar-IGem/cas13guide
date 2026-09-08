@@ -20,9 +20,11 @@ the trade-off explicit:
 * the spacer length is configurable within each ortholog's tolerated range
   (``EffectorParams.spacer_length_range``), so a 22 nt spacer against a 24 nt
   miRNA is expressible;
-* a length outside the ortholog's *canonical* set is reported out-of-domain, so
-  the activity model's bounds widen and the gate raises an R3 REVIEW rather
-  than handing back a confident number for a geometry nobody validated;
+* a length outside the ortholog's *canonical* set is reported out-of-domain,
+  which refuses to narrow the activity interval at all -- so the guide is
+  refused rather than handed back with a confident number for a geometry nobody
+  validated, and the note names an ortholog that does publish the length when
+  one exists;
 * :func:`designability` says up front how many windows a preset can even yield,
   so "1 candidate" is a stated fact rather than a surprising empty table.
 
@@ -206,22 +208,69 @@ def designability(
             f"{preset.length} nt target cannot hold a {length} nt spacer. "
             f"{effector.value} tolerates {params.spacer_length_range[0]}-"
             f"{params.spacer_length_range[1]} nt; try a shorter spacer, or "
-            "design against an amplicon (see amplicon_target)."
+            "design against an amplicon -- amplify the target and pass "
+            "the product with --fasta, or build one with "
+            "amplicon_target()."
         )
     elif n < 5:
         note = (
             f"only {n} window(s): a mature miRNA is barely longer than the "
             "spacer, so there is almost nothing to choose between. An amplicon "
-            "target restores normal tiling."
+            "target restores normal tiling: amplify the target and pass "
+            "the product with --fasta."
         )
     else:
         note = f"{n} windows available."
     if not canonical:
-        note += (
-            f" {length} nt is outside {effector.value}'s canonical "
-            f"{params.spacer_lengths}, so activity will be reported "
-            "out-of-domain (R3 REVIEW) rather than as a validated prediction."
+        # What actually happens, measured, rather than what an earlier draft
+        # of this string promised. Out-of-domain refuses to narrow the
+        # activity interval *at all* (d_pair_evidence substitutes
+        # Interval.unknown), and benefit is read at its lower bound, so the
+        # coverage gate cannot be cleared and the verdict is FAIL -- not the
+        # R3 REVIEW this used to claim. R3 is what an *in-domain* pair with a
+        # weak calibration stratum earns; a length no model was fit at is a
+        # stronger statement than that.
+        covered_by = sorted(
+            other.value
+            for other, other_params in EFFECTORS.items()
+            if length in other_params.spacer_lengths
         )
+        note += (
+            f" {length} nt is outside {effector.value}'s published "
+            f"{params.spacer_lengths}, and no model here was fit at that "
+            "length for this ortholog. Its activity interval is therefore not "
+            "narrowed at all, and since benefit is read at its lower bound the "
+            "guide is refused rather than certified."
+        )
+        if covered_by:
+            # Naming the ortholog is half of it; the reader still has to be
+            # told what to do with the name. Every other remedy in this package
+            # names its flag.
+            note += (
+                f" {', '.join(covered_by)} publishes {length} nt"
+                f" -- try --effector {covered_by[0]}."
+            )
+        else:
+            # "Who publishes 24 nt?" is the wrong question once the answer is
+            # nobody. The useful one is which ortholog could design against
+            # *this target* at a length it was actually fit at -- and for a
+            # mature miRNA that is RfxCas13d at 22/23 nt, while the CLI default
+            # is LwaCas13a at 28. Every built-in preset is 22-24 nt, so on the
+            # default every one of them refused and none of them said this.
+            fits = sorted(
+                (other.value, min(s for s in other_params.spacer_lengths
+                                  if s <= preset.length))
+                for other, other_params in EFFECTORS.items()
+                if other is not effector
+                and any(s <= preset.length for s in other_params.spacer_lengths)
+            )
+            note += " No ortholog in this package publishes that length."
+            if fits:
+                offer = ", ".join(f"{name} at {best} nt" for name, best in fits)
+                note += (
+                    f" {offer} is fit at a length this {preset.length} nt "
+                    f"target can hold -- try --effector {fits[0][0]}."
+                )
     return Designability(
         preset_id=preset.preset_id,
         target_length=preset.length,
@@ -235,16 +284,42 @@ def designability(
 def largest_designable_spacer_length(
     preset: TargetPreset, effector: Effector, min_windows: int = 1
 ) -> int | None:
-    """Longest tolerated spacer that still yields ``min_windows`` windows.
+    """Longest spacer that still yields ``min_windows`` windows, canonical first.
 
     Longest rather than shortest because a longer spacer is the more specific
     one; there is no reason to give away duplex length that the target can
     actually accommodate. Returns ``None`` when even the shortest tolerated
     spacer does not fit.
+
+    Canonical before longest, though, because specificity the gate refuses to
+    certify is not worth having. A length outside the ortholog's published set
+    is reported out-of-domain, so its activity interval is not narrowed at
+    all, and benefit is read at its lower bound -- the guide is refused rather
+    than ranked. Picking the longest *tolerated* length did exactly that to
+    the package's own headline example: `--preset hsa-miR-21-5p` against
+    RfxCas13d resolved to 24 nt, which that ortholog does not publish, and the
+    run ended `FAIL: 1` and exit 1. The canonical 23 nt fits the same 24 nt
+    target and ends `REVIEW: 2`, exit 0.
+
+    The fallback is unchanged and still matters: no canonical LwaCas13a length
+    fits any mature miRNA -- its only published length is 28 and the longest
+    preset here is 24 -- so those resolve to a tolerated length and are
+    reported out-of-domain, which is the geometry problem this package
+    documents rather than a choice it can make differently.
     """
-    low, high = EFFECTORS[effector].spacer_length_range
+    params = EFFECTORS[effector]
+    low, high = params.spacer_length_range
+
+    def fits(length: int) -> bool:
+        return low <= length <= high and preset.length - length + 1 >= min_windows
+
+    canonical = [length for length in sorted(params.spacer_lengths, reverse=True)
+                 if fits(length)]
+    if canonical:
+        return canonical[0]
+
     for length in range(min(high, preset.length), low - 1, -1):
-        if preset.length - length + 1 >= min_windows:
+        if fits(length):
             return length
     return None
 

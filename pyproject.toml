@@ -31,7 +31,8 @@ arc = ["onnxruntime>=1.17"]
 # A pure-Python CONTRAfold CRF, so it needs no compiler -- which is the only
 # reason the Arc model is usable on a machine without a C++ toolchain.
 contrafold = ["gpu-contrafold>=0.1"]
-dev = ["pytest>=7.4", "hypothesis>=6.90", "ViennaRNA>=2.6", "onnxruntime>=1.17", "gpu-contrafold>=0.1"]
+dev = ["pytest>=7.4", "hypothesis>=6.90", "mypy>=1.8", "ViennaRNA>=2.6",
+       "onnxruntime>=1.17", "gpu-contrafold>=0.1"]
 
 [project.scripts]
 cas13guide = "cas13guide.cli:main"
@@ -43,6 +44,23 @@ where = ["src"]
 # annotations this package is fully written with.
 [tool.setuptools.package-data]
 cas13guide = ["py.typed", "models/arc/*.onnx"]
+
+# The package promises clean annotations by shipping py.typed, so `mypy` has
+# to be runnable without a remembered flag. Plain `mypy src/cas13guide`
+# reported six errors, all of them the same thing: ViennaRNA, gpu-contrafold
+# and onnxruntime are C extensions that ship no stubs. Six standing errors
+# train a reader to skim past mypy output, which is how a real one gets missed.
+#
+# Named per-module rather than with a blanket --ignore-missing-imports: that
+# flag would also silence a mistyped *first-party* import, which is exactly the
+# error worth keeping. These three are optional dependencies, each already
+# behind a try/except ImportError with a documented fallback.
+[tool.mypy]
+files = ["src/cas13guide"]
+
+[[tool.mypy.overrides]]
+module = ["RNA", "gpu_contrafold.*", "onnxruntime"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

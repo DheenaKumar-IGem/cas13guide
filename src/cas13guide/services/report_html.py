@@ -32,7 +32,7 @@ from typing import Any, Sequence
 #: Column key -> (heading, plain-English explanation). NFR6.
 SCORE_GLOSSARY: dict[str, tuple[str, str]] = {
     "rank": ("Rank", "Position after the composite weighted score. Rank 1 is the best overall trade-off, not the best on any single axis."),
-    "verdict": ("Verdict", "PASS cleared every gate. REVIEW cleared the hard gates but something needs a human — see the tier. FAIL never reaches this table."),
+    "verdict": ("Verdict", "Hover a verdict for the reason this particular guide got it, and the number behind it. PASS cleared every gate. REVIEW cleared the hard gates but something needs a human — see the tier. FAIL never reaches this table — when anything did fail, “Why guides were rejected” below says what the gate measured."),
     "review_tier": ("Tier", "R1 a borderline number. R2 a gap in the evidence, such as an off-target whose expression is unknown. R3 nobody validated this case — the model was asked outside its domain."),
     "spacer": ("Spacer", "The guide RNA sequence to order, 5'→3'. It is the reverse complement of the target site, because Cas13 binds its target as an antiparallel RNA:RNA duplex."),
     "score": ("Score", "Weighted sum of the normalised objectives. Useful for ordering, meaningless as an absolute number — the weights are a preference, not a measurement."),
@@ -43,12 +43,20 @@ SCORE_GLOSSARY: dict[str, tuple[str, str]] = {
     "predicted_signal": ("Signal", "Relative predicted fluorescence from the collateral-cleavage model. Comparable only within this run — the kinetic constants shipped by default are placeholders, so no absolute figure is offered."),
     "pfs_3prime": ("PFS", "The base immediately 3' of the target site. LwaCas13a prefers a non-G here; a G is a deprioritisation, not an exclusion."),
     "robustness": ("Robustness", "Worst coverage across every evaluated context — variants, isoforms, haplotypes. A guide that works on the reference and loses one variant shows it here."),
+    "site": ("Site", "Which target record the guide binds, and the 0-based start of its site on that record. A rank alone does not place a guide, and on a multi-record design two guides at the same coordinate may be on different targets."),
     "spans_junction": ("EEJ", "Whether the guide spans an exon-exon junction, which can be used to target a spliced isoform specifically."),
 }
 
 #: Ordered columns of the results table.
+def _contexts_of(report: dict) -> tuple[str, ...]:
+    """Deferred import: limitations pulls in the preset tables."""
+    from .limitations import evaluated_contexts
+
+    return evaluated_contexts(report.get("provenance"))
+
+
 TABLE_COLUMNS: tuple[str, ...] = (
-    "rank", "spacer", "score", "verdict", "review_tier",
+    "rank", "spacer", "site", "score", "verdict", "review_tier",
     "required_coverage", "worst_off_target", "accessibility",
     "duplex_dg_per_nt", "predicted_signal", "pfs_3prime", "robustness",
 )
@@ -56,6 +64,53 @@ TABLE_COLUMNS: tuple[str, ...] = (
 #: Rendered as a data attribute rather than a column: it drives the default
 #: filter, and a column of "yes" would be noise once the filter is applied.
 DISTINCT_SITE_KEY = "distinct_site"
+
+#: Off-target explorer columns, and what each one means. Declared rather than
+#: derived from whatever keys a row happens to carry, for the same reason
+#: ``RANKED_COLUMNS`` is: adding a field upstream must not silently reshape a
+#: table someone reads.
+_OFF_TARGET_HEADINGS: tuple[tuple[str, str, str], ...] = (
+    ("guide_id", "Guide", "The candidate this off-target belongs to."),
+    ("locus", "Locus", "Where it binds."),
+    ("gene", "Gene", "Gene symbol, when the transcriptome supplied one."),
+    ("biotype", "Biotype", "Which universe the locus is in."),
+    ("mismatches", "MM", "Duplex mismatches, wobble-aware."),
+    ("wobbles", "GU", "G-U wobble pairs, which are real base pairs in RNA:RNA."),
+    ("ucb_activity", "UCB(act)", "Activity at its UPPER bound: hazard is never read at a point estimate."),
+    ("ucb_expression", "UCB(expr)", "Expression at its upper bound, in the same spirit."),
+    ("hazard", "Hazard", "UCB(activity) x UCB(expression) x biotype weight -- the quantity the metrics sum."),
+    ("expression_unknown", "Expr?", "True when nothing measured this locus's abundance; the plan says to prioritise these."),
+    ("ood", "OOD", "True when the bound behind this row is not certified for this regime."),
+    ("context", "Context", "Which evaluated world this hit was seen in. A hazard that exists only in a variant or haplotype still drove the metric and the verdict, and this table used to show the reference alone."),
+)
+
+_OFF_TARGET_COLUMNS: tuple[str, ...] = tuple(key for key, _l, _d in _OFF_TARGET_HEADINGS)
+
+
+def track_rows(ranked: Sequence[dict], target_id: str, limit: int) -> list[dict]:
+    """Ranked rows whose ``start`` is an offset on ``target_id``.
+
+    Lives here, beside :data:`REPORT_CSS`, for the same reason and by the same
+    rule: it crosses the boundary between the CLI and the web server, so it is
+    public and it belongs to the module that owns the picture rather than to
+    either caller. It was briefly private in ``cli.py`` with ``webapp`` reaching
+    up to import it, which is backwards -- a service depending on an entry
+    point -- and would have made "a real deployment can delete
+    ``services/webapp.py``" true only in one direction.
+
+    Both callers need the same filter because ``start`` is an offset on the
+    guide's *own* source target, and a multi-record FASTA makes records 1+
+    DESIRED targets that are tiled too: an unfiltered top-N drew guides from a
+    paralog at their own coordinates on the primary's profile.
+
+    Rows without the field are kept. An older report dict has no
+    ``source_target_id``, and drawing nothing is a worse answer than the one
+    that was already being drawn.
+    """
+    return [
+        row for row in ranked
+        if row.get("source_target_id", target_id) == target_id
+    ][:limit]
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +164,12 @@ dl.gloss dt{font-weight:600} dl.gloss dd{margin:0;color:var(--muted)}
 pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;
 overflow-x:auto;font-size:.8rem;color:var(--muted)}
 ul.plan{padding-left:18px;color:var(--muted);font-size:.9rem}
+td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.band{position:relative;display:block;width:100%;min-width:120px;height:10px;border-radius:999px;
+background:color-mix(in srgb,var(--line) 60%,transparent)}
+.band .fill{position:absolute;top:0;height:10px;border-radius:999px;
+background:color-mix(in srgb,var(--accent) 55%,transparent)}
+.band .pt{position:absolute;top:-2px;width:2px;height:14px;background:var(--fg)}
 .empty{padding:26px;text-align:center;color:var(--muted)}
 @media(max-width:640px){.wrap{padding:18px 12px 56px}dl.gloss{grid-template-columns:1fr;gap:2px 0}
 dl.gloss dd{margin-bottom:10px}}
@@ -125,7 +186,8 @@ _JS = """
     var onlyDistinct=distinct&&distinct.checked;
     var shown=0;
     rows.forEach(function(r){
-      var okText=!needle||r.textContent.toLowerCase().indexOf(needle)>-1;
+      var hay=(r.getAttribute('data-search')||'')+' '+r.textContent;
+      var okText=!needle||hay.toLowerCase().indexOf(needle)>-1;
       var okVerdict=!want||r.getAttribute('data-verdict')===want;
       var okSite=!onlyDistinct||r.getAttribute('data-distinct')!=='0';
       var on=okText&&okVerdict&&okSite; r.style.display=on?'':'none'; if(on)shown++;
@@ -193,8 +255,13 @@ def _accessibility_svg(track: AccessibilityTrack, width: int = 1100, height: int
     )
     marks = []
     for start, length, label in track.guides:
-        x1 = pad + start * step
-        x2 = pad + min(n - 1, start + length) * step
+        # Both edges clamped. x2 was clamped and x1 was not, so a mark whose
+        # start lay past the end of the profile rendered at an x outside the
+        # viewBox with a width floored to 1 -- the labelled guide vanishing
+        # from the picture rather than being drawn wrongly, which is the worse
+        # of the two failures because nothing shows it happened.
+        x1 = pad + min(n - 1, max(0, start)) * step
+        x2 = pad + min(n - 1, max(0, start + length)) * step
         marks.append(
             f'<rect x="{x1:.2f}" y="{pad}" width="{max(1.0, x2 - x1):.2f}" '
             f'height="{plot_h}" fill="var(--accent)" opacity="0.15">'
@@ -240,20 +307,80 @@ def render_report(
         )
     )
 
+    # The Signal column's text is a claim about *this* run. It said "the
+    # kinetic constants shipped by default are placeholders, so no absolute
+    # figure is offered" unconditionally -- including on a run that supplied
+    # measured constants, whose CSV carries `predicted_signal_nm` and whose own
+    # limitations correctly drop the placeholder warning. Three surfaces
+    # describing one run, one of them contradicting the other two.
+    has_absolute = any(row.get("predicted_signal_nm") is not None for row in ranked)
+    glossary_for_run = dict(SCORE_GLOSSARY)
+    # Robustness over one context is the coverage repeated. The heading says
+    # "worst coverage across every evaluated context -- variants, isoforms,
+    # haplotypes", and with nothing to vary that column is a number about a
+    # question the run never asked. The terminal has always dropped it; this
+    # is the same rule, and the `robustness-unevaluated` WARNING above the
+    # table is what makes dropping it honest rather than quiet.
+    columns = TABLE_COLUMNS
+    if len(_contexts_of(report)) == 1:
+        columns = tuple(key for key in columns if key != "robustness")
+    if has_absolute:
+        glossary_for_run["predicted_signal"] = (
+            "Signal",
+            "Relative predicted fluorescence from the collateral-cleavage "
+            "model, comparable within this run. This run supplied measured "
+            "kinetic constants, so the absolute figure is offered too -- see "
+            "nM beside it.",
+        )
+        glossary_for_run["predicted_signal_nm"] = (
+            "nM",
+            "Cleaved reporter in nanomolar, from measured constants. Present "
+            "only because this run supplied them; with the shipped "
+            "placeholders no absolute figure is offered, because real units "
+            "derived from placeholder rates would be a fabricated measurement "
+            "wearing a unit label.",
+        )
+        index = columns.index("predicted_signal")
+        columns = columns[: index + 1] + ("predicted_signal_nm",) + columns[index + 1 :]
+
     head = "".join(
-        f'<th title="{html.escape(SCORE_GLOSSARY.get(c, (c, ""))[1])}">'
-        f'{html.escape(SCORE_GLOSSARY.get(c, (c, ""))[0])}<span class="arrow"></span></th>'
-        for c in TABLE_COLUMNS
+        f'<th title="{html.escape(glossary_for_run.get(c, (c, ""))[1])}">'
+        f'{html.escape(glossary_for_run.get(c, (c, ""))[0])}<span class="arrow"></span></th>'
+        for c in columns
     )
 
     body_rows = []
     for entry in ranked:
         metrics = entry.get("metrics") or {}
         cells = []
-        for column in TABLE_COLUMNS:
+        for column in columns:
             value = entry.get(column, metrics.get(column))
+            sort_value: Any = value
             attrs = ' class="seq"' if column == "spacer" else ""
+            if column == "site":
+                target, start = entry.get("source_target_id"), entry.get("start")
+                value = None if start is None else (
+                    f"{target}:{start}" if target else start
+                )
+                # Sorted on the coordinate, not the rendered string: "t1:1000"
+                # sorts before "t1:99" as text, which is the wrong order for
+                # the one thing anybody sorts this column for.
+                sort_value = start
             if column == "verdict":
+                # Why *this* guide got *this* verdict. The glossary explains
+                # what REVIEW and R2 mean in general; a reader looking at one
+                # row wants the reason and the number behind it, and both were
+                # in the report and rendered nowhere -- the reason codes sat in
+                # the row's search attribute, which no eye reads.
+                because = "; ".join(
+                    str(item) for item in (entry.get("reasons") or ())
+                )
+                numbers = "; ".join(
+                    str(item) for item in (entry.get("detail") or ())
+                )
+                explanation = " -- ".join(part for part in (because, numbers) if part)
+                if explanation:
+                    attrs += f' title="{html.escape(explanation)}"'
                 rendered = (
                     f'<span class="tag {html.escape(str(value))}">'
                     f"{html.escape(_fmt(value))}</span>"
@@ -261,11 +388,27 @@ def render_report(
             else:
                 rendered = html.escape(_fmt(value))
             cells.append(
-                f'<td{attrs} data-sort="{html.escape(_sort_key(value))}">{rendered}</td>'
+                f'<td{attrs} data-sort="{html.escape(_sort_key(sort_value))}">'
+                f"{rendered}</td>"
             )
+        # The filter promises "sequence, id, reason" and matches the row's
+        # textContent, which contains neither of the last two: guide_id,
+        # reasons and qc_warnings are all in the report and none is rendered
+        # as a cell. Typing a reason code from the CSV emptied the table, which
+        # reads as "no guide has that reason". textContent cannot see
+        # attributes, so the searchable text is attached explicitly.
+        haystack = " ".join(
+            str(value)
+            for value in (
+                entry.get("guide_id", ""),
+                *(entry.get("reasons") or ()),
+                *(entry.get("qc_warnings") or ()),
+            )
+        )
         body_rows.append(
             f'<tr data-verdict="{html.escape(str(entry.get("verdict", "")))}"'
-            f' data-distinct="{"1" if entry.get(DISTINCT_SITE_KEY, True) else "0"}">'
+            f' data-distinct="{"1" if entry.get(DISTINCT_SITE_KEY, True) else "0"}"'
+            f' data-search="{html.escape(haystack.lower())}">'
             + "".join(cells)
             + "</tr>"
         )
@@ -282,10 +425,10 @@ def render_report(
     )
 
     glossary = "".join(
-        f"<dt>{html.escape(SCORE_GLOSSARY[c][0])}</dt>"
-        f"<dd>{html.escape(SCORE_GLOSSARY[c][1])}</dd>"
-        for c in TABLE_COLUMNS
-        if c in SCORE_GLOSSARY
+        f"<dt>{html.escape(glossary_for_run[c][0])}</dt>"
+        f"<dd>{html.escape(glossary_for_run[c][1])}</dd>"
+        for c in columns
+        if c in glossary_for_run
     )
 
     track_html = "".join(
@@ -293,6 +436,38 @@ def render_report(
         + _accessibility_svg(t)
         for t in tracks
     )
+
+    # A refusal is a result. The gate composes a numeric explanation for every
+    # guide it fails, and until this section existed a run could say "FAIL: 41"
+    # and offer the reader nothing further -- the strings were built and
+    # dropped. Grouped rather than listed per guide: the reason set is what a
+    # reader acts on, and the counts say which one to act on first.
+    rejected = report.get("rejected") or []
+    rejected_html = ""
+    if rejected:
+        rows = []
+        for group in rejected:
+            reasons = ", ".join(html.escape(str(r)) for r in group.get("reasons") or [])
+            examples = "".join(
+                "<li><code>{}</code>{}</li>".format(
+                    html.escape(str(ex.get("guide_id", ""))),
+                    (" &mdash; " + "; ".join(
+                        html.escape(str(d)) for d in ex.get("detail") or []))
+                    if ex.get("detail") else "",
+                )
+                for ex in group.get("examples") or []
+            )
+            rows.append(
+                f"<tr><td class='FAIL'>{reasons or '&mdash;'}</td>"
+                f"<td>{int(group.get('count', 0))}</td>"
+                f"<td><ul class='plan' style='margin:0'>{examples}</ul></td></tr>"
+            )
+        rejected_html = (
+            "<h2>Why guides were rejected</h2><div class='tablewrap'><table>"
+            "<thead><tr><th>Gate reason</th><th>Guides</th>"
+            "<th>Examples, with the numbers the gate used</th></tr></thead>"
+            "<tbody>" + "".join(rows) + "</tbody></table></div>"
+        )
 
     shortfalls = report.get("shortfalls") or []
     shortfall_html = (
@@ -312,10 +487,83 @@ def render_report(
         else ""
     )
 
+    # FR6.3. Rendered as a bar spanning floor to ceiling rather than as a
+    # number, because the width is the finding: a wide band means the panel's
+    # worth depends on an assumption about shared failure that nobody here
+    # measured, and a single figure would hide exactly that.
+    confidence = (report.get("panel") or {}).get("confidence") or {}
+    confidence_html = ""
+    if confidence.get("targets"):
+        rows = []
+        for target in confidence["targets"]:
+            low, high = float(target["lower"]), float(target["upper"])
+            point = target.get("point")
+            marker = (
+                ""
+                if point is None
+                else f"<span class='pt' style='left:{float(point) * 100:.1f}%'></span>"
+            )
+            rows.append(
+                f"<tr><td>{html.escape(str(target['target_id']))}</td>"
+                f"<td class='num'>{low:.3f}</td>"
+                f"<td><span class='band'><span class='fill' "
+                f"style='left:{low * 100:.1f}%;width:{max(high - low, 0.004) * 100:.1f}%'>"
+                f"</span>{marker}</span></td>"
+                f"<td class='num'>{high:.3f}</td>"
+                f"<td>{'thin calibration' if target.get('thin') else ''}</td></tr>"
+            )
+        notes_html = "".join(
+            f"<li>{html.escape(str(n))}</li>" for n in confidence.get("notes", [])
+        )
+        confidence_html = (
+            "<h2>Panel detection probability</h2>"
+            "<div class='tablewrap'><table><thead><tr><th>Target</th>"
+            "<th>Members fail together</th><th></th>"
+            "<th>Members fail independently</th><th></th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table></div>"
+            f"<ul class='plan'>{notes_html}</ul>"
+        )
+
+    # The off-target explorer the validation plan sends the reader to. The data
+    # was in the report dict all along -- `_off_target_rows` fills up to 50 rows,
+    # sorted by the same `pair_hazard` the metrics use -- and no surface
+    # rendered it, while the plan printed underneath said "Sequence the top
+    # off-target loci from the explorer table; prioritize rows with high
+    # UCB(activity) whose expression is currently unknown." A page that
+    # instructs a reader to consult a table it does not contain is worse than
+    # one that says nothing, because the reader goes looking.
+    off_targets = report.get("off_targets") or []
+    off_target_html = ""
+    if off_targets:
+        def _cell(row: dict, key: str) -> str:
+            attrs = ' class="seq"' if key in ("guide_id", "locus") else ""
+            return f"<td{attrs}>{html.escape(_fmt(row.get(key)))}</td>"
+
+        off_target_rows = "".join(
+            "<tr>" + "".join(_cell(row, key) for key in _OFF_TARGET_COLUMNS) + "</tr>"
+            for row in off_targets
+        )
+        head = "".join(
+            f'<th title="{html.escape(description)}">{html.escape(label)}</th>'
+            for _key, label, description in _OFF_TARGET_HEADINGS
+        )
+        off_target_html = (
+            "<h2>Off-target explorer</h2>"
+            f"<div class='sub'>{_off_target_caption(report, off_targets)} "
+            "Hazard is the same product the "
+            "<code>worst_off_target</code> and <code>cumulative_burden</code> "
+            "metrics are built from, so this table cannot drift from them.</div>"
+            "<div class='tablewrap'><table><thead><tr>"
+            + head
+            + "</tr></thead><tbody>"
+            + off_target_rows
+            + "</tbody></table></div>"
+        )
+
     controls = report.get("controls") or []
     controls_html = ""
     if controls:
-        rows = "".join(
+        control_rows = "".join(
             f"<tr><td class='seq'>{html.escape(str(c.get('guide_id')))}</td>"
             f"<td class='seq'>{html.escape(str(c.get('spacer')) or '—')}</td>"
             f"<td>{_fmt(c.get('gc'))}</td>"
@@ -326,7 +574,7 @@ def render_report(
             "<h2>Non-targeting controls</h2><div class='tablewrap'><table>"
             "<thead><tr><th>Control</th><th>Spacer</th><th>GC</th>"
             "<th>Verified non-targeting</th></tr></thead>"
-            f"<tbody>{rows}</tbody></table></div>"
+            f"<tbody>{control_rows}</tbody></table></div>"
         )
 
     # Limitations lead, above the table. A reader who stops after the first
@@ -367,8 +615,11 @@ def render_report(
 {table}
 
 {"<h2>Target accessibility</h2>" + track_html if track_html else ""}
+{off_target_html}
+{confidence_html}
 {controls_html}
 {shortfall_html}
+{rejected_html}
 {plan_html}
 
 <h2>What the scores mean</h2>
@@ -377,6 +628,30 @@ def render_report(
 <h2>Run parameters and versions</h2>
 <pre>{html.escape(provenance)}</pre>
 </div><script>{_JS}</script></body></html>"""
+
+
+def _off_target_caption(report: dict, shown: list) -> str:
+    """How much of the off-target picture this table is.
+
+    It used to read "The 50 highest-hazard off-target loci found", which is
+    what fifty of fifty would say and also what fifty of four thousand would
+    say. The validation plan underneath tells a reader to sequence from this
+    table, so whether it is the whole set is the first thing they need.
+
+    It does not point the reader at another file: the report dict carries
+    the same capped rows, and `report.json` is not written unless asked
+    for, so naming it would trade one false impression for another.
+    """
+    total = report.get("off_target_total") or len(shown)
+    if total <= len(shown):
+        return (f"All {total} off-target loci found, worst hazard first.")
+    return (
+        f"The {len(shown)} highest-hazard of {total} off-target loci found, "
+        f"worst first. The other {total - len(shown)} are not shown anywhere "
+        f"&mdash; every one of them scores below the last row here, and all "
+        f"{total} are already inside <code>worst_off_target</code> and "
+        f"<code>cumulative_burden</code>."
+    )
 
 
 def write_report(

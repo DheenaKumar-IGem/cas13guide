@@ -85,8 +85,15 @@ class TestDirectRepeatIsLoadBearing(unittest.TestCase):
     b_qc.py flags a spacer that can base-pair with its own direct repeat, since
     that competes with the crRNA fold. Getting the DR wrong therefore does not
     fail loudly -- it changes verdicts. Measured across 20,000 random 22 nt
-    spacers, the old RfxCas13d value flipped the DR-interaction verdict for 4.9%
-    of them, in both directions.
+    spacers, the old RfxCas13d value flipped the DR-interaction verdict for
+    2.8% of them (2.77% +/- 0.18% over five seeds), in both directions but
+    about ten to one toward the wrong repeat missing an interaction the right
+    one catches.
+
+    The figure was 4.9% while the scan was Watson-Crick only. It moved because
+    the scan learned G-U wobbles and MAX_DR_STEM was re-derived with it, not
+    because the repeat changed -- which is the point of pinning the fold rather
+    than the rate.
     """
 
     def test_the_dr_interaction_flag_actually_depends_on_the_dr(self):

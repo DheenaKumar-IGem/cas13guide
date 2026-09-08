@@ -1,6 +1,7 @@
 """The gate: every FAIL condition must actually bite, and REVIEW must grade."""
 
 import unittest
+from dataclasses import replace
 
 from helpers import *  # noqa: F401,F403
 
@@ -24,6 +25,17 @@ GOOD_EVIDENCE = None
 
 def strong_required(**kw):
     return make_evidence(0.9, 0.95, target_id="t1", target_class=TargetClass.REQUIRED, **kw)
+
+
+def narrow_bound(universes) -> ExhaustivenessBound:
+    """A search that covered less than the spec declared, corpus unknown."""
+    return ExhaustivenessBound(
+        max_mismatches=4,
+        wobble_aware=True,
+        universes=frozenset(universes),
+        exhaustive=True,
+        method="test",
+    )
 
 
 def run_gate(spec, evidence, qc=None, bound=None, gaps=frozenset()):
@@ -82,13 +94,45 @@ class TestFailConditions(unittest.TestCase):
         precisely because rRNA and mito were never searched. That must FAIL,
         not pass quietly.
         """
-        spec = make_spec(universes=frozenset({Universe.CODING}))
-        gaps = spec.context.missing_universes(spec.profile.assay)
+        from cas13guide.pipeline.c_search import universe_gaps
+
+        spec = make_spec(universes=FULL_UNIVERSES)
+        # Declared five, searched one. The rRNA and mito sequences were there
+        # to be looked at and the search did not look, which is the run's
+        # fault and not this guide's -- but a guide certified on a report that
+        # clean is certified on nothing.
+        bound = narrow_bound({Universe.CODING})
+        gaps = universe_gaps(spec, bound)
         self.assertTrue(gaps)
-        metrics, result = run_gate(spec, (strong_required(),), gaps=gaps)
+        metrics, result = run_gate(spec, (strong_required(),), bound=bound, gaps=gaps)
         self.assertEqual(metrics.worst_off_target, 0.0)  # looks spotless
         self.assertIs(result.verdict, Verdict.FAIL)
         self.assertIn(ReasonCode.UNIVERSE_INADEQUATE, result.reasons)
+
+    def test_a_universe_the_corpus_never_held_reviews_instead(self):
+        """The same spotless report, and nothing anyone skipped.
+
+        Failing here would say the guide is bad. Nothing about the guide is
+        different from the case above: what is missing is the evidence, the
+        same missing evidence for every candidate in the run, and on the web
+        form -- which has no background field -- a verdict its user cannot
+        lift. REVIEW is the verdict that means a human decides.
+        """
+        from cas13guide.pipeline.c_search import universe_gaps
+
+        spec = make_spec(universes=frozenset({Universe.CODING}))
+        # Searched everything it had, and what it had was coding.
+        bound = replace(
+            narrow_bound({Universe.CODING}),
+            corpus_universes=frozenset({Universe.CODING}),
+        )
+        gaps = universe_gaps(spec, bound)
+        self.assertTrue(gaps)
+        metrics, result = run_gate(spec, (strong_required(),), bound=bound, gaps=gaps)
+        self.assertEqual(metrics.worst_off_target, 0.0)
+        self.assertIs(result.verdict, Verdict.REVIEW)
+        self.assertIn(ReasonCode.UNIVERSE_UNREPRESENTED, result.reasons)
+        self.assertNotIn(ReasonCode.UNIVERSE_INADEQUATE, result.reasons)
 
     def test_discrimination_margin_gate(self):
         spec = make_spec(
@@ -182,6 +226,86 @@ class TestReviewGrading(unittest.TestCase):
         self.assertIs(result.review_tier, ReviewTier.R2)
         self.assertIn(ReasonCode.EXPRESSION_UNKNOWN, result.reasons)
 
+    def test_the_targets_own_unknown_expression_does_not_downgrade(self):
+        """The complement of the test above, and the one that was missing.
+
+        `EXPRESSION_UNKNOWN` used to count every locus with no abundance
+        evidence, the run's own target included. An intended locus's
+        expression reaches no metric, no threshold and no verdict -- its two
+        readers, `pair_hazard` and the off-target explorer rows, both sit
+        behind `not e.is_intended` -- so the downgrade fired for a gap that
+        changes no number the run produces, on every guide of every run that
+        did not pass an undocumented `--expression`.
+
+        Measured on the README's own command shape: PASS 0 / REVIEW 272 with
+        this as the sole reason, no panel, no controls, no FR6.3 interval, and
+        a 100% review rate -- the degeneracy this module's docstring says the
+        R1/R2/R3 grading exists to prevent. `--expression 0`, asserting the
+        target is not expressed at all, cleared it just as well as 120.
+        """
+        spec = make_spec()
+        _, result = run_gate(spec, (strong_required(expression_imputed=True),))
+        self.assertNotIn(ReasonCode.EXPRESSION_UNKNOWN, result.reasons)
+        self.assertIs(result.verdict, Verdict.PASS)
+
+    def test_an_off_target_still_downgrades_beside_an_unknown_target(self):
+        """And the reason still fires when it means something.
+
+        Both loci lack abundance evidence here; only the off-target one is
+        supposed to count.
+        """
+        spec = make_spec()
+        evidence = (
+            strong_required(expression_imputed=True),
+            make_evidence(0.0, 0.05, locus_id="LU", expression=(0.0, 0.9),
+                          expression_imputed=True),
+        )
+        _, result = run_gate(spec, evidence)
+        self.assertIs(result.verdict, Verdict.REVIEW)
+        self.assertIn(ReasonCode.EXPRESSION_UNKNOWN, result.reasons)
+        self.assertIn("1 locus/loci", " ".join(result.detail))
+
+    def test_a_guide_that_loses_a_supplied_variant_is_not_certified(self):
+        """FR7.2's flag has to reach the verdict, not just the metric vector.
+
+        README and services/conservation.py both say FR7.2 -- "flagging a
+        guide that loses activity against one variant" -- *is* the robustness
+        metric. It was a number and nothing else: the gate never read it, so a
+        guide with robustness 0.000, reaching no site at all in a variant the
+        user supplied, was certified PASS with "all constraints satisfied with
+        adequate evidence", sat on the Pareto frontier and was selected into
+        the panel. A PASS is the opposite of a flag.
+
+        R1, the least severe REVIEW: the guide meets every requirement on the
+        primary target, and what needs a human is whether that variant matters
+        to them.
+        """
+        spec = make_spec()
+        reference = (strong_required(),)
+        variant = (make_evidence(0.0, 0.05, target_id="t1",
+                                 target_class=TargetClass.REQUIRED),)
+        metrics = build_metric_vector(
+            {"reference": reference, "variant": variant}, clean_qc(), spec)
+        self.assertGreaterEqual(metrics.required_coverage,
+                                spec.thresholds.required_coverage_min)
+        self.assertLess(metrics.robustness, spec.thresholds.required_coverage_min)
+
+        result = gate(metrics, clean_qc(), reference, exhaustive_bound(),
+                      frozenset(), spec)
+        self.assertIs(result.verdict, Verdict.REVIEW)
+        self.assertIn(ReasonCode.VARIANT_COVERAGE_LOST, result.reasons)
+
+    def test_a_guide_that_holds_across_contexts_is_still_certified(self):
+        """Or the rule above would just refuse everything with --variants."""
+        spec = make_spec()
+        reference = (strong_required(),)
+        metrics = build_metric_vector(
+            {"reference": reference, "variant": reference}, clean_qc(), spec)
+        result = gate(metrics, clean_qc(), reference, exhaustive_bound(),
+                      frozenset(), spec)
+        self.assertNotIn(ReasonCode.VARIANT_COVERAGE_LOST, result.reasons)
+        self.assertIs(result.verdict, Verdict.PASS)
+
     def test_r1_borderline_coverage(self):
         spec = make_spec()
         borderline = make_evidence(
@@ -204,14 +328,26 @@ class TestReviewGrading(unittest.TestCase):
         self.assertIn(ReasonCode.MODEL_OUT_OF_DOMAIN, result.reasons)
 
     def test_fail_outranks_every_review_signal(self):
-        """A FAIL condition is never downgraded by co-occurring REVIEW flags."""
-        spec = make_spec(universes=frozenset({Universe.CODING}))
-        gaps = spec.context.missing_universes(spec.profile.assay)
+        """A FAIL condition is never downgraded by co-occurring REVIEW flags.
+
+        The FAIL here is a run that declared five universes and searched one.
+        It used to be a declaration short of the assay's requirement, which is
+        no longer a FAIL and should not be: a corpus that never held a universe
+        cannot have skipped it, and that shortfall is a REVIEW. Under-searching
+        what you declared is still the run's fault, so it is still the FAIL,
+        which is what this test needs one of.
+        """
+        from cas13guide.pipeline.c_search import universe_gaps
+
+        spec = make_spec(universes=FULL_UNIVERSES)
+        gaps = universe_gaps(spec, narrow_bound({Universe.CODING}))
         evidence = (
             strong_required(),
             make_evidence(0.0, 0.05, locus_id="LO", ood=True, domain_ok=False),
         )
-        _, result = run_gate(spec, evidence, gaps=gaps)
+        _, result = run_gate(
+            spec, evidence, bound=narrow_bound({Universe.CODING}), gaps=gaps
+        )
         self.assertIs(result.verdict, Verdict.FAIL)
         self.assertIsNone(result.review_tier)
 
@@ -261,7 +397,13 @@ class TestUniverseAdequacyReadsTheSearchNotTheDeclaration(unittest.TestCase):
         from cas13guide.pipeline.c_search import universe_gaps
 
         gaps = universe_gaps(spec, self._bound_over({Universe.CODING}))
-        result = gate(metrics, clean_qc(), (), exhaustive_bound(4), gaps, spec)
+        # The same bound the gaps were derived from. Handing the gate a bound
+        # that says everything was searched, beside gaps that say it was not,
+        # asks it to certify two contradictory facts -- and it now reads the
+        # bound, so the contradiction is the test's to resolve.
+        result = gate(
+            metrics, clean_qc(), (), self._bound_over({Universe.CODING}), gaps, spec
+        )
         self.assertIs(result.verdict, Verdict.FAIL)
         self.assertIn(ReasonCode.UNIVERSE_INADEQUATE, result.reasons)
 

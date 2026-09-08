@@ -224,5 +224,196 @@ class TestEmptyAndDegenerateReports(unittest.TestCase):
             self.assertGreater(path.stat().st_size, 1000)
 
 
+class TestTheOffTargetTableSaysHowMuchOfItThereIs(unittest.TestCase):
+    """"The 50 highest-hazard off-target loci found" reads as all of them.
+
+    `_off_target_rows` caps the table at fifty and the caption reported
+    `len(off_targets)`, so fifty of fifty and fifty of four thousand printed
+    the same sentence -- and "found" names the whole set, not the shown part.
+    The validation plan directly underneath tells a reader to sequence from
+    this table, which makes how much of it they are looking at the first thing
+    they need to know.
+    """
+
+    @staticmethod
+    def _rows(n):
+        return [
+            {"guide_id": f"g{i}", "locus": f"L{i}", "gene": f"GENE{i}",
+             "biotype": "coding", "target_class": "unannotated",
+             "mismatches": 2, "wobbles": 0, "cigar": "MMM",
+             "ucb_activity": 0.4, "ucb_expression": 0.5, "hazard_weight": 0.6,
+             "hazard": 0.12, "expression_unknown": False, "ood": False,
+             "context": "reference"}
+            for i in range(n)
+        ]
+
+    def _render(self, shown, total):
+        report = dict(REPORT)
+        report["off_targets"] = self._rows(shown)
+        report["off_target_total"] = total
+        return render_report(report)
+
+    def test_a_complete_table_says_so(self):
+        page = self._render(shown=7, total=7)
+        self.assertIn("All 7 off-target loci found", page)
+        self.assertNotIn("highest-hazard of", page)
+
+    def test_a_truncated_table_names_both_numbers(self):
+        page = self._render(shown=50, total=273)
+        self.assertIn("The 50 highest-hazard of 273 off-target loci found", page)
+        self.assertIn("The other 223 are not shown", page)
+
+    def test_it_does_not_send_the_reader_to_a_file_that_has_no_more(self):
+        """The report dict carries the same capped rows, and report.json is
+        not written unless asked for. Naming either would trade one false
+        impression for another."""
+        page = self._render(shown=50, total=273)
+        self.assertNotIn("report.json", page)
+
+    def test_it_says_the_hidden_rows_are_still_inside_the_metrics(self):
+        """Otherwise "not shown anywhere" reads as "not counted"."""
+        page = self._render(shown=50, total=273)
+        self.assertIn("all 273 are already inside", page)
+        self.assertIn("cumulative_burden", page)
+
+    def test_a_report_without_the_total_still_renders(self):
+        """Older reports, and any caller building the dict by hand."""
+        report = dict(REPORT)
+        report["off_targets"] = self._rows(4)
+        report.pop("off_target_total", None)
+        page = render_report(report)
+        self.assertIn("All 4 off-target loci found", page)
+
+
+class TestThePlanAndThePageAgreeAboutTheTable(unittest.TestCase):
+    """The plan may only send a reader somewhere the page actually goes.
+
+    `report_html` renders the explorer `if off_targets`, and the comment
+    beside it says why the table was added at all: "A page that instructs a
+    reader to consult a table it does not contain is worse than one that says
+    nothing, because the reader goes looking." That fixed the case where rows
+    existed and nothing rendered them. With no rows there is still no table,
+    and the plan said "Sequence the top off-target loci from the explorer
+    table" regardless.
+
+    Driven through `build_report`, because the defect is the agreement between
+    two functions and calling either alone cannot see it.
+    """
+
+    @staticmethod
+    def _page(with_rows: bool):
+        report = dict(REPORT)
+        rows = [
+            {"guide_id": "g_one", "locus": "L1", "gene": "GENE1",
+             "biotype": "coding", "target_class": "unannotated",
+             "mismatches": 2, "wobbles": 0, "cigar": "MMM",
+             "ucb_activity": 0.4, "ucb_expression": 0.5, "hazard_weight": 0.6,
+             "hazard": 0.12, "expression_unknown": False, "ood": False,
+             "context": "reference"}
+        ]
+        report["off_targets"] = rows if with_rows else []
+        report["off_target_total"] = len(report["off_targets"])
+        report["validation_plan"] = [
+            "Sequence the top off-target loci from the explorer table; "
+            "prioritize rows with high UCB(activity) whose expression is "
+            "currently unknown."
+            if with_rows else
+            "There is no off-target explorer on this page: no site was found "
+            "in the sequences this run was given."
+        ]
+        return render_report(report)
+
+    def test_with_rows_the_table_is_there_to_be_read(self):
+        page = self._page(with_rows=True)
+        self.assertIn("Off-target explorer", page)
+        self.assertIn("Sequence the top off-target loci", page)
+
+    def test_without_rows_nothing_sends_the_reader_looking(self):
+        page = self._page(with_rows=False)
+        self.assertNotIn("Off-target explorer", page)
+        self.assertNotIn("Sequence the top off-target loci", page)
+
+
+class TestAnEmptyExplorerIsNotACleanOne(unittest.TestCase):
+    """What the plan says instead must not read as a specificity result.
+
+    An empty off-target table is the shape of a good answer and the substance
+    of no answer: a run given one sequence finds nothing because there was
+    nothing loaded to find. That is the failure this whole package is built
+    against, so the sentence that replaces the missing-table line has to name
+    it rather than leave a blank.
+    """
+
+    def test_the_plan_says_why_the_table_is_missing(self):
+        from cas13guide.pipeline.g_output import _validation_plan
+        from cas13guide.pipeline.optimizer import Panel
+
+        # A panel with a member: an empty one short-circuits to "no panel to
+        # validate", which is the more fundamental absence and says nothing
+        # about the explorer. This branch is about a run that *has* something
+        # to validate and no table to point at.
+        panel = Panel(guides=(object(),), coverage={}, objective=0.0,
+                      guarantee="none")
+        plan = _validation_plan(panel, (), make_spec(), off_target_rows=())
+        # "off-target homology" appears in the collateral step too.
+        [line] = [step for step in plan if "off-target explorer" in step]
+        self.assertIn("no site was found", line)
+        self.assertIn("about the corpus", line)
+        self.assertIn("background", line)
+        self.assertNotIn("explorer table;", line)
+
+
+class TestAnEmptyPanelGetsNoProtocol(unittest.TestCase):
+    """A wet-lab protocol for a panel that does not exist.
+
+    With nothing through the gate the plan read "Transfect the 0-guide panel
+    alongside 0 composition-matched non-targeting controls", then went on to
+    quantify knockdown of it and sequence its off-targets: four steps a reader
+    cannot take, printed directly beneath the shortfall explaining why there
+    is no panel.
+
+    Same shape as the explorer line that pointed at a table the page did not
+    contain, and found the same way -- by reading a run's report rather than
+    by any instrument.
+    """
+
+    @staticmethod
+    def _plan(guides):
+        from cas13guide.pipeline.g_output import _validation_plan
+        from cas13guide.pipeline.optimizer import Panel
+
+        panel = Panel(guides=tuple(guides), coverage={}, objective=0.0,
+                      guarantee="none")
+        return _validation_plan(panel, (), make_spec())
+
+    def test_an_empty_panel_says_there_is_nothing_to_validate(self):
+        [line] = self._plan([])
+        self.assertIn("no panel to validate", line)
+        self.assertIn("nothing cleared the gate", line)
+
+    def test_it_does_not_ask_the_reader_to_transfect_nothing(self):
+        plan = " ".join(self._plan([]))
+        self.assertNotIn("0-guide panel", plan)
+        self.assertNotIn("Transfect", plan)
+        self.assertNotIn("RT-qPCR", plan)
+
+    def test_it_points_at_what_would_explain_the_absence(self):
+        """A refusal with no direction is a dead end."""
+        [line] = self._plan([])
+        self.assertIn("shortfalls", line)
+        self.assertIn("triage", line)
+
+    def test_a_real_panel_still_gets_its_protocol(self):
+        """Or the branch above would be satisfied by never offering one.
+
+        `Panel.size` is `len(self.guides)` and the plan reads no attribute of
+        a member, so a placeholder is enough to distinguish "has members" from
+        "has none" -- which is the only thing being tested here.
+        """
+        plan = " ".join(self._plan([object()]))
+        self.assertIn("Transfect the 1-guide panel", plan)
+        self.assertIn("RT-qPCR", plan)
+
+
 if __name__ == "__main__":
     unittest.main()

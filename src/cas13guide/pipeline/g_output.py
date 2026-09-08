@@ -13,6 +13,7 @@ running them through the same search to *prove* they are non-targeting.
 from __future__ import annotations
 
 import random
+import statistics
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -25,6 +26,7 @@ from ..services.provenance import ProvenanceLedger
 from ..util.seq import gc_fraction
 from .b_qc import qc_candidate
 from .f_decide import RankedGuide, distinct_site_ids, review_rate
+from ..services.panel_confidence import PanelConfidence
 from .optimizer import Panel
 
 
@@ -68,6 +70,7 @@ def generate_controls(
     seed: int = 0,
     attempts: int = 200,
     envelope: int | None = None,
+    fold=None,
 ) -> tuple[ControlGuide, ...]:
     """GC- and composition-matched non-targeting controls, search-verified.
 
@@ -109,7 +112,14 @@ def generate_controls(
                 five_prime_flank=member.candidate.five_prime_flank,
                 three_prime_flank=member.candidate.three_prime_flank,
             )
-            if not qc_candidate(probe, spec).passed:
+            # With the same folding engine the run used on its real guides.
+            # `qc_candidate(probe, spec)` alone falls back to the stem-length
+            # proxy, which catches about a third of what a real fold does -- so
+            # a control could pass here and be FAILed by the QC that actually
+            # ran, which is the divergence the comment above says it removed.
+            # Measured over 4000 shuffles of the spacer b_qc's own docstring
+            # cites: 226 of them, 5.7%.
+            if not qc_candidate(probe, spec, fold).passed:
                 continue
             if _has_any_hit(index, f"ctrl_{member.guide_id}", candidate, depth):
                 continue
@@ -175,7 +185,11 @@ def summarize_metrics(assessments: list[GuideAssessment]) -> MetricSummary:
     if not assessments:
         return MetricSummary(0, 0.0, 0.0, 0.0, 0, 0.0)
     coverages = sorted(a.metrics.required_coverage for a in assessments)
-    middle = coverages[len(coverages) // 2]
+    # The median, not the upper-middle order statistic. For an even count
+    # `coverages[n // 2]` is biased upward by half the central gap, and at
+    # n = 2 it equals coverage_max exactly -- in the one field a reader
+    # consults to judge whether the activity model discriminated at all.
+    middle = statistics.median(coverages)
     return MetricSummary(
         n_assessed=len(assessments),
         coverage_min=coverages[0],
@@ -212,9 +226,48 @@ class DesignReport:
     #: not have to parse a sentence back into facts.
     search_bound: "ExhaustivenessBound | None" = None
     universe_gaps: frozenset = frozenset()
+    #: Off-target loci whose site is a site in this run's own target. Only a
+    #: search over a corpus this run did not assemble can produce one, and
+    #: what it means is that the guide's intended site is being scored as a
+    #: perfect off-target under an accession nothing can match.
+    self_identical_loci: frozenset = frozenset()
+    #: What this run could not establish, computed once by ``run_design`` and
+    #: carried rather than reassembled. ``limitations_for_run`` takes nine
+    #: arguments and every surface used to call it itself: two did, their two
+    #: calls had already drifted from each other, and two shipped examples
+    #: printed no caveats at all. A report that carries them cannot be
+    #: displayed without them.
+    limitations: tuple[Any, ...] = field(default_factory=tuple)
+    #: How many distinct (guide, locus) off-target pairs were found, before the
+    #: explorer's row cap. `off_target_rows` holds at most fifty of them, and
+    #: without this nothing downstream could tell fifty of fifty from fifty of
+    #: four thousand.
+    off_target_total: int = 0
+    #: Why the guides that failed the gate failed it, grouped by reason code
+    #: with a few worked examples. ``ranked`` deliberately holds no FAIL rows
+    #: -- a refusal is not a recommendation and does not belong in a table
+    #: somebody might order from -- but the consequence was that a run could
+    #: report "FAIL: 41" and offer nothing else. The gate had already composed
+    #: the numbers; nothing read them.
+    rejected: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: FR6.3 -- bounded detection probability for the panel, or ``None`` when
+    #: no confidence model was supplied. Kept beside the panel rather than
+    #: inside it because ``Panel`` is what the optimizer returns and this is
+    #: an inference *about* that panel, made from the calibration set.
+    panel_confidence: "PanelConfidence | None" = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            # Structured rather than rendered: a caller switching on severity
+            # should not have to parse "CRITICAL: " off the front of a
+            # sentence. Emitted here so the machine-readable report carries
+            # them for every surface, rather than for the two that remembered
+            # to paste them in afterwards.
+            "limitations": [
+                {"id": item.id, "severity": item.severity.value,
+                 "text": item.text, "source": item.source}
+                for item in self.limitations
+            ],
             "spec_fingerprint": self.spec_fingerprint,
             "verdict_counts": self.verdict_counts,
             "review_rate": round(self.review_rate, 4),
@@ -225,13 +278,32 @@ class DesignReport:
                     "guide_id": r.assessment.guide_id,
                     "spacer": r.assessment.spacer,
                     "spans_junction": r.assessment.candidate.spans_junction,
-                    # 0-based start of the target site on its source target,
-                    # so a report can place the guide on an accessibility track.
+                    # 0-based start of the target site on ``source_target_id``,
+                    # so a report can place the guide on that target's
+                    # accessibility track. Both fields, because `start` alone
+                    # cannot: candidates are tiled from every REQUIRED *and
+                    # DESIRED* target, so a ranked row may carry a coordinate on
+                    # a record the track does not depict, and no consumer of
+                    # this dict could tell.
                     "start": r.assessment.candidate.start,
+                    "source_target_id": r.assessment.candidate.source_target_id,
                     "distinct_site": r.assessment.guide_id in self.distinct_sites,
                     "pfs_3prime": r.assessment.candidate.three_prime_flank,
                     "pfs_preferred": r.assessment.qc.pfs_preference == 1.0,
                     "qc_warnings": [w.value for w in r.assessment.qc.warnings],
+                    # QC measures three things about every spacer and, until
+                    # now, reported none of them. GC fraction in particular is
+                    # the first number anybody ordering an oligo writes down,
+                    # and the gate FAILs outside [0.30, 0.70] -- so where a
+                    # surviving guide sits inside that band is exactly what a
+                    # reader wants and could not get.
+                    "gc": round(r.assessment.qc.gc, 4),
+                    "max_homopolymer": r.assessment.qc.max_homopolymer,
+                    # The *proxy* stem length, which is not always what gated
+                    # the guide: with ViennaRNA installed the flag comes from a
+                    # real fold energy instead. Named for what it is so the two
+                    # cannot be confused.
+                    "self_fold_stem": r.assessment.qc.self_fold_score,
                     "accessibility": (
                         None if r.assessment.metrics.accessibility is None
                         else round(r.assessment.metrics.accessibility, 4)
@@ -244,6 +316,13 @@ class DesignReport:
                         None if r.assessment.metrics.predicted_signal is None
                         else round(r.assessment.metrics.predicted_signal, 4)
                     ),
+                    # Present only when the constants were measured. This is
+                    # what --kinetics-constants was advertised as unlocking,
+                    # and it reached no surface a user reads.
+                    "predicted_signal_nm": (
+                        None if r.assessment.metrics.predicted_signal_nm is None
+                        else round(r.assessment.metrics.predicted_signal_nm, 4)
+                    ),
                     "score": round(r.score, 4),
                     "verdict": r.assessment.gate.verdict.value,
                     "review_tier": (
@@ -252,8 +331,22 @@ class DesignReport:
                         else None
                     ),
                     "reasons": [c.value for c in r.assessment.gate.reasons],
+                    # The reason code says which rule spoke; the detail says by
+                    # how much. The gate composed both and only the code was
+                    # ever exported.
+                    "detail": list(r.assessment.gate.detail),
                     "metrics": asdict(r.assessment.metrics),
                     "rationale": list(r.rationale),
+                    # The same breakdown the rationale strings render, in the
+                    # form a caller can use. It was computed for every guide
+                    # and reached no output at all, so the one question a
+                    # weighted ranking raises -- how much of this rank is my
+                    # preference rather than the evidence -- could only be
+                    # answered by parsing prose.
+                    "sensitivity": {
+                        key: round(value, 6)
+                        for key, value in sorted(r.sensitivity.items())
+                    },
                 }
                 for r in self.ranked
             ],
@@ -263,6 +356,10 @@ class DesignReport:
                 "objective": round(self.panel.objective, 4),
                 "guarantee": self.panel.guarantee,
                 "dropped": list(self.panel.dropped),
+                "confidence": (
+                    None if self.panel_confidence is None
+                    else self.panel_confidence.to_dict()
+                ),
             },
             "controls": [asdict(c) for c in self.controls],
             "coverage_map": self.coverage_map,
@@ -272,19 +369,28 @@ class DesignReport:
                 "discriminated": self.metric_summary.discriminated,
             },
             "off_targets": list(self.off_target_rows),
+            "off_target_total": self.off_target_total,
             "pareto_frontier": list(self.pareto_frontier),
+            # Sorted, so the machine-readable report is byte-identical across
+            # runs; a frozenset's iteration order is not.
+            "self_identical_loci": sorted(self.self_identical_loci),
             "provenance": self.provenance,
             "validation_plan": list(self.validation_plan),
             "shortfalls": list(self.shortfalls),
+            "rejected": [dict(row) for row in self.rejected],
         }
 
 
 def _off_target_rows(assessments: list[GuideAssessment], limit: int = 50) -> tuple[dict, ...]:
-    rows: list[dict[str, Any]] = []
+    # One row per (guide, locus), carrying the WORST context -- which is what
+    # `worst_off_target` is a max over. `off_targets()` now spans every
+    # context, so a locus present in the reference and in two haplotypes would
+    # otherwise take three of the fifty rows to say one thing, and a table
+    # capped at fifty would fill with repeats of the same locus.
+    worst_row: dict[tuple[str, str], dict[str, Any]] = {}
     for a in assessments:
         for e in a.off_targets():
-            rows.append(
-                {
+            row = {
                     "guide_id": a.guide_id,
                     "locus": e.locus_id,
                     "gene": e.hit.gene,
@@ -301,13 +407,55 @@ def _off_target_rows(assessments: list[GuideAssessment], limit: int = 50) -> tup
                     "hazard": round(pair_hazard(e), 4),
                     "expression_unknown": e.expression_unknown,
                     "ood": e.ood,
-                }
-            )
-    rows.sort(key=lambda r: r["hazard"], reverse=True)
+                    # Which world this hit was seen in. A hazard that exists
+                    # only in a haplotype is still the number the gate acted
+                    # on, and a reader told to "sequence the top off-target
+                    # loci from the explorer table" needs to know which.
+                    "context": e.context,
+            }
+            key = (a.guide_id, e.locus_id)
+            previous = worst_row.get(key)
+            if previous is None or row["hazard"] > previous["hazard"]:
+                worst_row[key] = row
+
+    rows = sorted(worst_row.values(), key=lambda r: r["hazard"], reverse=True)
+    # The cap is on what a page can usefully show, not on what was found, and
+    # the two were indistinguishable downstream: every surface reported
+    # `len(off_targets)` as though it were the total. `off_target_total`
+    # carries the real one, at the report level rather than repeated on every
+    # row -- and `rank` is already a column of the *ranked guide* table, so a
+    # second meaning for it here would be a name collision across two tables a
+    # reader sees on one page.
     return tuple(rows[:limit])
 
 
-def _validation_plan(panel: Panel, controls: tuple[ControlGuide, ...], spec: ResolvedDesignSpec) -> tuple[str, ...]:
+def _off_target_total(assessments: list[GuideAssessment]) -> int:
+    """Distinct (guide, locus) off-target pairs, before the explorer's cap."""
+    return len({
+        (a.guide_id, e.locus_id) for a in assessments for e in a.off_targets()
+    })
+
+
+def _validation_plan(
+    panel: Panel,
+    controls: tuple[ControlGuide, ...],
+    spec: ResolvedDesignSpec,
+    off_target_rows: tuple[dict, ...] = (),
+) -> tuple[str, ...]:
+    if not panel.guides:
+        # A protocol for a panel that does not exist. With nothing through the
+        # gate this read "Transfect the 0-guide panel alongside 0
+        # composition-matched non-targeting controls", then went on to
+        # quantify knockdown of it and sequence its off-targets -- four steps
+        # a reader cannot take, printed directly beneath the shortfall saying
+        # why there is no panel. Same shape as the explorer line that pointed
+        # at a table the page did not contain.
+        return (
+            "There is no panel to validate: nothing cleared the gate, so this "
+            "run has no protocol to offer. The shortfalls above say what was "
+            "missing, and the ranked table is triage rather than a "
+            "recommendation.",
+        )
     plan = [
         f"Transfect the {panel.size}-guide panel alongside "
         f"{len(controls)} composition-matched non-targeting controls.",
@@ -320,15 +468,62 @@ def _validation_plan(panel: Panel, controls: tuple[ControlGuide, ...], spec: Res
             "high-abundance bystander transcript. Collateral scales with "
             "target abundance, not with off-target homology."
         )
-    plan.append(
-        "Sequence the top off-target loci from the explorer table; prioritize "
-        "rows with high UCB(activity) whose expression is currently unknown."
-    )
+    if off_target_rows:
+        plan.append(
+            "Sequence the top off-target loci from the explorer table; "
+            "prioritize rows with high UCB(activity) whose expression is "
+            "currently unknown."
+        )
+    else:
+        # The explorer only renders when there are rows, so with none this
+        # line used to send a reader to a table that was not on the page.
+        # What replaces it does not let an empty table read as a clean one:
+        # nothing was found because nothing was loaded to find.
+        plan.append(
+            "There is no off-target explorer on this page: no site was found "
+            "in the sequences this run was given. That is a fact about the "
+            "corpus, not about these guides -- load a background covering the "
+            "universes the assay is exposed to before reading an empty table "
+            "as a specificity result."
+        )
     plan.append(
         "Feed every measured outcome back to the calibration service "
         "(services.benchmark.record_wetlab_result) so the bounds tighten."
     )
     return tuple(plan)
+
+
+#: How many worked examples to carry per reason group. The detail strings hold
+#: per-guide numbers, so grouping on them would put most guides in a group of
+#: one and reproduce the wall of rows this is meant to replace.
+REJECTION_EXAMPLES = 3
+
+
+def _rejection_rows(assessments: list[GuideAssessment]) -> tuple[dict[str, Any], ...]:
+    """Group the failed guides by what the gate said about them.
+
+    Ordered by how many guides each reason set accounts for, then by the reason
+    text, so the output is stable across runs and the dominant cause is first.
+    """
+    groups: dict[tuple[str, ...], list[GuideAssessment]] = {}
+    for a in assessments:
+        if a.gate.verdict is not Verdict.FAIL:
+            continue
+        groups.setdefault(tuple(c.value for c in a.gate.reasons), []).append(a)
+
+    rows: list[dict[str, Any]] = []
+    for reasons, members in groups.items():
+        members.sort(key=lambda a: a.guide_id)
+        rows.append({
+            "reasons": list(reasons),
+            "count": len(members),
+            "examples": [
+                {"guide_id": a.guide_id, "detail": list(a.gate.detail)}
+                for a in members[:REJECTION_EXAMPLES]
+            ],
+        })
+    rows.sort(key=lambda row: (-int(row["count"]), row["reasons"]))
+    return tuple(rows)
 
 
 def build_report(
@@ -342,6 +537,8 @@ def build_report(
     pareto_frontier: tuple[str, ...] = (),
     search_bound: ExhaustivenessBound | None = None,
     universe_gaps: frozenset = frozenset(),
+    self_identical_loci: frozenset = frozenset(),
+    panel_confidence: "PanelConfidence | None" = None,
 ) -> DesignReport:
     counts = {v.value: 0 for v in Verdict}
     for a in assessments:
@@ -367,10 +564,16 @@ def build_report(
         coverage_map=coverage_map,
         metric_summary=summarize_metrics(assessments),
         off_target_rows=_off_target_rows(assessments),
+        off_target_total=_off_target_total(assessments),
         provenance=ledger.to_dict(),
-        validation_plan=_validation_plan(panel, controls, spec),
+        validation_plan=_validation_plan(
+            panel, controls, spec, _off_target_rows(assessments)
+        ),
         pareto_frontier=pareto_frontier,
         shortfalls=shortfalls,
+        rejected=_rejection_rows(assessments),
         search_bound=search_bound,
         universe_gaps=universe_gaps,
+        self_identical_loci=self_identical_loci,
+        panel_confidence=panel_confidence,
     )

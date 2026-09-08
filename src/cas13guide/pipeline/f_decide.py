@@ -25,6 +25,7 @@ from ..contract.enums import (
     Verdict,
 )
 from ..contract.spec import ResolvedDesignSpec
+from ..metrics.bounds import benefit_lower
 from ..models.evidence import GateResult, GuideAssessment, MetricVector, PairEvidence, QCResult
 from ..services.indexes import ExhaustivenessBound
 
@@ -88,13 +89,47 @@ def gate(
         worst = max(e.activity.upper for e in forbidden)
         detail.append(f"forbidden hit UCB(activity) {worst:.3f} > {t.forbidden_activity_max:.3f}")
 
-    # Universe adequacy is a gate condition, not documentation (fix #3).
-    if universe_gaps:
+    # Universe adequacy is a gate condition, not documentation (fix #3) -- but
+    # it covers two findings that deserve different verdicts. A universe the
+    # run *declared* and did not search is a defect in the run: the index was
+    # narrower than the corpus it was built from, and the off-target table is
+    # clean for a reason that has nothing to do with this guide. A universe the
+    # assay is exposed to that the corpus simply holds no sequence in is a
+    # statement about the evidence supplied -- the same statement for every
+    # candidate here -- and no verdict on this guide can lift it.
+    # What separates the two is whether the sequences were there to search. An
+    # index that cannot see its corpus reports None and does not get to have
+    # the run accused of skipping anything.
+    # Two ways a gap is the *run's* fault rather than the corpus's. Either the
+    # run declared a universe and searched less than it declared -- provable
+    # from the declaration alone, and the hole fix #3 was written for -- or the
+    # corpus held sequences in a universe the assay needs and the search did
+    # not look at them. An index that cannot see its corpus reports None and
+    # does not get to have the run accused of the second.
+    available = bound.corpus_universes
+    if available is not None:
+        # The precise test, and it subsumes the declaration: a universe the
+        # corpus holds and the search did not cover was skipped, whatever was
+        # declared. Declaring more than the corpus holds is not a skip -- there
+        # was nothing there to skip -- it is an overclaim, and it is the
+        # unrepresented arm below that says so.
+        skipped = frozenset(universe_gaps & available)
+    else:
+        # No corpus to consult, so the declaration is the only evidence: a
+        # universe the run said it would search and did not. Still only ever a
+        # classification of the gaps the caller reported -- a caller that says
+        # there is no gap is not overruled by arithmetic on the declaration.
+        skipped = frozenset(
+            universe_gaps & (spec.context.declared_universes - bound.universes)
+        )
+    if skipped:
         fail.append(ReasonCode.UNIVERSE_INADEQUATE)
         detail.append(
-            "unsearched universes required by assay: "
-            + ",".join(sorted(u.value for u in universe_gaps))
+            "available and not searched: "
+            + ",".join(sorted(u.value for u in skipped))
         )
+
+    unrepresented = frozenset(universe_gaps - skipped)
 
     if (
         metrics.discrimination_margin is not None
@@ -159,10 +194,64 @@ def gate(
             )
         )
 
-    if any(e.expression_unknown for e in evidence):
-        n = sum(1 for e in evidence if e.expression_unknown)
+    # Distinct loci, not pair rows. PairEvidence is guide x locus x context, so
+    # summing rows counted one locus once per context and once per binding site
+    # within it -- and the string says "locus/loci", unlike the two R3 details
+    # above it, which say "pair(s)" and do mean rows.
+    # Off-target loci only. An intended locus's abundance reaches no metric,
+    # no threshold and no verdict: `PairEvidence.expression` has exactly two
+    # readers, `pair_hazard` and the off-target explorer rows, and both are
+    # behind `not e.is_intended`. Counting the target itself downgraded every
+    # guide for a gap that changes no number the run produces.
+    #
+    # It made the certified surface unreachable from the documented command.
+    # `design --fasta t1.fa` gave PASS 0 / REVIEW 272, the sole reason on every
+    # survivor being this one, so there was no panel, no controls and no FR6.3
+    # interval -- a 100% review rate, which is the degeneracy the R1/R2/R3
+    # grading in this module's docstring exists to prevent. The same run with
+    # `--expression 120` gave PASS 272 under identical synthetic calibration.
+    # So did `--expression 0`, which asserts the target is not expressed at
+    # all: any value cleared the flag, because nothing downstream read it.
+    #
+    # This also makes the reason mean what the report already says it means --
+    # `report_html.py`'s glossary glosses R2 EXPRESSION_UNKNOWN as "an
+    # off-target whose expression is unknown", which was not the case that
+    # fired.
+    unknown_loci = {
+        e.locus_id for e in evidence if e.expression_unknown and not e.is_intended
+    }
+    if unknown_loci:
         review.append(
-            (ReviewTier.R2, ReasonCode.EXPRESSION_UNKNOWN, f"{n} locus/loci with no expression evidence")
+            (ReviewTier.R2, ReasonCode.EXPRESSION_UNKNOWN,
+             f"{len(unknown_loci)} locus/loci with no expression evidence")
+        )
+
+    # Robustness is the minimum required coverage across every evaluated
+    # context; with only the reference it *is* required_coverage, so this
+    # cannot fire unless the user supplied --variants. Against the same floor
+    # that FAILs a guide on the reference, because a guide is not more
+    # acceptable for missing its target in an isoform than in the reference --
+    # it is only less certain which one the user cares about, and that is a
+    # judgement for a human, which is what REVIEW means.
+    if unrepresented:
+        review.append(
+            (
+                ReviewTier.R1,
+                ReasonCode.UNIVERSE_UNREPRESENTED,
+                "no sequence supplied in "
+                + ",".join(sorted(u.value for u in unrepresented))
+                + ", which this assay exposes the guide to",
+            )
+        )
+
+    if metrics.robustness < t.required_coverage_min:
+        review.append(
+            (
+                ReviewTier.R1,
+                ReasonCode.VARIANT_COVERAGE_LOST,
+                f"robustness {metrics.robustness:.3f} < "
+                f"{t.required_coverage_min:.3f} in some supplied context",
+            )
         )
 
     if metrics.required_coverage < t.required_coverage_min + t.borderline_band:
@@ -321,8 +410,16 @@ class RankedGuide:
     rank: int
     score: float
     rationale: tuple[str, ...]
-    #: d(score)/d(weight) per objective -- how much the rank depends on the
-    #: user's weighting rather than on the evidence.
+    #: What each objective contributed to ``score``: ``weight x normalised
+    #: value``, so the values sum to ``score`` exactly. That is what answers
+    #: "is this guide here because of the evidence or because of how I weighted
+    #: it" -- an axis contributing most of the total is a ranking resting on a
+    #: preference.
+    #:
+    #: Described until now as ``d(score)/d(weight)``, which is a different
+    #: number: the derivative in the weight is the *normalised value* alone,
+    #: i.e. this divided by the weight. Anyone wanting the derivative can take
+    #: it; the comment simply did not describe what the field holds.
     sensitivity: dict[str, float]
 
 
@@ -412,16 +509,37 @@ def distinct_site_ids(
     distinct sites still displays #1, #4, #9 and a reader can see that guides
     were collapsed rather than never generated.
 
-    Sites are compared within a source target only -- positions on different
-    targets are not comparable.
+    Sites are compared on the coordinates a guide actually **binds**, per
+    target, and two guides are the same site if they overlap on *any* target
+    they share. Keying on the candidate's ``source_target_id`` instead -- the
+    record it happened to be tiled from -- is not the same question, and gets
+    the wrong answer as soon as a run holds more than one target record: a
+    spacer tiled from the second record carries that record's coordinate, so it
+    was never compared against anything from the first, and two guides whose
+    sites on the REQUIRED target sit one nucleotide apart were both listed as
+    distinct. That is the failure this function exists to prevent, reappearing
+    through the door the multi-record path opened.
+
+    Comparing binding sites is also what ``optimizer._profile`` does when it
+    enforces panel spacing, so the ranked list and the panel selector now
+    answer the same question rather than two similar ones.
     """
     seen: dict[str, list[int]] = {}
     distinct: set[str] = set()
     for entry in ranked:
-        candidate = entry.assessment.candidate
-        starts = seen.setdefault(candidate.source_target_id, [])
-        if all(abs(candidate.start - start) >= min_spacing for start in starts):
-            starts.append(candidate.start)
+        # One rule, on the assessment, read by this and by the panel
+        # selector. It used to be written out here and again in
+        # ``optimizer._profile``, with the two versions disagreeing.
+        sites = entry.assessment.binding_sites()
+
+        overlaps = any(
+            abs(start - other) < min_spacing
+            for target_id, start in sites.items()
+            for other in seen.get(target_id, ())
+        )
+        if not overlaps:
+            for target_id, start in sites.items():
+                seen.setdefault(target_id, []).append(start)
             distinct.add(entry.assessment.guide_id)
     return frozenset(distinct)
 

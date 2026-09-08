@@ -4,6 +4,11 @@ import unittest
 
 from helpers import *  # noqa: F401,F403
 
+import ast
+
+from cas13guide.contract.enums import SOFT_QC_FLAGS
+from cas13guide.pipeline import b_qc
+
 from cas13guide.contract.enums import AssayType, Effector, QCFlag, TargetClass
 from cas13guide.contract.spec import (
     ContextScope,
@@ -251,6 +256,67 @@ class TestSpacerLengthIsConfigurableNotFixed(unittest.TestCase):
         result = qc_candidate(Candidate("g", self.SPACER_28[:12], "t1", 0), spec)
         self.assertIn(QCFlag.SPACER_LENGTH_UNSUPPORTED, result.flags)
         self.assertFalse(result.passed)
+
+
+class TestTheSoftFlagsAreTheOnesThatOnlyWarn(unittest.TestCase):
+    """``SOFT_QC_FLAGS`` describes ``b_qc``, and nothing compared the two.
+
+    Its comment says it exists to stop exactly this: "a single source of truth
+    rather than a sentence in the class docstring, which went stale in the
+    same commit that added the second member to this set". But no code reads
+    the set -- ``b_qc`` decides soft from hard by appending to ``warnings`` or
+    to ``flags`` at each site -- so it is a second description of the same
+    thing, free to go stale the way the sentence did. Removing a member left
+    the whole suite green.
+
+    Read out of the source rather than by running a candidate through every
+    branch: a flag only reachable with ViennaRNA, a specific ortholog or a
+    particular spacer would otherwise go unclassified, and the claim is about
+    every member, not the reachable ones.
+    """
+
+    def _appends_by_list(self) -> dict[str, set[str]]:
+        """``{"warnings": {...}, "flags": {...}}`` as written in b_qc."""
+        import pathlib as _pathlib
+
+        source = (_pathlib.Path(b_qc.__file__)).read_text(encoding="utf-8")
+        found: dict[str, set[str]] = {"warnings": set(), "flags": set()}
+        for node in ast.walk(ast.parse(source)):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "append"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in found
+                    and len(node.args) == 1):
+                continue
+            argument = node.args[0]
+            if (isinstance(argument, ast.Attribute)
+                    and isinstance(argument.value, ast.Name)
+                    and argument.value.id == "QCFlag"):
+                found[node.func.value.id].add(argument.attr)
+        return found
+
+    def test_the_set_is_exactly_what_only_warns(self):
+        appends = self._appends_by_list()
+        self.assertTrue(appends["warnings"], "no warning append found at all")
+        self.assertEqual(
+            {flag.name for flag in SOFT_QC_FLAGS}, appends["warnings"],
+            "SOFT_QC_FLAGS and the appends in b_qc disagree about which "
+            "findings only warn",
+        )
+
+    def test_no_soft_flag_also_fails_a_guide(self):
+        """A member appended to both lists would warn and fail at once."""
+        appends = self._appends_by_list()
+        self.assertTrue(appends["flags"], "no hard append found at all")
+        self.assertEqual(
+            appends["warnings"] & appends["flags"], set(),
+            "a flag reaches both warnings and flags",
+        )
+        self.assertEqual(
+            {flag.name for flag in SOFT_QC_FLAGS} & appends["flags"], set(),
+            "a soft flag is also appended to flags, which fails the guide",
+        )
 
 
 if __name__ == "__main__":

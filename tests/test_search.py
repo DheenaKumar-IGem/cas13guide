@@ -64,6 +64,94 @@ class TestExhaustiveness(unittest.TestCase):
 
 
 
+class TestTheSeedHeuristicStaysInsideItsEnvelope(unittest.TestCase):
+    """An anchored window that is too divergent is dropped, not returned.
+
+    The seed is an exact 11-mer; the window around it is whatever the corpus
+    happens to hold. A locus that shares the seed and diverges everywhere else
+    anchors perfectly and is not a binding site at the requested depth, and
+    the re-profile is the only thing standing between it and the off-target
+    table.
+    """
+
+    def _world(self, tail: str) -> Transcriptome:
+        expected = revcomp(SPACER)
+        site = expected[:11] + tail
+        self.assertEqual(len(site), len(expected), "fixture sanity")
+        rng = random.Random(5)
+        filler = "".join(rng.choice("AUGC") for _ in range(120))
+        world = Transcriptome("GRCh38", "v44")
+        world.add(Locus("L_SEED", filler + site + filler, Universe.CODING,
+                        expression=10.0))
+        return world
+
+    def test_the_seed_really_does_anchor(self):
+        """Otherwise the drop below is never reached and proves nothing.
+
+        The exhaustive scanner sees the same locus, so this establishes the
+        window exists and is far outside the envelope -- which is what makes
+        the heuristic's silence meaningful rather than incidental.
+        """
+        expected = revcomp(SPACER)
+        divergent = "".join(
+            "C" if base != "C" else "G" for base in expected[11:]
+        )
+        world = self._world(divergent)
+        deep = ExhaustiveScanIndex(world, frozenset({Universe.CODING}))
+        # At depth 11 a 22-mer matches a lot of random filler, so name the
+        # constructed site by its position rather than counting hits.
+        found = [h for h in deep.search("g1", SPACER, 11).hits if h.start == 120]
+        self.assertEqual(len(found), 1, "the constructed site was not found")
+        self.assertGreater(
+            found[0].duplex.n_mismatch, 4,
+            "the fixture is inside the envelope, so nothing would be dropped",
+        )
+
+    def test_a_divergent_window_is_not_returned_at_the_shallow_envelope(self):
+        expected = revcomp(SPACER)
+        divergent = "".join(
+            "C" if base != "C" else "G" for base in expected[11:]
+        )
+        index = SeedHeuristicIndex(
+            self._world(divergent), frozenset({Universe.CODING}), seed_length=11
+        )
+        self.assertEqual(index.search("g1", SPACER, 4).hits, ())
+
+    def test_a_window_inside_the_envelope_is_still_returned(self):
+        """Or the filter would be indistinguishable from returning nothing."""
+        expected = revcomp(SPACER)
+        tail = list(expected[11:])
+        tail[2] = "C" if tail[2] != "C" else "G"
+        index = SeedHeuristicIndex(
+            self._world("".join(tail)), frozenset({Universe.CODING}),
+            seed_length=11,
+        )
+        [hit] = index.search("g1", SPACER, 4).hits
+        self.assertEqual(hit.duplex.n_mismatch, 1)
+
+    def test_every_hit_it_returns_is_within_the_envelope(self):
+        """The property the filter exists for, over a mixed corpus."""
+        expected = revcomp(SPACER)
+        rng = random.Random(11)
+        world = Transcriptome("GRCh38", "v44")
+        for index_of, cut in enumerate((1, 3, 6, 11)):
+            tail = list(expected[11:])
+            for position in range(cut):
+                tail[position] = "C" if tail[position] != "C" else "G"
+            filler = "".join(rng.choice("AUGC") for _ in range(60))
+            world.add(Locus(
+                f"L{index_of}", filler + expected[:11] + "".join(tail) + filler,
+                Universe.CODING, expression=10.0,
+            ))
+        index = SeedHeuristicIndex(
+            world, frozenset({Universe.CODING}), seed_length=11)
+        hits = index.search("g1", SPACER, 4).hits
+        self.assertTrue(hits, "fixture sanity: some window must survive")
+        for hit in hits:
+            with self.subTest(locus=hit.locus_id):
+                self.assertLessEqual(hit.duplex.n_mismatch, 4)
+
+
 class TestAmbiguityBasesAreNotADeadZone(unittest.TestCase):
     """``N`` is a legal base, and no index may quietly skip windows carrying it.
 

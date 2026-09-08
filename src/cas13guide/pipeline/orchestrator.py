@@ -18,7 +18,7 @@ it never silently reports a truncated search as a complete one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from ..contract.enums import ReasonCode, TargetClass, Universe, Verdict
@@ -27,11 +27,12 @@ from ..models.evidence import Candidate, GuideAssessment, PairEvidence, QCResult
 from ..services.calibration import CalibrationService
 from ..services.context import ExpressionSource, StaticExpressionSource
 from ..services.indexes import ExhaustivenessBound, SearchIndex, is_weaker
+from ..services.panel_confidence import BayesianPanelConfidence, PanelDependence
 from ..services.provenance import ProvenanceLedger
 from ..services.registry import ModelRegistry
 from ..services.transcriptome import Transcriptome
 from .a_candidates import design_candidates
-from .b_qc import run_qc
+from .b_qc import MAX_SELF_STEM, SELF_FOLD_MAX_DG, run_qc
 from .c_search import run_search
 from .d_pair_evidence import build_pair_evidence
 from .e_aggregate import assess_guides
@@ -122,7 +123,7 @@ def _self_fold_energy():
     """ViennaRNA MFE of a single sequence, or ``None`` if it is not installed.
 
     QC's built-in stem count is a proxy for exactly this number and a poor one
-    (28.9% recall, measured). When the real thing is available it is used, and
+    (~35% recall, measured). When the real thing is available it is used, and
     the run records which -- an unbuyable-back FAIL should not rest on a guess
     when thermodynamics is one import away.
     """
@@ -146,26 +147,89 @@ def run_design(
     initial_step: int = 1,
     preference_weights: dict[str, float] | None = None,
     on_event: Callable[[str], None] | None = None,
+    panel_dependence: "PanelDependence | None" = None,
 ) -> DesignReport:
     """Run the full pipeline, backtracking within budget."""
     if not contexts:
         raise ValueError("at least one context is required")
+    # Limitations are attached to the report at the end of this function; see
+    # `_with_limitations`.
     self_fold = _self_fold_energy()
     reference = next((c for c in contexts if c.name == "reference"), contexts[0])
 
     ledger = ProvenanceLedger(spec.fingerprint())
     ledger.record("spec", "ResolvedDesignSpec", spec.spec_version, fingerprint=spec.fingerprint())
     ledger.record("hazard_weights", "HazardWeights", spec.hazard.version)
-    ledger.record("calibration", "CalibrationService", calibration.version,
-                  strata=calibration.describe())
+    ledger.record(
+        "calibration", "CalibrationService", calibration.version,
+        strata=calibration.describe(),
+        # "unstated" rather than silence: a caller who built their own service
+        # is marked as unrecorded rather than certified by omission.
+        source=getattr(calibration, "source", None) or "unstated",
+    )
     for name, version in registry.versions().items():
         ledger.record("model", name, version)
+    # Two comments -- this module's `_self_fold_energy` and b_qc's MAX_SELF_STEM
+    # block -- promised that "the run says which one it used". Nothing did. The
+    # choice decides SPACER_SELF_FOLDING, which is a hard FAIL nobody can buy
+    # back, and the two criteria disagree: on a 400 nt target the proxy and the
+    # free energy delete different guides (109 vs 102 FAILs, measured), while
+    # the two reports were identical in every field describing the method.
+    ledger.record(
+        "model", "qc_self_fold",
+        "qc/vienna-mfe/v1" if self_fold is not None else "qc/stem-proxy/v1",
+        criterion=(
+            f"dG <= {SELF_FOLD_MAX_DG} kcal/mol"
+            if self_fold is not None
+            else f"longest self-complement > {MAX_SELF_STEM} nt (~35% recall)"
+        ),
+    )
     for ctx in contexts:
+        # `version` is asserted and `digest` is measured, and both are here on
+        # purpose. The build string is what the caller said the world is; the
+        # digest is what it turned out to hold. Recording only the first let
+        # two different background corpora with the same locus count produce
+        # byte-identical provenance, under a genome build nothing had checked.
+        #
+        # The expression source is the last seam that left no trace. Every
+        # other one is recorded -- activity, accessibility, energy, kinetics,
+        # calibration, hazard weights, qc_self_fold, search bound -- and this
+        # one feeds the hazard product directly, so two runs whose abundance
+        # evidence differed were indistinguishable in the ledger that exists
+        # to make a result reproducible and diffable.
+        expression = ctx.expression_source()
         ledger.record("transcriptome", ctx.name, ctx.transcriptome.version,
-                      loci=len(ctx.transcriptome), index=ctx.index.version,
+                      loci=len(ctx.transcriptome),
+                      digest=ctx.transcriptome.digest,
+                      build_verified=False,
+                      expression=getattr(expression, "version", "expression/unversioned"),
+                      index=ctx.index.version,
                       index_choice=ctx.index_rationale)
 
+    # An intended target shorter than the window is dropped by
+    # `design_candidates` -- correctly, since it cannot be tiled -- and used to
+    # be dropped in silence. The run then reported only "no feasible panel
+    # covers required target(s): t1", which reads as "t1 has no usable guides"
+    # rather than "t1 was never looked at", and on a multi-record FASTA it
+    # shipped a full export of the *other* record's guides while saying so.
+    # `designability()` produces exactly this explanation, and only the preset
+    # path with no explicit --spacer-length ever asked it.
+    untileable = [
+        target.target_id
+        for target in spec.contract.targets
+        if target.target_class in (TargetClass.REQUIRED, TargetClass.DESIRED)
+        and len(target.sequence) < spec.spacer_length
+    ]
+
     telemetry = RunTelemetry(final_envelope=spec.thresholds.required_search_mismatches)
+    if untileable:
+        telemetry.shortfalls.append(
+            f"{', '.join(untileable)} shorter than the {spec.spacer_length} nt "
+            "spacer, so no window fits and they were never tiled. Use a shorter "
+            "spacer, or design against an amplicon -- amplify the target "
+            "and pass the product with --fasta."
+        )
+        telemetry.reason_codes.append(ReasonCode.TARGET_TOO_SHORT_TO_TILE)
     envelope = spec.thresholds.required_search_mismatches
     step = initial_step
 
@@ -178,6 +242,7 @@ def run_design(
     frontier_ids: tuple[str, ...] = ()
     bound: ExhaustivenessBound | None = None
     universe_gaps: frozenset[Universe] = frozenset()
+    self_identical: frozenset[str] = frozenset()
 
     # Stages A and B depend only on ``step``, and the C self-loop re-enters the
     # while-body with ``step`` unchanged -- so every search escalation used to
@@ -255,7 +320,8 @@ def run_design(
         # folded to the weakest: a variant context whose index covers fewer
         # universes leaves exactly the same hole, and reading the reference
         # context alone would not see it.
-        universe_gaps: frozenset[Universe] = outcome.universe_gaps
+        universe_gaps = outcome.universe_gaps
+        self_identical = outcome.self_identical_loci
 
         for ctx in contexts:
             ctx_outcome = (
@@ -266,6 +332,7 @@ def run_design(
             if is_weaker(ctx_outcome.bound, weakest_bound):
                 weakest_bound = ctx_outcome.bound
             universe_gaps |= ctx_outcome.universe_gaps
+            self_identical |= ctx_outcome.self_identical_loci
             evidence = build_pair_evidence(
                 ctx_outcome.hits_by_guide, spacers, spec, registry, calibration,
                 ctx.transcriptome, ctx.expression_source(), context=ctx.name,
@@ -291,7 +358,23 @@ def run_design(
         # ---------------- F: panel design ---------------------
         front = pareto_front(passing)
         frontier_ids = tuple(a.guide_id for a in front)
-        panel = select_panel(front, spec, size=panel_size)
+        # From every PASS, not from the frontier. Non-domination is computed
+        # over `metrics.objectives()`, which has no positional axis, while the
+        # panel's binding constraint is `min_spacing = spacer_length` -- so
+        # filtering the pool by domination removes candidates for a reason that
+        # has nothing to do with whether a panel can be built from them, and
+        # every one of them has already cleared the whole gate.
+        #
+        # Measured over 72 designs, each run twice with only the pool changed:
+        # 27 differ, 27 better, 0 worse. On a 240 nt target, 18 of 24 runs
+        # filled 1 or 2 of 3 slots against 3, worst case coverage 0.7647
+        # against 0.9870 -- miss probability 0.2353 against 0.0130, 18.1x. The
+        # frontier had collapsed to one guide, and the panel to one member,
+        # while hundreds of certified guides sat at sites it could have used.
+        #
+        # The frontier keeps its own job: the trade-off set a human looks at,
+        # reported beside the ranking. It was never the panel's candidate list.
+        panel = select_panel(passing, spec, size=panel_size)
 
         # ---- G -> A loop: no feasible panel, re-tile ----
         if not _panel_feasible(panel, spec):
@@ -320,11 +403,18 @@ def run_design(
         search_escalations=telemetry.search_escalations,
         panel_retiles=telemetry.panel_retiles,
         final_envelope=telemetry.final_envelope,
+        # The retile loop's counterpart to final_envelope. It was assigned on
+        # the line above the ledger call and reported nowhere, so a reader
+        # could see that two retiles happened without seeing what step they
+        # settled on -- which is the number that says how densely the target
+        # was actually tiled.
+        final_step=telemetry.final_step,
         shortfall_codes=[c.value for c in telemetry.reason_codes],
     )
 
     # ---------------- G: transparent output -------------------
-    controls = generate_controls(panel, spec, reference.index, envelope=envelope)
+    controls = generate_controls(panel, spec, reference.index,
+                                 envelope=envelope, fold=self_fold)
     # Rank everything the gate did not FAIL -- PASS *and* REVIEW.
     #
     # REVIEW means "usable, with a human looking at it", and the R1/R2/R3
@@ -341,10 +431,64 @@ def run_design(
         [a for a in assessments if a.gate.verdict is not Verdict.FAIL],
         preference_weights,
     )
-    return build_report(
-        assessments, ranked, panel, controls, spec, ledger,
-        shortfalls=tuple(telemetry.shortfalls),
-        pareto_frontier=frontier_ids,
-        search_bound=bound,
-        universe_gaps=universe_gaps,
+    # ---------------- FR6.3: what the panel is worth -----------------
+    # Computed here rather than inside select_panel because it is an inference
+    # about the chosen panel made from the calibration set, and the optimizer
+    # deliberately knows nothing about calibration beyond the bounds it is
+    # handed. The ledger records the model so an exported table says which
+    # confidence it carried.
+    confidence = BayesianPanelConfidence(
+        calibration, spec, dependence=panel_dependence
+    ).for_panel(panel)
+    ledger.record(
+        "model", "panel_confidence", confidence.version,
+        dependence=confidence.dependence_version or "unmeasured",
     )
+
+    return _with_limitations(
+        build_report(
+            assessments, ranked, panel, controls, spec, ledger,
+            shortfalls=tuple(telemetry.shortfalls),
+            pareto_frontier=frontier_ids,
+            search_bound=bound,
+            universe_gaps=universe_gaps,
+            self_identical_loci=self_identical,
+            panel_confidence=confidence,
+        ),
+        spec, registry, calibration,
+    )
+
+
+def _with_limitations(
+    report: DesignReport,
+    spec: ResolvedDesignSpec,
+    registry: ModelRegistry,
+    calibration: CalibrationService,
+) -> DesignReport:
+    """Attach what this run could not establish, once, here.
+
+    ``limitations_for_run`` takes nine arguments and every surface used to
+    assemble them itself. Two did -- the CLI/web path and ``demo.py`` -- and
+    the two calls had already drifted: only the first passed
+    ``self_identical_loci``, so ``cas13guide demo`` could not raise the
+    off-target-may-be-the-target CRITICAL whatever the run found. Two shipped
+    examples never made the call at all and printed a ranking, a panel and
+    predicted probabilities with no caveats anywhere in their output.
+
+    Everything the call wants beyond the three arguments above is a field of
+    the report, so there is nothing for a caller to supply and nothing for a
+    caller to forget.
+    """
+    from ..services.limitations import limitations_for_run
+
+    return replace(report, limitations=limitations_for_run(
+        spec,
+        registry=registry,
+        calibration=calibration,
+        bound=report.search_bound,
+        universe_gaps=report.universe_gaps,
+        self_identical_loci=report.self_identical_loci,
+        panel_size=len(report.panel.guides),
+        panel_confidence=report.panel_confidence,
+        provenance=report.provenance,
+    ))

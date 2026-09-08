@@ -126,6 +126,9 @@ class ContrafoldMFESource:
             for index in range(length):
                 mask[index + 1] = int(forced[index])
         p = self._params
+        # Filled by __post_init__; narrowed here so the seven indexings below
+        # do not each rest on the reader remembering that.
+        assert p is not None, "parameters were not loaded"
         _pair, score = viterbi_scored(
             encoded, length, mask,
             p["bp"], p["stack"], p["tm"], p["hc"], p["dl"], p["dr"],

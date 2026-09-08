@@ -14,6 +14,7 @@ from cas13guide.services.registry import (
     ModelRegistry,
     NullAccessibilityModel,
 )
+from cas13guide.contract.spec import TargetSpec
 from cas13guide.services.transcriptome import Locus, Transcriptome
 
 RNG = random.Random(17)
@@ -36,7 +37,15 @@ def seeded_calibration(spec, n=120):
     return cs
 
 
-def world(include_target: bool) -> Transcriptome:
+def world(include_target: bool, adequate: bool = True) -> Transcriptome:
+    """The corpus. ``adequate`` decides whether it covers the assay's universes.
+
+    It used to hold a single CODING locus while every spec declared five, which
+    no test could notice: the index reported the universes it was *asked* for,
+    so a corpus of one biotype and a declaration of five agreed. Now the corpus
+    is the evidence, and a fixture that wants a run to be adequate has to
+    supply one.
+    """
     t = Transcriptome("GRCh38", "v44")
     if include_target:
         t.add(Locus("L_T1", SEQ_A, Universe.CODING, gene="TGT", expression=100.0))
@@ -49,7 +58,7 @@ def world(include_target: bool) -> Transcriptome:
                 expression=10.0,
             )
         )
-    return t
+    return cover_universes(t) if adequate else t
 
 
 def run(spec, transcriptome, step=1, events=None):
@@ -112,8 +121,71 @@ class TestHappyPath(unittest.TestCase):
         spec = make_spec()
         report = run(spec, world(include_target=True))
         self.assertTrue(report.pareto_frontier)
+
+    def test_every_panel_member_cleared_the_gate(self):
+        """The invariant that protects a reader ordering these oligos.
+
+        This used to assert the panel was a *subset of the frontier*, and that
+        was the constraint rather than the observation: `select_panel` was
+        handed `pareto_front(passing)`. Non-domination is computed over
+        `metrics.objectives()`, which has no positional axis, while the panel's
+        binding constraint is `min_spacing = spacer_length`. So the pool was
+        filtered by a criterion orthogonal to feasibility, and over 72 designs
+        run twice with only the pool changed, 27 differed -- 27 better, 0
+        worse. On a 240 nt target the frontier collapsed to one guide and the
+        panel to one member at coverage 0.7647, where the full PASS set fills
+        three at 0.9870: a miss probability of 0.2353 against 0.0130.
+
+        Being dominated on aggregate objectives does not make a guide unfit to
+        order. It makes it not the best on those axes, which is a different
+        claim from the one a panel makes.
+        """
+        report = run(make_spec(), world(include_target=True))
+        verdicts = {row["guide_id"]: row["verdict"]
+                    for row in report.to_dict()["ranked"]}
+        self.assertTrue(report.panel.guides)
+        for guide in report.panel.guides:
+            self.assertEqual(verdicts.get(guide.guide_id), "PASS", guide.guide_id)
+
+    def test_the_panel_outgrows_the_frontier_when_it_has_to(self):
+        """A panel larger than the frontier is impossible if it is drawn from it.
+
+        Asserting the panel is a subset of the PASS set would hold either way,
+        since the frontier is a subset of it too. This target is chosen so the
+        frontier collapses to a single guide while a hundred certified guides
+        sit at spaced sites: the panel is 2 and the frontier is 1, which is
+        arithmetic no frontier-restricted selector can produce.
+
+        Non-domination is computed over `metrics.objectives()`, which has no
+        positional axis; the panel's binding constraint is
+        `min_spacing = spacer_length`, which is nothing else. Over 72 designs
+        run twice with only the pool changed, 27 differed -- 27 better, 0
+        worse, worst case a miss probability of 0.2353 against 0.0130.
+        """
+        import random
+
+        rng = random.Random(3081)
+        sequence = "".join(rng.choice("AUGC") for _ in range(150))
+        spec = make_spec(targets=(
+            TargetSpec(target_id="t1", sequence=sequence,
+                       target_class=TargetClass.REQUIRED, expression=100.0),
+        ))
+        transcriptome = Transcriptome("GRCh38", "v44")
+        transcriptome.add(Locus("L_T1", sequence, Universe.CODING, gene="TGT",
+                                expression=100.0))
+        report = run(spec, cover_universes(transcriptome))
+
+        passing = {row["guide_id"] for row in report.to_dict()["ranked"]
+                   if row["verdict"] == "PASS"}
+        self.assertGreater(len(passing), 1, "fixture sanity: guides must pass")
+        self.assertEqual(
+            len(report.pareto_frontier), 1,
+            "fixture no longer collapses the frontier, so it cannot "
+            "distinguish the two pools",
+        )
+        self.assertGreater(len(report.panel.guides), len(report.pareto_frontier))
         panel_ids = {g.guide_id for g in report.panel.guides}
-        self.assertTrue(panel_ids.issubset(set(report.pareto_frontier)))
+        self.assertTrue(panel_ids.issubset(passing))
 
     def test_no_failed_guide_reaches_the_ranking(self):
         spec = make_spec()
@@ -132,6 +204,42 @@ class TestBacktrackLoops(unittest.TestCase):
         escalations = [e for e in events if "escalating envelope" in e]
         self.assertEqual(len(escalations), spec.budget.max_search_escalations)
         self.assertTrue(any("budget exhausted" in s for s in report.shortfalls))
+
+    def _partial_world(self, keep: int) -> Transcriptome:
+        """A world holding only the first ``keep`` bases of the target.
+
+        Candidates tiling inside the kept prefix find a hit; the rest do not,
+        so the zero-hit fraction is a dial. 42 candidates are tiled, and each
+        extra base kept converts exactly one zero-hit candidate into a hit.
+        """
+        t = Transcriptome("GRCh38", "v44")
+        t.add(Locus("L_T1", SEQ_A[:keep], Universe.CODING, gene="TGT",
+                    expression=100.0))
+        return t
+
+    def test_escalation_fires_just_above_its_threshold(self):
+        """ZERO_HIT_SUSPICION is 0.5, and the test above sits at 1.0.
+
+        A fraction of 1.0 escalates whatever the threshold is, so raising it
+        to 0.6 -- an ordinary-looking re-tune -- left the whole suite green
+        while changing whether a run widens its envelope. 38 kept bases put
+        25 of 42 candidates at zero hits, which is 0.5952: above 0.5 and
+        below 0.6, so this fails if the threshold moves that far.
+        """
+        events: list[str] = []
+        run(make_spec(), self._partial_world(38), events=events)
+        self.assertTrue(any("escalating envelope" in e for e in events))
+
+    def test_and_not_at_it(self):
+        """42 kept bases give exactly 21 of 42, and the comparison is `>`.
+
+        Half the candidates finding nothing is not yet suspicious. Pinning
+        this is what stops the threshold drifting to `>=` as well as what
+        stops it drifting in value.
+        """
+        events: list[str] = []
+        run(make_spec(), self._partial_world(42), events=events)
+        self.assertFalse(any("escalating envelope" in e for e in events))
 
     def test_shortfall_is_reported_not_silently_swallowed(self):
         spec = make_spec()
@@ -173,6 +281,14 @@ class TestBacktrackLoops(unittest.TestCase):
 
 class TestUniverseGateEndToEnd(unittest.TestCase):
     def test_declaring_too_few_universes_fails_everything(self):
+        """The corpus holds them; the declaration narrows the index past them.
+
+        This is the shape fix #3 was written for -- a clean off-target report
+        bought by not looking -- and it is a FAIL because the run could have
+        looked. The fixture has to supply the sequences for that to be true:
+        while the world held one CODING locus, declaring too few universes
+        skipped nothing, and the test passed on a technicality.
+        """
         spec = make_spec(universes=frozenset({Universe.CODING}))
         report = run(spec, world(include_target=True))
         self.assertEqual(report.verdict_counts["PASS"], 0)
@@ -180,6 +296,97 @@ class TestUniverseGateEndToEnd(unittest.TestCase):
         self.assertTrue(
             any("universes" in str(r).lower() for r in report.provenance["records"])
         )
+
+    def test_a_corpus_that_never_held_them_is_a_review_not_a_failure(self):
+        """No verdict on a guide can lift a gap in the evidence supplied.
+
+        Same declaration, same assay, same shortfall against
+        ASSAY_REQUIRED_UNIVERSES -- and a corpus with nothing in those
+        universes to skip. Failing a guide for that says the guide is bad; it
+        is the run that is uninformative, identically for every candidate, and
+        the web form has no way to supply a background at all.
+        """
+        spec = make_spec(universes=frozenset({Universe.CODING}))
+        report = run(spec, world(include_target=True, adequate=False))
+        self.assertEqual(report.verdict_counts["FAIL"], 0)
+        self.assertGreater(report.verdict_counts["REVIEW"], 0)
+        self.assertEqual(report.verdict_counts["PASS"], 0)
+
+
+class TestTheWeakestBoundAcrossContextsIsTheOneReported(unittest.TestCase):
+    """A variant searched with a weaker index drags the guarantee down.
+
+    `run_design` folds bounds across contexts with `is_weaker`, and that
+    branch had never executed: every fixture gave every context the same
+    exhaustive scanner, so the fold could not do anything.
+
+    It is the "suspiciously clean" shape in its purest form. The reported
+    bound is what `SEARCH_NOT_EXHAUSTIVE` reads, so without the fold a run
+    whose haplotype was searched by a seed heuristic would report the
+    reference's `exhaustive=True` and claim a guarantee no context actually
+    provides. `is_weaker` lives in `indexes.py` precisely because two stages
+    fold bounds and "weakest wins" has to mean the same thing in both.
+    """
+
+    def _contexts(self, world, weak_variant: bool):
+        from cas13guide.services.indexes import SeedHeuristicIndex
+
+        universes = FULL_UNIVERSES
+        reference = DesignContext(
+            "reference", world, ExhaustiveScanIndex(world, universes),
+            {"L_T1": "t1"},
+        )
+        variant_index = (
+            SeedHeuristicIndex(world, universes) if weak_variant
+            else ExhaustiveScanIndex(world, universes)
+        )
+        variant = DesignContext(
+            "hap2", world, variant_index, {"L_T1": "t1"},
+        )
+        return [reference, variant]
+
+    def _run(self, contexts):
+        spec = make_spec()
+        return run_design(
+            spec, contexts,
+            ModelRegistry(HeuristicCas13Model(), NullAccessibilityModel()),
+            seeded_calibration(spec),
+            panel_size=2, initial_step=1,
+        )
+
+    def test_the_two_indexes_really_do_differ(self):
+        """Or the fold has nothing to choose between and proves nothing."""
+        from cas13guide.services.indexes import SeedHeuristicIndex
+
+        w = world(include_target=True)
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
+        strong = ExhaustiveScanIndex(w, FULL_UNIVERSES).search("g", spacer, 4)
+        weak = SeedHeuristicIndex(w, FULL_UNIVERSES).search("g", spacer, 4)
+        self.assertTrue(strong.bound.exhaustive)
+        self.assertFalse(weak.bound.exhaustive)
+
+    def test_a_heuristic_variant_makes_the_run_report_a_heuristic_search(self):
+        w = world(include_target=True)
+        both_exhaustive = self._run(self._contexts(w, weak_variant=False))
+        self.assertTrue(both_exhaustive.search_bound.exhaustive, "fixture sanity")
+
+        mixed = self._run(self._contexts(w, weak_variant=True))
+        self.assertFalse(
+            mixed.search_bound.exhaustive,
+            "a context searched by a seed heuristic left the run claiming an "
+            "exhaustive search",
+        )
+
+    def test_and_the_gate_sees_it(self):
+        """The bound is not decoration: it is what SEARCH_NOT_EXHAUSTIVE reads."""
+        w = world(include_target=True)
+        mixed = self._run(self._contexts(w, weak_variant=True))
+        reasons = {
+            reason
+            for row in mixed.to_dict()["ranked"]
+            for reason in row.get("reasons", ())
+        }
+        self.assertIn("search_not_exhaustive", reasons)
 
 
 if __name__ == "__main__":

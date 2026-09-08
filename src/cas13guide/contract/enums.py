@@ -117,6 +117,15 @@ class ReasonCode(str, Enum):
     REQUIRED_TARGET_MISSED = "required_target_missed"
     CREDIBLE_FORBIDDEN_HIT = "credible_forbidden_hit"
     UNIVERSE_INADEQUATE = "universe_inadequate"
+    #: The assay exposes the guide to a universe the corpus holds no sequence
+    #: in. Distinct from UNIVERSE_INADEQUATE, which means the run declared a
+    #: universe and then searched less than it declared -- a defect in the run.
+    #: This one is a statement about the evidence the user supplied, identical
+    #: for every candidate, and liftable only by supplying sequences. It is a
+    #: REVIEW because a clean off-target table against a corpus that cannot
+    #: contain an off-target is not evidence of specificity, and deciding
+    #: whether that matters is a human's job.
+    UNIVERSE_UNREPRESENTED = "universe_unrepresented"
     DISCRIMINATION_MARGIN_INSUFFICIENT = "discrimination_margin_insufficient"
     HAZARD_BUDGET_EXCEEDED = "hazard_budget_exceeded"
 
@@ -131,11 +140,29 @@ class ReasonCode(str, Enum):
     DUPLEX_ENERGY_OUT_OF_RANGE = "duplex_energy_out_of_range"
 
     # --- PASS ---
+    #: The guide clears the floor on the reference and falls below it in some
+    #: other evaluated context -- a variant supplied with ``--variants``.
+    #: FR7.2's flag, which the README and ``services/conservation.py`` both say
+    #: *is* the robustness metric: "flagging a guide that loses activity
+    #: against one variant is already the pipeline's robustness metric".
+    #:
+    #: It was a number and nothing else. The gate never read it, so a guide
+    #: with robustness 0.000 -- reaching no site at all in a variant the user
+    #: supplied -- was certified PASS with "all constraints satisfied with
+    #: adequate evidence", sat on the Pareto frontier, and was selected into
+    #: the panel whose detection interval rests on reference coverage alone.
+    #: A PASS is the opposite of a flag.
+    VARIANT_COVERAGE_LOST = "variant_coverage_lost"
     CONSTRAINTS_SATISFIED = "constraints_satisfied"
 
     # --- pipeline shortfalls (control flow, fix #5) ---
     BUDGET_EXHAUSTED_NO_FEASIBLE_PANEL = "budget_exhausted_no_feasible_panel"
     BUDGET_EXHAUSTED_SEARCH = "budget_exhausted_search"
+    #: An intended target shorter than the spacer, so it was never tiled. The
+    #: distinction the panel shortfall alone cannot make: "no feasible panel
+    #: covers t1" reads as "t1 has no usable guides" when the truth is that
+    #: nobody looked.
+    TARGET_TOO_SHORT_TO_TILE = "target_too_short_to_tile"
 
 
 class QCFlag(str, Enum):
@@ -143,7 +170,10 @@ class QCFlag(str, Enum):
 
     Members appear in :attr:`QCResult.flags` (hard incompatibilities, which the
     gate turns into a FAIL) or :attr:`QCResult.warnings` (soft findings, which
-    only deprioritize). ``PFS_DISFAVOURED`` is the only soft member today.
+    only deprioritize). The soft members are listed in :data:`SOFT_QC_FLAGS` --
+    named there rather than restated here, because this sentence said
+    "``PFS_DISFAVOURED`` is the only soft member" from the commit that added
+    the second one.
     """
 
     GC_OUT_OF_RANGE = "gc_out_of_range"
@@ -156,7 +186,23 @@ class QCFlag(str, Enum):
     #: the ranking, never fails the guide.
     PFS_DISFAVOURED = "pfs_disfavoured"
     #: Soft: a spacer length the ortholog tolerates but was not published at.
-    #: Usable; the activity model reports it out-of-domain so the bounds widen.
+    #: Usable as a *candidate*; the activity model reports it out-of-domain,
+    #: which refuses to narrow its interval, so the gate then refuses it.
     SPACER_LENGTH_NONCANONICAL = "spacer_length_noncanonical"
     SPACER_LENGTH_UNSUPPORTED = "spacer_length_unsupported"
+    #: Hard: the spacer carries a character outside ACGU -- an ambiguity code
+    #: from an assembly gap. Not synthesisable as written, and every downstream
+    #: number treats the base as known: ``classify_pair`` scores N:N as
+    #: Watson-Crick and RNAplfold reports it fully unpaired, so a gap *attracted*
+    #: the ranking. Fails the guide rather than deprioritising it, because a
+    #: deprioritised guide is still orderable from the export.
     SYNTHESIS_CONSTRAINT = "synthesis_constraint"
+
+
+#: The soft members: findings that only ever reach :attr:`QCResult.warnings`
+#: and never fail a guide. A single source of truth rather than a sentence in
+#: the class docstring, which went stale in the same commit that added the
+#: second member to this set.
+SOFT_QC_FLAGS: frozenset[QCFlag] = frozenset(
+    {QCFlag.PFS_DISFAVOURED, QCFlag.SPACER_LENGTH_NONCANONICAL}
+)

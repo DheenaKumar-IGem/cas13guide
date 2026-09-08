@@ -93,18 +93,29 @@ class _Profile:
 
 
 def _profile(assessment: GuideAssessment) -> _Profile:
+    """Coverage is a REQUIRED-only question; spacing is not.
+
+    ``coverage`` feeds the objective, which is the expected number of
+    *required* targets covered, so it reads REQUIRED evidence only. ``sites``
+    feeds the spacing constraint, which asks whether two guides land on top of
+    each other -- a question that does not care why a target was wanted. The
+    two used to be built in one pass under one condition, which quietly gave
+    the spacing constraint the coverage rule: DESIRED overlaps and any overlap
+    at a zero lower bound were invisible to it. See
+    :meth:`GuideAssessment.binding_sites`, which both this and
+    ``f_decide.distinct_site_ids`` now read.
+    """
     coverage: dict[str, float] = {}
-    sites: dict[str, int] = {}
     off: set[str] = set()
     for e in assessment.evidence:
         if e.target_class is TargetClass.REQUIRED and e.hit.target_id:
             tid = e.hit.target_id
             if benefit_lower(e.activity) > coverage.get(tid, 0.0):
                 coverage[tid] = benefit_lower(e.activity)
-                sites[tid] = e.hit.start
         elif not e.is_intended:
             off.add(e.locus_id)
-    return _Profile(coverage=coverage, off_loci=frozenset(off), sites=sites)
+    return _Profile(coverage=coverage, off_loci=frozenset(off),
+                    sites=assessment.binding_sites())
 
 
 def _objective(profiles: list[_Profile], weights: dict[str, float]) -> float:
@@ -188,7 +199,15 @@ def select_panel(
             "coverage without violating spacing/diversity constraints"
         )
 
-    constrained = min_spacing > 0 or max_shared_off < len(assessments)
+    # Whether the diversity constraint *can* bind, not how many candidates
+    # there are. The two have nothing to do with each other: `max_shared_off`
+    # is a count of shared off-target loci, and comparing it to the pool size
+    # meant a large `max_shared_off` declared the run unconstrained while
+    # `_compatible` was still rejecting pairs -- printing the (1 - 1/e) bound
+    # for a feasible family that is an independence system, which is the
+    # claim fcb1bd8 removed from the other branch.
+    widest_off = max((len(p.off_loci) for _a, p in pool), default=0)
+    constrained = min_spacing > 0 or max_shared_off < widest_off
     guarantee = (
         "greedy heuristic -- NO approximation guarantee: spacing/diversity "
         "feasibility is an independence system, not a matroid, so the panel can "

@@ -34,13 +34,19 @@ from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs
 
-from ..contract.enums import AssayType, Effector, Task
+from ..contract.enums import AssayType, Effector, Task, Universe
 from ..contract.presets import get_preset, preset_ids
-from .report_html import REPORT_CSS, AccessibilityTrack, render_report
+from .fasta import SequenceInputError, decode_text
+from .report_html import REPORT_CSS, AccessibilityTrack, render_report, track_rows
 from .workflow import DesignRequest, DesignRequestError, run_request
 
 #: Upload ceiling. A transcript is kilobytes; anything past this is a mistake or
 #: an attack, and reading it into memory first is how a dev server falls over.
+#: Cap on how much of an over-sized body we will read purely to let the
+#: response survive. Beyond this the reset is the lesser evil: a client
+#: streaming without limit must not be able to make the server read forever.
+_DRAIN_LIMIT_BYTES = 32 * 1024 * 1024
+
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 
@@ -64,6 +70,7 @@ def _form_page(message: str = "", is_error: bool = False) -> str:
     effectors = options([e.value for e in Effector], defaults.effector)
     assays = options([a.value for a in AssayType], defaults.assay)
     tasks = options([t.value for t in Task], defaults.task)
+    biotypes = options([u.value for u in Universe], defaults.background_biotype)
     banner = (
         f'<div class="note" style="border-left-color:var(--fail)">{html.escape(message)}</div>'
         if is_error and message
@@ -81,6 +88,9 @@ button{{background:var(--accent);color:#fff;border:0;border-radius:8px;
 padding:11px 20px;font:inherit;font-weight:600;cursor:pointer;margin-top:18px}}
 button:hover{{opacity:.9}}
 .hint{{color:var(--muted);font-size:.8rem;margin-top:3px}}
+label.check{{display:flex;align-items:center;gap:8px;font-weight:500;
+  margin:18px 0 0;cursor:pointer}}
+label.check input{{width:auto;margin:0;flex:0 0 auto}}
 </style></head><body><div class="wrap">
 <h1>Cas13 guide design</h1>
 <div class="sub">Paste a sequence, upload a FASTA file, or pick a built-in target.</div>
@@ -89,7 +99,10 @@ button:hover{{opacity:.9}}
   <label for="sequence">Sequence (raw or FASTA)</label>
   <textarea id="sequence" name="sequence" placeholder="AUGCAUGC...  or  &gt;my_target
 AUGCAUGC..."></textarea>
-  <div class="hint">DNA is transcribed to RNA. Anything outside A/C/G/U/T/N is refused.</div>
+  <div class="hint">DNA is transcribed to RNA. Anything outside A/C/G/U/T/N is refused.
+  With several records the first is the target and the rest are also aimed at;
+  mark one <code>&gt;id class=forbidden</code> to say the design must NOT detect it,
+  which is how a multiplex panel is stated.</div>
 
   <div class="row">
     <div><label for="fasta">…or upload a FASTA file</label>
@@ -101,6 +114,18 @@ AUGCAUGC..."></textarea>
   <label for="variants">Variants / isoforms (optional FASTA)</label>
   <input id="variants" name="variants" type="file" accept=".fa,.fasta,.fna,.txt">
   <div class="hint">A shared guide must work against all of them; robustness shows which it loses.</div>
+
+  <label for="background">Off-target background (optional FASTA)</label>
+  <input id="background" name="background" type="file" accept=".fa,.fasta,.fna,.txt">
+  <div class="hint">Specificity is measured against what you load here and nothing else.
+  Label each record in its header &mdash; <code>&gt;RN18S1 biotype=rrna</code> &mdash; or set
+  one biotype for the whole file below. Without a background covering the universes your
+  assay is exposed to, every guide stays at REVIEW.</div>
+
+  <div class="row">
+    <div><label for="background_biotype">Background biotype (default for unlabelled records)</label>
+      <select id="background_biotype" name="background_biotype">{biotypes}</select></div>
+  </div>
 
   <div class="row">
     <div><label for="effector">Effector</label>
@@ -118,10 +143,19 @@ AUGCAUGC..."></textarea>
       <input id="min_accessibility" name="min_accessibility" type="number" step="0.05"
              min="0" max="1" value="0"></div>
   </div>
+  <label class="check" for="skip_signal">
+    <input type="checkbox" name="skip_signal" id="skip_signal">
+    Skip the collateral-signal model</label>
+  <p class="hint">It is most of the wall clock -- a kilobase target runs
+  roughly eight times faster without it, and ranks the same guides -- and the
+  column it produces is reported but not ranked on, because with the
+  placeholder constants that ship here it is a rescaled copy of two numbers
+  already in the ranking.</p>
   <button type="submit">Design guides</button>
 </form>
-<p class="hint" style="margin-top:26px">A typical target returns in a few seconds.
-The run happens in this request, so the page will wait.</p>
+<p class="hint" style="margin-top:26px">A short target returns in a few seconds;
+a kilobase takes considerably longer with the signal model on. The run happens
+in this request, so the page will wait.</p>
 </div></body></html>"""
 
 
@@ -138,14 +172,29 @@ def _parse_multipart(body: bytes, content_type: str) -> dict[str, Any]:
     if not message.is_multipart():
         return fields
     for part in message.iter_parts():
-        name = part.get_param("name", header="content-disposition")
-        if not name:
+        raw_name = part.get_param("name", header="content-disposition")
+        if not raw_name:
             continue
+        # ``get_param`` returns a 3-tuple (charset, language, value) for an
+        # RFC 2231 encoded parameter, and a plain str otherwise. A client that
+        # sends the encoded form would otherwise key the field dict by a tuple,
+        # which nothing downstream looks up.
+        name = raw_name[2] if isinstance(raw_name, tuple) else str(raw_name)
         filename = part.get_filename()
-        payload = part.get_payload(decode=True) or b""
+        raw_payload = part.get_payload(decode=True)
+        # ``decode=True`` yields bytes for a leaf part and None for a multipart
+        # one; a nested multipart in a form field is not something to guess at.
+        payload = raw_payload if isinstance(raw_payload, bytes) else b""
         if filename:
             if payload:
-                fields[f"{name}__file"] = payload.decode("utf-8", errors="replace")
+                # Strictly, and through the same helper the file door uses. It
+                # was errors="replace", so a cp1252 FASTA the CLI refuses as
+                # unreadable ran here to completion with its record name
+                # silently swapped to U+FFFD -- a sequence-bearing file altered
+                # without a word, on the one door whose users cannot read a
+                # traceback. Uploaded *sequence* is content; the form's own
+                # short text fields below are not, and stay lenient.
+                fields[f"{name}__file"] = decode_text(payload, filename)
         else:
             fields[name] = payload.decode("utf-8", errors="replace").strip()
     return fields
@@ -163,15 +212,27 @@ def _number(fields: dict[str, Any], key: str, cast, default=None):
 
 def _request_from_fields(fields: dict[str, Any]) -> DesignRequest:
     return DesignRequest(
-        sequence_text=fields.get("sequence") or fields.get("fasta__file"),
+        # Kept apart, so `_read_records` can see that both were supplied. This
+        # was `sequence or fasta__file`, which meant a filled textarea silently
+        # discarded an uploaded file -- and made the refusal that did fire name
+        # "--sequence" for an input the browser user never pasted.
+        sequence_text=fields.get("sequence") or None,
+        fasta_text=fields.get("fasta__file") or None,
         preset=fields.get("preset") or None,
         variants_text=fields.get("variants__file"),
+        background_text=fields.get("background__file"),
+        background_biotype=fields.get("background_biotype") or "coding",
         effector=fields.get("effector") or "LwaCas13a",
         assay=fields.get("assay") or "in_vitro_detection",
         task=fields.get("task") or "detection",
         spacer_length=_number(fields, "spacer_length", int),
         max_mismatches=_number(fields, "max_mismatches", int, 4),
         min_accessibility=_number(fields, "min_accessibility", float, 0.0),
+        # The terminal has had `--no-signal` since the flag existed; this door
+        # did not, so a browser user waited out 86% of the run for a column the
+        # same run then says it does not rank on. An unchecked box posts
+        # nothing, so absence is the default and the default is unchanged.
+        use_signal="skip_signal" not in fields,
     )
 
 
@@ -183,10 +244,12 @@ def _render_outcome(outcome) -> str:
                 name=f"{outcome.records[0].name} "
                      f"({len(outcome.records[0].sequence)} nt)",
                 profile=outcome.profile,
+                # Same filter as the CLI, from the same helper: a track that
+                # depicts one record must not mark guides tiled from another.
                 guides=[
                     (row.get("start", 0), outcome.spec.spacer_length,
                      f"#{row['rank']} {row['guide_id']}")
-                    for row in outcome.ranked[:5]
+                    for row in track_rows(outcome.ranked, outcome.records[0].name, 5)
                 ],
             )
         ]
@@ -242,6 +305,20 @@ class DesignHandler(BaseHTTPRequestHandler):
         except ValueError:
             length = 0
         if length > MAX_UPLOAD_BYTES:
+            # Drain what the client is still sending before answering. Closing
+            # with megabytes of request body unread makes the OS send a TCP
+            # RST, and that destroys this very response before a sequential
+            # client reads it -- which is every browser and every stdlib
+            # client, since they all finish writing the body before they start
+            # reading. The server logged "413" and the user saw a connection
+            # reset, then Chrome's retry as GET /design, then "Not found.":
+            # a message that is wrong and says nothing about a size limit.
+            remaining = min(length, _DRAIN_LIMIT_BYTES)
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
             self._send(
                 _form_page(
                     f"Upload is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB. "
@@ -263,7 +340,10 @@ class DesignHandler(BaseHTTPRequestHandler):
                     for key, values in parse_qs(body.decode("utf-8", "replace")).items()
                 }
             outcome = run_request(_request_from_fields(fields))
-        except DesignRequestError as exc:
+        except (DesignRequestError, SequenceInputError) as exc:
+            # SequenceInputError too: an undecodable upload is the user's
+            # input being wrong, which is a 400, not the server failing, which
+            # is what the catch-all below would have called it.
             self._send(_form_page(str(exc), is_error=True), status=400)
             return
         except Exception as exc:  # pragma: no cover - defensive
@@ -295,17 +375,42 @@ def make_server(host: str = "127.0.0.1", port: int = 8000) -> HTTPServer:
     return ThreadingHTTPServer((host, port), DesignHandler)
 
 
+
+
+def bind_warning(host: str) -> str | None:
+    """What to say when the server is bound past localhost, or None.
+
+    A function rather than an inline branch so it can be tested without a
+    test binding a socket to every interface on the machine. It is the
+    only thing standing between `--host 0.0.0.0` and an unauthenticated
+    server on the network, and nothing checked that it appears: branch
+    coverage found the branch had never run once in the whole suite.
+    """
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return None
+    return (
+    "  WARNING: this is a development server with no authentication "
+    "and no request limits.\n  Binding beyond localhost exposes it "
+    "to the network; put a real server in front of it."
+    )
+
+
 def serve(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True) -> int:
     """Run the development server until interrupted."""
     server = make_server(host, port)
-    url = f"http://{host}:{port}/"
+    # The port the socket actually bound, not the one that was asked for. They
+    # differ on `--port 0`, the conventional "pick a free one" argument, which
+    # argparse accepts without restriction: the server came up on an ephemeral
+    # port and announced -- and opened -- `http://127.0.0.1:0/`, while the
+    # working address appeared nowhere. This is the door aimed at people who
+    # will not use a command line, and the single line of output they get was
+    # an address that cannot be opened.
+    bound_port = server.server_address[1]
+    url = f"http://{host}:{bound_port}/"
     print(f"cas13guide is at {url}")
-    if host not in ("127.0.0.1", "localhost"):
-        print(
-            "  WARNING: this is a development server with no authentication "
-            "and no request limits.\n  Binding beyond localhost exposes it "
-            "to the network; put a real server in front of it.",
-        )
+    exposure = bind_warning(host)
+    if exposure:
+        print(exposure)
     print("  Ctrl-C to stop.")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()

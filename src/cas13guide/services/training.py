@@ -420,10 +420,30 @@ class TrainingResult:
         )
 
 
+#: Share of the transcript groups that becomes the conformal calibration set.
+#: Named because `services/acceptance.py` has to solve for the number of
+#: transcripts a screen needs before its calibration split holds enough of
+#: them, and a second copy of 0.2 would drift from this one.
+CALIBRATION_FRACTION: float = 0.2
+
+
+def groups_needed_for_calibration(minimum: int,
+                                  fraction: float = CALIBRATION_FRACTION) -> int:
+    """Smallest group count whose calibration split holds ``minimum`` of them.
+
+    Solved against the same expression :func:`three_way_group_split` uses,
+    rather than by dividing, because that one rounds and clamps.
+    """
+    total = 3  # a three-way split needs at least this many
+    while max(1, int(round(fraction * total))) < minimum:
+        total += 1
+    return total
+
+
 def three_way_group_split(
     groups: list[str],
     seed: int = 0,
-    fractions: tuple[float, float, float] = (0.6, 0.2, 0.2),
+    fractions: tuple[float, float, float] = (0.6, CALIBRATION_FRACTION, 0.2),
 ) -> tuple[list[int], list[int], list[int]]:
     """Grouped train / calibrate / test partition.
 

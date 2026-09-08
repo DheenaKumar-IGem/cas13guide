@@ -13,15 +13,32 @@ build):
 ==========  ==========  ==========  ==========  ===================
 corpus      build       FM/query    scan/query  queries to amortize
 ==========  ==========  ==========  ==========  ===================
+2 kb        0.006 s     0.027 s     0.0002 s    never
+20 kb       0.040 s     0.163 s     0.0008 s    never
+200 kb      0.585 s     0.858 s     0.0065 s    never
 600 kb      1.16 s      0.742 s     0.018 s     never
 1.5 Mb      5.83 s      2.990 s     0.054 s     never
 3 Mb        12.56 s     2.758 s     0.089 s     never
 ==========  ==========  ==========  ==========  ===================
 
-Scan time is linear in corpus size (~0.032 s/Mb/query). FM query time
-saturates toward a ceiling set by the mismatch neighbourhood rather than the
-corpus. Build is roughly linear once the corpus is past a megabase. Those
-three facts are the model below.
+Scan time is linear in corpus size (~0.032 s/Mb/query). Build is roughly
+linear once the corpus is past a megabase. Those two facts are the model
+below, and they hold everywhere.
+
+The third is narrower than it used to be stated. FM query time saturates
+toward a ceiling set by the mismatch neighbourhood rather than the corpus --
+**above about 1.5 Mb**. Below that it tracks the corpus, by two orders of
+magnitude across the first three rows: backtracking exhausts a suffix interval
+early when there is little to match against, so the neighbourhood bound is
+never reached. The first three rows were added when a reader noticed the model
+printing "FM ~2800s" for the shipped demo's 2,391 bases, where the measured
+cost is about 27 seconds.
+
+The flat constant is still what the *decision* uses, and that is safe: the
+crossover sits near 87 Mb, deep inside the regime where it was measured, and
+below it the scanner wins under either figure -- at 600 kb it is 0.018 s/query
+against a real FM 0.742. What the floor changed is what gets *reported*; see
+:data:`FM_FLAT_ABOVE_BASES`.
 
 Where the crossover went
 ------------------------
@@ -61,9 +78,31 @@ BUILD_SECONDS_PER_MB = 4.2
 #: Seconds for one scanner query, per megabase of corpus.
 SCAN_SECONDS_PER_MB_PER_QUERY = 0.032
 
-#: Seconds for one FM backtracking query. Governed by the mismatch
-#: neighbourhood (``C(L,k) * 3^k``), so effectively flat in corpus size.
+#: Seconds for one FM backtracking query, **in the flat regime**. Governed by
+#: the mismatch neighbourhood (``C(L,k) * 3^k``) once the corpus is large
+#: enough that backtracking rarely exhausts a suffix interval early.
 FM_SECONDS_PER_QUERY = 2.8
+
+#: Corpus size above which :data:`FM_SECONDS_PER_QUERY` is calibrated.
+#:
+#: "Effectively flat in corpus size" is true above roughly this point and false
+#: below it -- the table in this module's docstring says so itself, with 0.742
+#: s/query at 600 kb against 2.758 at 3 Mb. Measured further down on the same
+#: machine: 0.027 s/query at 2 kb, 0.163 at 20 kb, 0.858 at 200 kb. So the
+#: flat constant overstates the FM cost on a small corpus by up to ~100x.
+#:
+#: That does not move the decision, and the direction is the safe one: the
+#: crossover sits near 87 Mb, deep inside the flat regime, and below it the
+#: scanner wins under either figure -- at 600 kb it is 0.018 s/query against a
+#: real FM 0.742. The model is left alone for that reason.
+#:
+#: What it did move was the *reported* number. `plan_index` printed the
+#: extrapolated figure as though it were a measurement: at the shipped demo's
+#: 2,391 bases it said "FM ~2800s" where the real cost is ~27s. That string is
+#: provenance -- it reaches stdout, the HTML report and the ledger's
+#: `index_choice` -- so below this floor the rationale now states why the
+#: scanner wins without quoting a counterfactual it cannot support.
+FM_FLAT_ABOVE_BASES = 1_500_000
 
 #: Retained for callers that want the headline number: the corpus size at
 #: which per-query costs cross over, ignoring build. Derived, not independent.
@@ -138,6 +177,21 @@ def plan_index(total_bases: int, expected_queries: int = 1000) -> IndexPlan:
                 f"{total_bases:,} bases x {expected_queries} queries: FM "
                 f"~{fm_seconds:.0f}s beats scan ~{scanner_seconds:.0f}s "
                 "(build amortizes)"
+            ),
+        )
+
+    if total_bases < FM_FLAT_ABOVE_BASES:
+        # Below the calibration floor the FM figure is an extrapolation, and a
+        # wrong one -- see FM_FLAT_ABOVE_BASES. Say why the scanner wins
+        # instead of quoting a number this model cannot stand behind.
+        return IndexPlan(
+            kind=SCANNER,
+            searchable_bases=total_bases,
+            rationale=(
+                f"{total_bases:,} bases x {expected_queries} queries: scan "
+                f"~{scanner_seconds:.0f}s, and the suffix-array build does not "
+                f"pay back (FM cost is only modelled above "
+                f"{FM_FLAT_ABOVE_BASES / 1_000_000:g} Mb)"
             ),
         )
 

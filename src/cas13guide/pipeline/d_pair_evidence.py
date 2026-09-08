@@ -16,6 +16,7 @@ Two rules from the design live here:
 
 from __future__ import annotations
 
+from ..contract.enums import TargetClass
 from ..contract.spec import ResolvedDesignSpec
 from ..metrics.bounds import Interval
 from ..models.evidence import PairEvidence, SearchHit
@@ -51,8 +52,21 @@ def evidence_for_hit(
 ) -> PairEvidence:
     locus = transcriptome.loci.get(hit.locus_id)
 
+    # Only for a site the design is *aiming at*. Every reader of this value is
+    # guarded by ``is_intended`` -- ``intended_accessibility`` and the metric
+    # vector both skip a non-intended pair, the off-target explorer has no
+    # accessibility column, and a folded profile is not independent evidence so
+    # it never reaches the activity model. Computing it for an off-target hit
+    # was therefore a full ``pfl_fold_up`` over that locus's whole sequence,
+    # thrown away.
+    #
+    # It is the dominant cost of any run with a real background corpus, because
+    # that is exactly where the off-target hits are: measured on a 1.5 kb target
+    # against 25 background loci, 7.85s -> 0.90s, an 8.7x difference for an
+    # identical report.
+    intended = hit.target_class in (TargetClass.REQUIRED, TargetClass.DESIRED)
     accessibility_value = None
-    if locus is not None:
+    if locus is not None and intended:
         accessibility_value = registry.accessibility.accessibility(
             locus.sequence, hit.start, len(hit.target_site)
         )
@@ -67,14 +81,24 @@ def evidence_for_hit(
     in_domain = registry.activity.domain.supports(
         spec.profile.effector, len(spacer), hit.duplex.n_mismatch
     )
-    prediction = registry.activity.predict(spacer, hit.duplex, model_accessibility)
-
     stratum = _stratum_for(spec, hit)
-    activity = calibration.interval(prediction, stratum, spec.thresholds.alpha)
+
     if not in_domain:
-        # Model domain violation is a stronger statement than a missing
-        # calibration stratum: refuse to narrow at all.
+        # Do not ask a model a question it has told us it cannot answer. The
+        # domain check ran here and `predict()` was called anyway, its result
+        # thrown away three lines later -- harmless for the built-in heuristic,
+        # fatal for a trained one: `TrainedActivityModel.predict` delegates to
+        # a FeatureSpec fixed at the screen's spacer length and raises
+        # ValueError for any other, so fitting on a 22 nt screen and designing
+        # at 23 nt -- both canonical for RfxCas13d -- crashed the run on a
+        # prediction nothing was going to read.
+        #
+        # A domain violation is a stronger statement than a missing calibration
+        # stratum: refuse to narrow at all.
         activity = Interval.unknown(stratum=f"{stratum}->model-out-of-domain")
+    else:
+        prediction = registry.activity.predict(spacer, hit.duplex, model_accessibility)
+        activity = calibration.interval(prediction, stratum, spec.thresholds.alpha)
 
     tpm = expression.expression_tpm(hit.locus_id)
     if tpm is None and locus is not None:
@@ -92,7 +116,18 @@ def evidence_for_hit(
             stratum="accessibility" if independent else "accessibility/predicted",
         )
 
-    energy = registry.energy.duplex_dg_per_nt(spacer, hit.target_site)
+    # The same waste as accessibility above, in the field beside it, left
+    # behind when that one was fixed. `duplex_dg_per_nt` has exactly one
+    # reader -- `metrics/aggregate.intended_duplex_energy`, which skips a
+    # non-intended pair -- and the off-target explorer has no dG column, so a
+    # fold run for an off-target hit was computed and dropped.
+    #
+    # It grows with the background while the intended folds stay fixed:
+    # measured on an 800 nt target against 80 background loci, 1290 discarded
+    # folds against 785 read ones, 12% of wall clock for an identical report.
+    energy = None
+    if intended:
+        energy = registry.energy.duplex_dg_per_nt(spacer, hit.target_site)
 
     return PairEvidence(
         guide_id=hit.guide_id,

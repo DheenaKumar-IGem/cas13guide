@@ -41,10 +41,39 @@ class BenchmarkReport:
 
     @property
     def coverage_ok(self) -> bool:
-        return all(c.ok for c in self.coverage)
+        """Did every stratum's interval cover often enough to be trusted?
+
+        ``bool(self.coverage)`` first, because ``all([])`` is True. A benchmark
+        that evaluated no cases builds no strata and so no coverage reports,
+        and without this it answers "yes, the bounds mean what they claim"
+        having checked nothing. That answer is read by two gates: the
+        ``check`` subcommand exits 0 on it, and it is the "conformal coverage"
+        criterion in the acceptance report.
+
+        The same shape as :meth:`AcceptanceReport.accepted`, which guards it,
+        and as the ``mae`` line in :func:`run_benchmark`, which guards its own
+        division on ``if cases``. This property was the one that did not.
+
+        Empty is *not* ok on purpose. Coverage is the claim that a calibrated
+        interval contains the truth about as often as it says; with nothing
+        measured there is no evidence for that claim, and absence of evidence
+        has been the wrong answer everywhere else in this package too.
+        """
+        return bool(self.coverage) and all(c.ok for c in self.coverage)
 
     def summary(self) -> str:
-        cov = ", ".join(f"{c.stratum}:{c.empirical:.3f}" for c in self.coverage)
+        # A stratum with no calibration data is scored against the [0, 1]
+        # fallback, which covers by construction -- so 1.000 formatted like a
+        # measurement reads as perfect coverage rather than as no coverage.
+        # `acceptance.py` already refuses to print that number and says why;
+        # `AcceptanceReport.summary()` embeds this line, so the same block
+        # carried both the fix and the thing it was fixing, two lines apart.
+        cov = ", ".join(
+            f"{c.stratum}:vacuous(no calibration data)"
+            if c.uncalibrated
+            else f"{c.stratum}:{c.empirical:.3f}"
+            for c in self.coverage
+        )
         return f"n={self.n} spearman={self.spearman:.3f} mae={self.mae:.3f} coverage[{cov}]"
 
 

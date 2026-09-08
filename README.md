@@ -33,6 +33,39 @@ cas13guide design --preset hsa-miR-21-5p
 cas13guide design --list-presets
 ```
 
+**Specificity is measured against what you load, and nothing else.** A run
+given only its target finds no off-targets because there was nothing to find,
+which has the shape of a good answer and the substance of no answer. So the
+universe-adequacy gate asks whether the corpus covers the universes the assay
+exposes the guide to, and answers by looking at what the index actually holds:
+
+```bash
+# every guide stays at REVIEW -- nothing to be specific against
+cas13guide design --fasta target.fa --assay cell_culture_knockdown
+
+# label each record in its own header, so one file can carry several universes
+cas13guide design --fasta target.fa --background corpus.fa \
+                  --assay cell_culture_knockdown
+```
+
+```text
+>RN18S1 biotype=rrna
+>MT-CO1 biotype=mito
+>LINC01 biotype=ncrna
+>PREM1  biotype=pre_mrna
+```
+
+On a 300 nt target the first command returns 0 PASS and 223 REVIEW, naming the
+four universes it did not cover; the second returns 223 PASS and 50 FAIL.
+`--background-biotype` sets one biotype for a whole unlabelled file, and
+`--target-biotype` overrides what the assay implies about the target itself
+(`in_vitro_detection` reads it as synthetic, `antiviral` as viral, the
+knockdown assays as coding). The browser form takes the same upload.
+
+The hazard weights are per-biotype and rRNA is the largest of them, so a
+mislabelled corpus is not a cosmetic problem: `biotype=rrna` weights a hit at
+2.0 where `coding` weights it 1.0.
+
 ```bash
 cas13guide serve                    # then open the page it prints
 ```
@@ -73,7 +106,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 631 tests
+python -m unittest discover -s tests -t tests    # 1518 tests
 pytest                              # same suite under pytest
 ```
 
@@ -146,7 +179,7 @@ prediction off as an off-target risk estimate.
 > one (`CAAC*U*AAACCC*U*` against `CAAG*U*AAACCC*C*`) before diverging. It was
 > load-bearing: `b_qc.py` flags spacers that can base-pair with their own
 > repeat, and across 20,000 random 22 nt spacers the old value flipped that
-> verdict for **4.9%** of them. Fixed, with the structural invariant pinned in
+> verdict for **2.8%** of them. Fixed, with the structural invariant pinned in
 > `test_effector_constants.py` so the next bad value fails loudly.
 
 ## A ranked list is not a panel
@@ -162,11 +195,11 @@ ranks 1, 2 and 3 differed by one nucleotide each:
 #  3 start= 209  AACGAGAUAAAUGGGUCGAGAGUUCGUG
 ```
 
-Those three share 27 of 28 target bases, the same local structure and the same
-accessibility. They succeed or fail together. Ordering that list buys one
-experiment ten times while looking, on screen, like ten independent candidates —
-and it makes "test several candidates" impossible to follow from the list the
-tool hands you.
+Those three share 26 of 28 target bases (27 for a neighbouring pair), the same
+local structure and the same accessibility. They succeed or fail together.
+Ordering that list buys one experiment ten times while looking, on screen, like
+ten independent candidates — and it makes "test several candidates" impossible
+to follow from the list the tool hands you.
 
 So each ranked guide is marked `distinct_site`: is it the best-ranked
 representative of a site not already listed above it? The CLI and the report
@@ -181,6 +214,160 @@ the full list.
 showing one guide per distinct site; 125 shifted copies of a listed site are
 hidden (--all-sites to show them)
 ```
+
+### And a table is not a recommendation
+
+The panel is PASS-only, deliberately — the machine's recommendation stays
+certified even where the table a human triages is wider. So an empty panel
+beside a full table is the dangerous case, and the terminal used to print the
+shortfall only when *nothing* ranked at all: the reader who already knew
+something was wrong got told, and the reader looking at 264 plausible rows did
+not.
+
+This section used to say that every guide lands REVIEW under the built-in
+synthetic calibration, and that was wrong. The universal REVIEW came from
+`EXPRESSION_UNKNOWN` counting the run's **own target** among the loci with no
+abundance evidence — and an intended locus's expression reaches no metric, no
+threshold and no verdict, since the only two readers of it sit behind `not
+e.is_intended`. `design --fasta t1.fa` returned PASS 0 / REVIEW 272 with that
+as the sole reason on every survivor; the same command with `--expression 120`
+returned PASS 272 under the identical synthetic calibration. So did
+`--expression 0`, which asserts the target is not expressed at all — any value
+cleared the flag, because nothing downstream read it.
+
+The reason now counts off-target loci only, which is what the report's own
+glossary already said it meant. The shortfall message stays, and the test that
+guards it arranges an empty panel deliberately — a background paralog every
+window also hits — rather than inheriting one from a defect:
+
+```
+  ! no panel: guides ranked but none PASSed the gate, and the panel is
+    PASS-only. The rows above are candidates to triage, not a recommendation.
+  ! panel stopped at 0/3: no remaining guide added coverage without violating
+    spacing/diversity constraints
+  ! no feasible panel covers required target(s): t1
+```
+
+**And then `cas13guide demo` went on printing that shortfall anyway**, for a
+second and unrelated reason. Its verdicts were `PASS 0 / REVIEW 81 / FAIL 27`
+with `calibration_unsupported` on every survivor — so no panel, no controls,
+no validation plan, and a near-identical block quoted in this file as the
+demo's own transcript. Near-identical because each surface writes that first
+line itself: the demo prints it above the table and says "the rows below", the
+CLI prints it under the table and says "above". One word apart, which is what
+made the quote look like it had a source.
+
+The cause was not in the pipeline. `demo.py` kept its own copy of the design
+path's stand-in calibration, and the copy called `add_observation` without a
+`group=` label. A stratum with no group labels has zero independent units,
+`groups_ok` is False, and `calibration.py` marks every interval out-of-domain
+— correctly. The guard fired, on data that could not satisfy it, on the one
+command `--help` sends a new reader to.
+
+That copy had drifted twice before, each time losing something this path had
+gained: the `synthetic` flag, so the demo dropped the CRITICAL qualifying every
+number it printed, and the provenance, recorded as "unstated". A calibration
+missing a field still answers, so nothing raised on any of the three occasions,
+and the suite did run the demo — it checked exit 0, that the headings appeared,
+and that the verdict counts summed above zero. All three hold for a demo that
+demonstrates nothing: `--- panel ---` prints its heading whether or not a panel
+follows, and 0 + 81 + 27 > 0.
+
+There is now one `build_synthetic_calibration` and two thin callers, so a
+fourth drift has nowhere to happen; the seed it records also builds it, which
+the demo's shared module-level RNG meant was not true before. The documented
+command reaches `PASS 81 / REVIEW 0 / FAIL 27`, a 3-guide panel at 0.981
+coverage, its controls and its plan — still under the CRITICAL saying the
+calibration is synthetic and every PASS therefore exercisable rather than
+earned. `test_the_demo_demonstrates_something.py` asserts the end of the
+pipeline is reached, rather than that the run survived it.
+
+## What a panel is worth (FR6.3)
+
+`Panel.coverage` is a noisy-OR of the members' calibrated lower bounds,
+`1 - prod(1 - lcb)`. It reads like the probability the panel detects the target
+and it is not one, for two reasons that are separate mistakes and are fixed
+separately in `services/panel_confidence.py`.
+
+**A calibrated activity bound is not a success probability.** `lcb` bounds a
+*continuous* predicted activity; whether a guide works is a *binary* event —
+observed activity clears the assay threshold, or it does not. Converting one
+into the other takes data about how often predictions at that level came true,
+and that data is already here: the calibration strata hold `(predicted,
+observed)` pairs. So per guide the model takes the calibration rows whose
+prediction sits near this guide's, counts how many cleared the threshold, and
+updates a Jeffreys `Beta(0.5, 0.5)` prior with that binomial likelihood. The
+credible interval that comes back is wide exactly when the calibration set is
+thin, which is the honest failure mode.
+
+That posterior is built from **counts**, deliberately, not from the conformal
+interval. The earlier attempt at FR6.3 derived its scale as `q / z` — a
+distribution-free conformal quantile over a Gaussian one — which imports the
+assumption conformal exists to avoid. Nothing in this module reads a conformal
+quantile.
+
+**Panel members do not fail independently.** They share a transcript, a prep
+and one activity model whose errors are correlated; the spacing constraint only
+stops them sharing a *site*. So the noisy-OR is not a probability, it is a
+**ceiling** — the value reached only if the members really were independent.
+The matching floor is the comonotone case, where they fail together as far as
+their marginals allow and the panel is worth its best member:
+
+```
+max_g p_g   <=   P(panel detects t)   <=   1 - prod_g (1 - p_g)
+```
+
+Both ends are Fréchet–Hoeffding bounds. They need no parameter nobody measured,
+and the gap between them is the width of the claim rather than a defect in it.
+This package reads benefit at its lower bound everywhere else, so the number to
+quote is the floor: **extra guides have to be shown independent before they
+count.**
+
+`examples/demo_trained.py`, whose calibration is a fitted screen rather than a
+stand-in, prints the correction plainly. Its top guide carries a coverage of
+`0.677`; guides predicted at that level cleared threshold in **52%** of the
+calibration rows, so that is what the panel is worth:
+
+```
+--- panel detection probability (FR6.3) ---
+  t_tgt: [0.523, 0.773]  from 2 member(s): g_2a2018f21c=0.523, g_3bf3b6b517=0.523
+```
+
+Two members of equal quality, and the two ends separate: the floor is what the
+panel is worth if they fail together, the ceiling if they fail independently.
+That gap is the disagreement made visible — the old single number would have
+printed `0.773` alone, the optimistic end, with nothing marking it as one end.
+
+This block used to show a one-member panel, where floor equals ceiling and one
+guide raises no independence question at all. That was not a property of the
+example. `select_panel` was being handed the Pareto frontier rather than the
+guides that passed, so it chose from a few dozen candidates where it should
+have chosen from hundreds, and the spacing constraint ran out of room almost
+at once. The illustration of the interval had been reduced, by a defect
+somewhere else entirely, to the one case where an interval cannot show
+anything.
+
+Collapsing that to a single number takes the common-cause fraction `beta` of
+the standard beta-factor reliability model (IEC 61508-6): each member's failure
+splits into a shared part `beta * q_g` and an independent part `(1 - beta) q_g`,
+and `Q = beta * mean(q_g) + prod((1 - beta) q_g)`. At `beta = 0` that is the
+noisy-OR back again; at `beta = 1` the panel is one guide wearing three hats.
+`beta` is a property of replicate *panel* experiments and cannot be estimated
+from the calibration set this package holds, so **no default ships** — not even
+a plausible one, because a plausible number in the slot where a measured one
+goes does not look like a hole. Supply yours and the point estimate unlocks:
+
+```bash
+cas13guide design --preset hsa-miR-21-5p --panel-dependence beta.json
+```
+
+```json
+{"common_cause_beta": 0.18, "source": "12 replicate 3-guide panels, 2026-08",
+ "provisional": false}
+```
+
+`provisional: true` is refused exactly as an absent value is, or the flag would
+be decoration. Same bargain as `--kinetics-constants`, for the same reason.
 
 ## What a run did not check
 
@@ -218,6 +405,22 @@ the FASTA comment character — `#` would be read as sequence by some parsers, a
 a provenance line concatenated onto a spacer is the kind of corruption that
 survives review. The parser skips both, so an exported FASTA still reads back.
 
+**Every** means the controls FASTA too, which is where it matters most. A
+non-targeting control is a negative result that looks exactly like a guide —
+same length, same base composition, ordered into the same plate — and six
+months on, nothing tells it apart from a real candidate except a record of the
+run and panel it was matched to. It also states its own count, because an empty
+control set used to be a **zero-byte file announced beside the CSV and the
+report**, which reads as "no controls needed" when the fact is "the panel these
+would have been matched to is empty". Those are opposite claims, and the file
+now makes the second one out loud.
+
+```
+; non-targeting controls: 0
+; none were generated, because the panel they are matched to is empty -- a
+; control is a shuffle of a panel spacer. The shortfalls above say why.
+```
+
 ## Requirement coverage
 
 | | Requirement | Where |
@@ -227,40 +430,73 @@ survives review. The parser skips both, so an exported FASTA still reads back.
 | ✅ | FR3.1–3.4 accessibility | `services/accessibility.py` |
 | ✅ | FR4.1–4.3 BLAST off-target | `services/blast.py` — `--blast-db`, refusing legibly without BLAST+. `--background` is the exhaustive, wobble-aware alternative that needs no database |
 | ✅ | FR5.1–5.2 duplex free energy | `services/thermodynamics.py` |
-| ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works, `absolute_signal()` refuses. Supply measured values with `--kinetics-constants FILE.json` and it unlocks |
-| ❌ | FR6.3 Bayesian panel confidence | **not implemented** — the model and its parameters are PanCRISP's and are not in this repository |
+| ⚠️ | FR6.1–6.2 kinetics, predicted signal | `services/kinetics.py` — **constants are placeholders**; relative ranking works and the absolute figure is withheld. Supply measured values with `--kinetics-constants FILE.json` and `predicted_signal_nm` appears on every ranked row and in the CSV, blank until then |
+| ✅ | FR6.3 Bayesian panel confidence | `services/panel_confidence.py` — Beta-Binomial success posterior per member from the calibration counts, combined under Fréchet bounds. Reported as an interval; a point estimate needs a measured common-cause fraction (`--panel-dependence`) and is refused without one |
 | ✅ | FR7.1–7.2 conserved regions, variant robustness | `services/conservation.py` |
 | ✅ | Trained activity model | `services/arc_model.py` + `services/contrafold.py` — Arc CNN on real CONTRAfold energies, 399/399 reference folds exact. `--arc` |
 | ✅ | FR8.1–8.4 ranking, table, export, visual | `pipeline/f_decide.py`, `services/fasta.py`, `services/report_html.py` |
-| ✅ | NFR1–NFR6 | measured at 0.2–3.4 s; `serve`; located errors; provenance ledger; 375 px verified; score glossary |
+| ✅ | NFR1–NFR6 | measured at 0.2–10 s, bounded by the candidate budget rather than by target length — see [Runtime](#runtime); `serve`; located errors; provenance ledger; 375 px verified; score glossary |
 | ⚠️ | DR1 RefSeq database, DR3 BLAST+, DR5 compute | your infrastructure to provision — no compiler or admin needed; `--background` needs none of it |
 | ✅ | DR2 ViennaRNA | `pip install -e ".[structure]"` |
-| ⚠️ | DR4 model constants | JSON storage and loader exist; kinetic values are placeholders, Bayesian parameters absent |
+| ⚠️ | DR4 model constants | JSON storage and loaders exist for both (`--kinetics-constants`, `--panel-dependence`); kinetic values are placeholders and no common-cause fraction ships |
 
-**The two things this cannot do without you.** Real kinetic constants —
+**The two measurements this cannot make for you.** Real kinetic constants —
 `k_cat` and `K_M` for your reporter, which Feng et al. 2024 does not report, so
 they have to come from a plate reader (`--kinetics-constants FILE.json`, with
-`provisional=false`); and the Bayesian diagnostic model for FR6.3, which has no
-stub because guessing at someone else's statistical model is worse than leaving
-a hole — and because an attempt at one derived its scale as `q / z`, dividing a
-distribution-free conformal quantile by a Gaussian one, which is the exact
-assumption conformal exists to avoid.
+`provisional=false`); and the common-cause fraction of panel failure, which
+comes from replicate panel runs (`--panel-dependence FILE.json`). Both have
+working machinery and no shipped value, and in both cases the missing number
+buys a *narrower* claim rather than no claim: signal still ranks, and panel
+confidence still reports the interval it can prove. What neither will do is
+manufacture the input — an earlier FR6.3 attempt derived its scale as `q / z`,
+dividing a distribution-free conformal quantile by a Gaussian one, which is the
+exact assumption conformal exists to avoid.
 
 BLAST is optional rather than blocking: `--background <FASTA>` already runs an
 exhaustive, wobble-aware scan over a transcriptome you supply, and reports
 `exhaustive=True`, which a seeded heuristic cannot.
 
-Three things it deliberately refuses rather than approximates: an absolute
-fluorescence figure from placeholder constants, a certified bound from synthetic
-calibration, and an Arc score computed from Turner energies. The first two are
-announced on every run; the third raises.
+**A transcript database contains your target.** BLAST subject ids are
+accessions and `locus_to_target` is keyed on the names of the records you
+supplied, so the site the guide was *designed* to bind comes back as a
+perfect, zero-mismatch off-target. Nothing in a run can tell that from a
+paralog identical across the whole site, so it says so rather than guessing:
+
+```bash
+cas13guide design --fasta target.fa --blast-db refseq_rna \
+                  --blast-self NM_000546.6
+```
+
+Measured against a stub database holding the target: without the flag,
+`worst_off_target` reads 0.600 for every guide and all fifty explorer rows
+are the guide's own target; with it, 0.190 -- which is what the same run
+gives against a database that never contained the target. Naming the
+accession does not lower the number, it restores it.
+
+The hits are dropped from off-target scoring rather than annotated as the
+target: the local scan already supplies the on-target evidence, and counting
+one binding event twice would inflate coverage.
+
+Four things it deliberately refuses rather than approximates: an absolute
+fluorescence figure from placeholder constants, a single panel detection
+probability without a measured dependence parameter, a certified bound from
+synthetic calibration, and an Arc score computed from Turner energies. The
+first three are announced on every run; the last raises.
 
 ## The load-bearing ideas
 
 **Asymmetric bounds.** Benefit is read at its lower confidence bound, hazard at
-its upper one. `metrics/bounds.py` is the only place intervals are constructed,
-so the asymmetry cannot be accidentally dropped downstream. A low point
-prediction is never evidence of safety.
+its upper one. A low point prediction is never evidence of safety.
+
+What holds that in place is not where intervals are *constructed* — they are
+built in three modules, and construction is not what could drop the asymmetry
+anyway. It is that **every benefit read goes through `benefit_lower`**: no
+module anywhere reads `.lower` off an activity or expression interval directly,
+so the one dangerous mistake — reading a benefit at the *upper* end of a wide
+interval and calling it evidence — has no site to happen at. Hazards do read
+`.upper` directly in five places, which is the safe direction and visibly so.
+`tests/test_bound_asymmetry.py` checks both halves; this section used to claim
+the construction mechanism instead, which was false and protected nothing.
 
 **Evidence is normalised at the pair level.** `PairEvidence` is
 `guide × locus × context`; `GuideAssessment` is what you get after aggregation.
@@ -342,14 +578,29 @@ package makes the trade-off explicit instead of hiding it:
   (`EffectorParams.spacer_length_range`), so a 24 nt spacer is expressible;
 - a length outside the ortholog's *canonical* set is reported out-of-domain, so
   the bounds widen and the gate refuses to certify rather than inventing
-  confidence for a geometry nobody validated;
+  confidence for a geometry nobody validated. The domain pairs length **with
+  ortholog**: it used to be the union across the two, which admitted RfxCas13d's
+  22/23/30 for LwaCas13a and LwaCas13a's 28 for RfxCas13d — so four of the five
+  miRNA presets were being certified at a length no model here was fit on, on
+  the package's own headline path;
+- the default spacer length prefers a **canonical** one wherever a canonical
+  length fits the target, and falls back to the longest merely tolerated length
+  only when none does. Longest-tolerated was the rule until it was pointed at
+  this package's own headline example: `--preset hsa-miR-21-5p` against
+  RfxCas13d resolved to 24 nt, which that ortholog does not publish, and the
+  run ended `FAIL: 1` with exit 1 — specificity bought at the price of the
+  certification that would have made it usable. The canonical 23 nt fits the
+  same 24 nt target and ends `REVIEW: 2`, exit 0. Every LwaCas13a preset still
+  takes the fallback, because 28 is its only published length and no mature
+  miRNA can host a 28-mer: that one is geometry, not a choice;
 - `designability()` states up front how many windows a target can yield, so
   "1 candidate" is a prediction rather than a surprise.
 
 ```python
 designability(get_preset("hsa-miR-21-5p"), Effector.LWA_CAS13A).note
 # "24 nt target cannot hold a 28 nt spacer. LwaCas13a tolerates 20-28 nt;
-#  try a shorter spacer, or design against an amplicon (see amplicon_target)."
+#  try a shorter spacer, or design against an amplicon -- amplify the target
+#  and pass the product with --fasta, or build one with amplicon_target()."
 ```
 
 For a real assay the answer is to detect an **amplicon** — an RT-RPA product or
@@ -495,6 +746,12 @@ cas13guide design --fasta target.fa --variants isoforms.fa
 # conservation (2 variant(s)): 58/193 windows reach every variant within <=0 mismatches
 ```
 
+The two numbers there are from one run on one pair of files and are **not**
+reproducible from this repository, which ships no variant fixture — unlike
+every other figure quoted in this section. They are the shape of the line, not
+a measurement you can check. Where a number here *is* checkable it says so, and
+`examples/verify_the_documented_numbers.py` holds it to the package.
+
 **Conservation is measured in duplex space, not sequence space.** The obvious
 implementation compares variants for identity, and that is the wrong question:
 what matters is not whether two variants carry the same letter but whether one
@@ -554,9 +811,16 @@ lands in the provenance ledger:
 ```python
 ctx = DesignContext.auto("reference", transcriptome, universes, locus_to_target)
 # index/exhaustive-scan/v1
-# "2,400 bases x 1000 queries: scan ~0s beats FM ~2800s
-#  (suffix-array build does not pay back)"
+# "2,391 bases x 1000 queries: scan ~0s, and the suffix-array build does
+#  not pay back (FM cost is only modelled above 1.5 Mb)"
 ```
+
+That message used to quote a counterfactual — "scan ~0s beats FM ~2800s" —
+and the measured FM cost at that corpus is about 27 seconds. The flat
+per-query constant is calibrated between 1.5 Mb and 3 Mb and was being
+extrapolated down two orders of magnitude; the decision was never wrong,
+because the crossover sits near 87 Mb, but the number was. It now says which
+regime it can speak for.
 
 The constants are machine-specific; `examples/bench_index.py` re-measures them.
 The tests pin the *shape* of the policy (query volume flips the decision above
@@ -589,6 +853,42 @@ orthologs trans-cleavage is a property of *activation*, so it scales with target
 abundance rather than with off-target similarity. The report keeps it separate
 from specificity and the validation plan assays it directly.
 
+## Runtime
+
+Measured on one desktop, warm, `RfxCas13d` / knockdown, one target and no
+background corpus. Re-measure on your own machine before quoting these.
+
+| Target | Default | `--no-structure` | Candidates |
+|---|---|---|---|
+| 300 nt | 0.20 s | 0.12 s | 216 |
+| 1 kb | 0.61 s | 0.31 s | 761 |
+| 3 kb | 3.51 s | 1.88 s | 2,509 |
+| 6 kb | 7.12 s | 3.91 s | 4,156 |
+| 12 kb | 10.07 s | 4.88 s | 4,271 |
+
+The shape matters more than the numbers. Runtime tracks the **candidate count**,
+not the target length, and the candidate count is capped by
+`SearchBudget.max_candidates` (5,000) — so it climbs to about ten seconds and
+then flattens, and a 12 kb transcript costs barely more than a 6 kb one. What
+you lose past the cap is tiling *density*, not coverage: each target is spanned
+end to end at a widened step, and the run says so.
+
+Where the time goes, profiled at 10 kb: ViennaRNA's `pfl_fold_up` for the
+accessibility profile (3.2 s, one call over the whole transcript), the
+wobble-aware scan (2.0 s), `duplexfold` for the per-guide hybridisation energy
+(1.3 s), and the QC self-fold (0.6 s). Three of those four are ViennaRNA, which
+is why `--no-structure` roughly halves the total and why the README quoted a
+much smaller range before anyone measured a full-length mRNA: the earlier figure
+was taken on targets short enough that folding was cheap.
+
+Profiling also found work being done for nothing. Accessibility was computed for
+*every* hit, and every reader of it is guarded by `is_intended` — so each
+off-target hit paid a full fold over its locus's whole sequence and the result
+was discarded. That is the dominant cost of a run with a real background corpus,
+because a background corpus is precisely where the off-target hits are: on a
+1.5 kb target against 25 background loci, **7.85 s → 3.01 s**, for a report that
+is byte-identical either way.
+
 ## Seams for real components
 
 Everything expensive sits behind a `Protocol` with a working reference
@@ -609,20 +909,693 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-631 tests, run under `unittest` or `pytest`. The suite is mutation-checked: the
-invariants the README claims are each pinned by a test that fails when the
-behaviour is reverted.
+1518 tests, run under `unittest` or `pytest` — both discover the same set —
+and 94% line coverage. Three of them need a miRBase `mature.fa` and skip
+without it, so *collected* is the figure quoted here: the passing count moves
+with an environment variable, which makes it a number nobody else can
+reproduce from this page.
 
-Fifty-six of those tests were added after a review found bugs the original
-suite did not cover, and each one fails against the code as it stood. The ones
-worth naming, because they were live defects rather than hypotheticals:
+Nine claims this section makes are **measured rather than asserted**, each by a
+procedure anyone can re-run — the rule that gave `verify_against_mirbase()` its
+reason to exist. A claim is worth what the procedure that reproduces it is
+worth.
+
+```bash
+pytest                                                   # 1518 tests
+python examples/verify_mutation_coverage.py              # 153 mutations, 153 caught
+python examples/verify_vocabulary_coverage.py            # 56 of 56 things it can say
+python examples/measure_coverage.py                      # 94% lines, subprocess-traced
+python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
+python examples/verify_output_against_input.py           # the guides are right
+python examples/verify_the_maths_against_a_referent.py   # and so is the arithmetic
+python examples/verify_the_documented_numbers.py         # and so is this page
+python -m mypy                                           # py.typed, checked
+```
+
+**The prose is checked too.** Every other instrument here checks the package
+against itself or against an external referent. `verify_the_documented_numbers.py`
+checks the *documents* — this README and the published landing page — because
+that is where this repository has drifted most often, and the drift is invisible
+from inside the code. It caught all three kinds on its first run.
+
+The test count had been stated in three places reading 1119, 1122 and 1135 at
+the same time; nothing failed, because no test compares two documents. The
+DR-interaction flip rate was stated in five places as 4.9%, and all five went
+stale together the moment the spacer:DR scan learned G-U wobbles. And the
+landing page quoted the four CRITICAL limitations as the tool's own words when
+all four had been abridged — what was dropped, each time, was the remedy and
+the sharpest consequence: *"Fit a real screen with `cas13guide train` before
+treating a bound as a guarantee"*, *"so no specificity score on this page bounds
+it"*, and the sequence universes the run says it searched. On a page whose whole
+premise is that the tool tells you what it does not know, the quotes had been
+softened in exactly the places that say how bad it is and what to do about it.
+
+That last quote was worth even less than the abridgement made it look. The page
+had trimmed a list of nine universes; the *tool* had been naming nine because an
+index reported the filter it was constructed with rather than the loci it held,
+and the corpus behind that run was a single sequence. Both documents agreed, and
+both were wrong, which is the failure mode a cross-check between two documents
+cannot catch.
+
+That last one is why this is a script rather than a lint rule about digits. A
+published claim about what a tool says is checkable by running the tool, and
+until something ran it, the page and the package had disagreed since the day it
+was written. It also re-derives the page's worked example from the sequences the
+page itself prints — the spacer against its site, the hand-drawn duplex against
+both, and the GC against the spacer.
+
+The count it pins is *collected*, not passing: three tests need a miRBase
+`mature.fa` and skip without it, so the passing count moves with an environment
+variable and is not a number a reader could reproduce from this page.
+
+**The suite is mutation-checked.** `verify_mutation_coverage.py` copies the tree
+to a temporary directory, applies one small *semantic* change at a time — code
+that still runs and still looks plausible — and reports any the suite fails to
+notice. Two things keep that honest rather than flattering. The mutations are
+subtle: disabling a whole check is caught by any competent suite and proves
+nothing, so half of these instead move a boundary one step, swap a bound for its
+opposite, drop the finite-sample `(n+1)` correction from the conformal quantile,
+or take the right operation on the wrong variable. And a survivor is confirmed
+against the **whole** suite before being called a hole. None of the 153 are
+caught only by the full run today, because each hint names the module *measured*
+to catch it rather than the one a reader would guess — which is not always the
+same module, and where they differ the difference is worth seeing. That also
+took the sweep from about thirty minutes to five, and an instrument nobody runs
+documents drift instead of preventing it. The second stage stays: it is what
+makes "hole" a claim about the whole suite rather than about which modules
+somebody chose.
+
+It mutates the LCB/UCB asymmetry, the six named metrics, every FAIL branch in
+the gate, the QC checks, the panel constraints, the candidate budget, the
+out-of-domain substitution, the conformal quantile, the search-bound algebra,
+the FR6.3 posterior and its Fréchet floor, the kinetics stability guard, the
+wobble rule, the expression bound, the PFS exemption for an unread base, the
+spacer:DR pairing rule with its threshold, the shared binding-site rule, the
+world digest, the exit codes, the off-target table's ordering, a Jeffreys prior
+and a reported precision.
+
+### It could not report a hole, and twenty were hiding
+
+This is the part worth reading before believing the paragraph above, because
+for most of this repository's life the sweep was **structurally incapable of
+finding anything**.
+
+It mutates a *copy* of the tree, and the copy held `src`, `tests` and
+`pyproject.toml` — while eight tests read `README.md` or `examples/`. So the
+copied tree failed six tests with two collection errors before a single mutation
+was applied. Its logic is: screen a mutation, and if it survives, confirm
+against the whole suite — green means hole, red means caught. With the baseline
+permanently red the whole-suite run was never green, so `holes` could never be
+non-empty. **"0 holes" was true by construction rather than by measurement.**
+
+Eleven distinct ways it could answer without measuring have turned up: ten
+that report a verdict nothing established, and one that reports nothing at
+all. Eight came from the audit that followed the first. The last three were
+caught in the act, two of them hiding real holes:
+
+| The mechanism | What it did |
+|---|---|
+| A red baseline | Every mutation "caught", because the suite was already failing |
+| A missing anchor | `distinct-sites-best-becomes-worst` stopped running when its code moved, and the sweep still printed success |
+| An ambiguous anchor | `wobble-rule-dropped` renamed a constant appearing twice — a *consistent* rename, so a no-op — and passed only because two other modules import that name and the suite died of an `ImportError` |
+| A missing screening module | `pytest tests/nope.py` exits 4, which reads as "the suite went red", so a stale hint is a permanent silent false pass |
+| A subprocess importing unmutated code | An editable install points at the real `src/`, so every test that shells out was passing under mutations it never ran |
+| A no-op mutation | Identical to the code it replaces, so a guaranteed false *hole* |
+| Stale bytecode | `__pycache__` carried into a tree whose whole purpose is to have its source edited |
+| An unhandled hang | `TimeoutExpired` ended the sweep and lost every verdict after it |
+| A red suite nobody attributed | The full-suite stage read *any* failure as proof the mutation caused it, so one unrelated flake turned a hole into a “caught” |
+| Bytecode outliving its source | A same-length mutation restored inside one second left a `.pyc` Python still considered valid, so the mutation stayed live in every later run |
+| A timeout that could not fire | The hang handler captured the suite through a pipe, and waited on it after killing the child — so a stalled grandchild holding that pipe was exactly what stopped the handler for stalls |
+
+All eleven now fail loudly, or in the last case fail at all. Two of the first
+eight were found only because fixing an earlier one exposed the next, which is
+the argument for treating an instrument's own failure modes as the first thing
+to audit.
+
+The ninth is worth the detail, because it is the only one that was observed
+hiding something rather than reasoned about. Two mutations — a blank paste
+accepted as a sequence, and a blank `--variants` box parsed as variants — were
+reported **caught by the full suite** in one run and **holes** in the next,
+from the same source. A worktree at the earlier commit settles which was right:
+the suite is green under both mutations there, so both were holes all along.
+
+What differed was the bytecode. Python validates a timestamp-based `.pyc`
+against its source's mtime truncated to whole *seconds*, plus its size. Ten of
+the mutations preserve length — `max` for `min`, `0.05` for `0.10` — so when
+one is screened by a module that runs in under a second, the restore lands in
+the same second as the write it undoes and the two files are indistinguishable
+to that check. The mutated bytecode stays valid, the restored source is never
+recompiled, and the mutation is live in every later run in that tree.
+
+Measured directly, with no sleeps: write a same-length mutation, compile it,
+restore the file, import it again — **11 of 12 imports returned code that was
+not on disk**. That is the whole drift. A mutation that lost this race reddened
+the suite for whatever was tested next, and under the old rule a red suite
+*was* the catch, so the two input-door holes were reported caught for as long
+as some neighbour kept losing it. It is intermittent because it is a sub-second
+race, which is why six consecutive full-suite runs — three in the tree, three
+in a fresh copy — were identical and green while the sweep's own verdicts
+moved.
+
+The instrument had already called carried-in bytecode a hazard with no upside
+and stopped copying `__pycache__`. Generating it inside the copy is the same
+hazard, and that half was left open. Every source write now deletes the
+bytecode compiled from the file it replaces — one file's cache, not the whole
+run's. The blunt version, `PYTHONDONTWRITEBYTECODE` for every subprocess, was
+tried first and left a three-minute suite still running after an hour, which is
+its own lesson: an instrument nobody can afford to run documents drift instead
+of preventing it.
+
+The attribution guard stays, because it is what turned an invisible fault into
+a visible one. It is also the general case: this particular cause is fixed, and
+the next reason a suite goes red for something other than the mutation will not
+be.
+
+So the failure is now attributed. When the full suite goes red the sweep
+restores the file and runs the suite again. Green means the red was the
+mutation's doing and the mutation is caught; red means it was not, and neither
+verdict is available — the run prints `[UNATTRIBUTED]`, names what failed, and
+exits non-zero rather than printing that every mutation was caught.
+
+The control has to be the *same* command, and getting that wrong is the
+instructive part. The first version re-ran only the tests that had failed,
+which is cheaper and looks equivalent. It is not: a subset of a suite is a
+different experiment. Tests share module-level state and fixture ordering, so
+the subset re-run produced failures that neither the whole suite nor the test
+alone produces — it named a different innocent test on each run
+(`test_acceptance`, then `test_gate`, then `test_metrics`, each of which passes
+on its own) and would have called every full-suite catch unattributable. A
+control that differs from the experiment in any way but the one under test is
+not a control.
+
+The guard is verified the way everything else here is: by making it fire. One
+existing test was rewritten to pass on its first invocation and fail afterwards
+— a flake, as the sweep sees one — and the run reported `[UNATTRIBUTED]`, named
+the test, and exited non-zero. It printed "every mutation was caught" on the
+first attempt, which is how an unattributed verdict came to count against the
+run rather than past it.
+
+### What was behind them
+
+Twenty behaviours that could each be reverted without a single test noticing.
+Grouped by what went wrong rather than by the order they turned up, because the
+kinds repeat and the order does not mean anything.
+
+**A fixture too small to see the difference.** The discrimination margin's `max`
+over forbidden hits could become a `min` — the fixtures carry one forbidden
+target, and over one element they are the same function. Desired-target
+weighting could be dropped entirely, because every fixture used weight 1.0. The
+panel's coverage could read the upper bound instead of the lower, which needs
+two hits on one target to be visible at all: with one, the comparison is against
+0.0 and both bounds clear it.
+
+**A boundary tested away from the boundary.** The gate's coverage floor could
+move by 0.05, because every gate test sat clear of it. The conformal
+group-adequacy minimum could go off by one, so "one fewer than too few" would
+certify. The coverage slack could double. The candidate budget's remainder could
+go unspent, turning ten slots over three targets into nine.
+
+**A claim about nothing, accepted as a claim.** `all([])` is `True`, so the
+acceptance gate's own guard against an empty report — the clause standing
+between "we checked six things and they passed" and "we checked nothing" — was
+unpinned. Asking where else that idiom ran over a possibly-empty collection
+found the same defect in the package rather than the tests:
+`BenchmarkReport.coverage_ok` had **no** guard, so a benchmark that evaluated no
+cases answered "yes, the bounds mean what they claim" — and two gates read it,
+including `cas13guide check`, whose entire job is conformal coverage.
+
+**An identity that was not one.** The Fréchet floor could become a mean,
+reporting a panel as weaker than a guide it contains — not a bound at all. The
+provenance ledger digest could depend on the order a caller wrote keyword
+arguments, so two runs recording the same facts disagreed.
+
+**A caveat that kept its words and lost its mark.** The synthetic-calibration
+CRITICAL could be demoted to a warning at the source, and — separately, one
+surface further out — the HTML report could stop marking CRITICAL notes at all.
+Same text, same position, no mark; every test looked for the words. Severity is
+not decoration here: it also sets the order, so a demotion moves that sentence
+below the notes a reader is meant to skim.
+
+**A page that is internally consistent and points the wrong way.** The
+off-target explorer keeps one row per locus carrying its worst hit, then sorts
+by hazard descending and truncates. Neither rule was pinned. Sorting ascending
+puts the mildest first and the truncation keeps the safest, discarding exactly
+the rows the table exists to show — while every individual hazard on the page
+stays correct. The README tells a reader to "sequence the top off-target loci
+from the explorer table".
+
+**A status nothing asserted.** Both CLI exit codes could lie: `train` reporting
+success while the gate rejected the dataset, `design` while nothing ranked. The
+tests asserted 0 for success and 2 for a usage error; nothing asserted **1**,
+the status meaning "completed, and the answer is no". Both were unreachable by
+the sweep until the subprocess blind spot was closed, which is the clearest
+argument that closing it was worth it.
+
+**The wrong world, and the wrong reading of an empty one.** With `--variants`, a
+variant context could be chosen as *the* reference — which decides the
+exon-junction map handed to tiling. And a whitespace-only paste could be treated
+as a supplied sequence, so a user pasting spaces got a parse failure about a
+sequence they did not knowingly give, instead of "No sequence supplied. Paste a
+sequence, upload a FASTA file, or pick a built-in target."
+
+All twenty are pinned in `tests/test_mutation_holes.py`, each verified to fail
+against the mutation it closes. Where the fix was mine, that verification caught
+me twice: a test asserting the wrong offset passed under the mutation it was
+written for, and a first attempt at the reference-context test asserted against
+evidence the choice does not actually affect.
+
+### Five things it found that were not holes
+
+A mutation the suite cannot catch is not always a gap. The FM index documents
+two independent defences against a match spanning two loci — the separator is
+excluded from the walk alphabet, and `_locate` rejects a window running off the
+end of its locus — and says the redundancy is deliberate. Neither is
+individually mutable while the other stands, which is what defence in depth
+means. The answer was to test `_locate` directly, at the offset that separates a
+correct guard from one loosened by an off-by-one, so the redundancy is verified
+rather than assumed. A probe into `features.py` was the same shape with no such
+payoff — its guard only matters at a spacer length of 1 and the contract admits
+22 to 30 — so it was removed and the reasoning left in its place.
+
+A later batch, aimed at the modules the sweep had never touched, produced four
+survivors and three of them were this same shape. Each is worth naming, because
+what defends them is not a test:
+
+*The GC fraction could count `S`* — the IUPAC code for "G or C", which is
+exactly what a reader would think belongs there. It survives because it can
+never fire: `normalize` transcribes to the AUGCN alphabet and `ingest` rejects
+anything outside it, so no `S` reaches the function. The mutation is a no-op on
+the reachable input, which the sweep counts as a defect in the mutation rather
+than a hole in the suite.
+
+*A PASS could be graded as severe as a borderline REVIEW.* `SEVERITY` maps five
+verdict strings to ranks, and the one place that reads it takes a `max` over
+review tiers alone. The PASS and FAIL entries are never looked up. They
+document an ordering rather than drive one.
+
+*An evidence gap could outrank an out-of-domain finding* — R2 raised to R3's
+rank, collapsing two tiers into one. `max` returns the first maximal element,
+and `f_decide` appends every R3 before every R2, so the tie resolves to R3
+either way. The ordering is real but the append order already decides it;
+enumerating all three tiers in every permutation confirms no reachable case
+differs.
+
+The fourth was a hole. `SCAN_SECONDS_PER_MB_PER_QUERY` is a measurement, and
+doubling it — which reads like an ordinary re-measurement on another machine
+— moved the point where the FM index starts winning from 100.7 Mb to 46.8 Mb
+with the whole suite green. Every corpus in between changed which index it
+builds and which one it records having built. The module had a test for the
+crossover, and that test says in its own docstring that `CROSSOVER_BASES` is
+derived from the constants rather than independent — so it holds whatever they
+become. The boundary is now bracketed in bases, which pins all three constants
+at once, and a genuine re-measurement is meant to fail it: that is when
+somebody checks the table in the module docstring still describes the machine.
+
+### A second batch, aimed at the constants
+
+Constants are where the first batch's one real hole was, so the second went
+looking for more of them. Thirty-six module-level numbers decide something in
+this package. Twenty-nine of them had never been mutated when this batch was
+written, and twenty-two still have not. Six were picked for
+deciding something a user sees, and each was moved by a plausible amount rather
+than a wild one — the question is whether the suite notices a threshold
+shifting, not whether it notices the code breaking. **All six survived a green
+baseline.**
+
+Four were holes of one kind, and are pinned now. `TERMINAL_WEIGHT` sets how much less a
+terminal mismatch counts than a central one, and raising it 0.25 → 0.30 moves
+every position-weighted penalty, which moves the discrimination margin and the
+ranking. `SATURATION_K` is the half-saturation point for abundance, and 50 → 60
+reweights every expression-based hazard. `MAX_HOMOPOLYMER` is 4, and the test
+for it used a run of six — flagged whether the limit is 4 or 5, so relaxing it
+by one let a five-base run through to an ordered oligo.
+`DISFAVOURED_PFS_FACTOR` is the size of the PFS bias, and softening it 0.55 →
+0.60 moves one of the six named metrics.
+
+Each of those is now tested with a literal rather than against the constant it
+pins, because an assertion written in terms of the constant holds whatever the
+constant becomes. That is the `CROSSOVER_BASES` trap, and it is easy to walk
+back into while writing the fix for it.
+
+The fifth was not a hole and not a no-op: **the code it guards is not
+reachable.** `STRUCTURED_SITE_THRESHOLD` feeds
+`ViennaRNAAccessibilityModel.is_structured`, and nothing calls that method —
+FR3.4 is implemented a second time in the gate, against the spec's
+`min_accessibility`, which is the path that runs. The constant's own comment
+says it is advisory. So the requirement, the constant and the method are all
+real and the path between them is not, and no test could have caught the
+mutation because there is nothing downstream to catch it in.
+
+That one is the more useful finding, because it names a blind spot rather than
+a gap. `verify_nothing_is_computed_for_nobody.py` exists precisely to find
+values computed for nobody, and it walks dataclass fields and properties — not
+methods. A method is a value computed for somebody just as a field is, and
+nothing about being callable makes it called. Walking methods too turned up
+`is_structured` and `Transcriptome.covered_universes`, which had no caller
+anywhere, not even a test; the second was deleted and the first is recorded
+with the reason it has none.
+
+The sixth, `ZERO_HIT_SUSPICION`, took a fixture rather than an assertion.
+Raising it 0.5 → 0.6 changes whether a run widens its search envelope, and the
+existing test escalates all the way to the budget — a zero-hit fraction of 1.0,
+which escalates whatever the threshold is. The dial turned out to be the world:
+give the search a locus holding only the first *k* bases of the target and each
+extra base converts exactly one zero-hit candidate into a hit. 38 bases put 25
+of 42 candidates at zero hits — 0.5952, above 0.5 and below 0.6 — and 42 bases
+give exactly 21 of 42, which does not escalate because the comparison is `>`.
+Both are pinned, and the pair catches the value moving and the operator
+loosening to `>=`.
+
+A third batch, six more constants, found four caught and two of a kind not seen
+before: **a constant with tests around it whose default nothing checks.**
+`MIN_STRATUM_N` says how few observations a calibration stratum may hold and
+still certify a bound; `MIN_WINDOW_N` says how few calibration rows a
+prediction window may hold before FR6.3 stops conditioning on the prediction
+level and falls back to the whole stratum. Both are 20. Both could be 15 with
+the whole suite green.
+
+Neither is untested in the ordinary sense. Two tests build a
+`CalibrationService` with an explicit `min_stratum_n` — 10 in one, 20 in the
+other — so the *parameter* is exercised and the module constant behind it never
+is. Every production path builds `CalibrationService()` with no arguments, and
+nothing anywhere passes `min_window`, so the defaults are the only values a
+real run ever uses. Both are now stated in rows at the boundary: nineteen
+observations do not certify and twenty do; nineteen neighbours fall back to the
+whole stratum and twenty condition on the prediction level.
+
+A fourth batch found one hole in six. Two were caught, and the three survivors
+that were not holes are worth the space, because they mark the edge of what
+this method can say. **An unpinned constant is not always a claim.**
+`_PRUNE_EVERY` sets how often the scanner compacts its live set: cadences of 1,
+4 and 8 return identical hit sets, so it is a speed knob and a test of it would
+pin nothing. `STABILITY_TARGET` is the margin RK4 is held inside — instability
+begins near 2.78, and moving 2.0 to 2.5 stays inside it, shifting a converged
+answer by three parts per million and changing which constants are refused not
+at all. `MIN_PAIRABLE_LENGTH` guards a length at which nothing can pair;
+raising it by one changes a five-base profile below display precision, and no
+locus is five bases long.
+
+The one that was a claim is `REJECTION_EXAMPLES`, which decides how many worked
+examples the rejection table carries per reason group — three, against a
+`count` that reports the real total. Raising it to five changes what a reader
+sees. There was already a test called `test_the_examples_are_bounded`, and it
+could not fail: it imported `REJECTION_EXAMPLES` and asserted the group was no
+larger than it. That is the third assertion here found comparing a constant to
+itself, after `CROSSOVER_BASES` and the two sample-size minimums — enough
+repetitions to call it a habit rather than an accident. **When the value is the
+claim, the test has to say the number.**
+
+So the rest were looked for rather than waited for. Eighteen assertions across
+the suite name a numeric constant imported from the package, and every one is
+backed by something that is not circular — a mutation in the set above, or a
+boundary stated in units. The two that only a wider check reached are the index
+planner's: `BUILD_SECONDS_PER_MB` is pinned by the crossover bracket, which
+moves if any of the three cost constants moves, and `FM_FLAT_ABOVE_BASES` by
+the rationale string the landing page quotes. The habit is real and currently
+has no live instances.
+
+**Then the comments, which say what the code must not do.** Constants needed
+guessing about which knob was a claim. This codebase states its reasoning in
+place, and a comment of the form “X, not Y” is a claim with its own
+counterexample attached: make the code Y and see whether anything objects. Five
+batches, twelve mutations, aimed at comments in the modules the sweep had
+barely touched.
+
+Four were holes. A computed fold could vouch for the activity model that
+computed it, changing every score under `--structure` and reordering the
+ranking. A DESIRED target could lose its accessibility entirely. An
+unmeasurable cross-validation could print `spearman 0.000` where it now says
+NOT MEASURED — “no skill” and “not measured” being opposite conclusions about a
+model. And `SOFT_QC_FLAGS`, a set naming which QC findings only warn, was
+consulted by nothing at all.
+
+The yield is about the same as the constants gave — nine holes from twenty-two
+there, four from twelve here — so the method is not better, it is *different*:
+it reaches invariants that are not numbers, which no amount of moving
+thresholds would have found. Two batches in a row have now come back empty,
+which is the signal that this seam is worked out rather than that the code is
+finished.
+
+It also rejects candidates honestly. Three comments describe defences that are
+deliberately unreachable — `c_search`'s weakest-bound rule, written for an
+index that degrades and admitting “today every iteration writes an equivalent
+value”; the hazard prior's fallback, labelled defence in depth behind a key
+that is guaranteed to exist; and `MIN_PAIRABLE_LENGTH`, which guards a length
+no locus has. Mutating those would produce survivors that are not holes, and a
+sweep that collects those stops meaning anything.
+
+**Everything the tool can say to a user is said by a test.**
+This package has four vocabularies for talking to a user: `ReasonCode`, what the
+gate says and what a caller switches on; `Limitation`, what the run admits it
+could not establish; `QCFlag`, what is wrong with a spacer; and `ReviewTier`,
+how much of a human a REVIEW needs. `verify_vocabulary_coverage.py` records
+which values of each the suite actually produces — at the gate, in the
+orchestrator's budget shortfalls, in `limitations_for_run` and in
+`qc_candidate` — and reports any that never come out. A value nothing produces
+is a sentence a user can receive that nobody has watched it say: either dead
+code, or a live path with no coverage.
+
+It found five of the second kind. Three were verdicts: two reachable only once
+the spec sets a floor or a window — and `--min-accessibility` is a shipped flag,
+so turning it on ran code no test had executed — and one needing no flag at all,
+sitting in the narrow band just under the hazard budget. Two were limitations.
+The FR6.3 thin-calibration warning, which tells a reader an interval is wide
+from missing data rather than from a doubtful guide, needed a confidence model
+no fixture supplied; the unverified-preset warning cannot fire at all while
+`PRESETS_VERIFIED` is `True`, and is exactly what a contributor meets the moment
+they add a preset they have not checked. All five were correct — which is the
+usual outcome, and not a reason to skip the check, because nobody knew. The QC
+flags and the review tiers came back clean, all thirteen, which is a result
+worth having rather than a wasted question.
+
+It measures whether a value is *produced*, not whether anything asserts it: a
+floor, in the way line coverage is a floor. The mutation check above is what
+asks whether behaviour is pinned.
+
+**The arithmetic is right too, against something that is not this package.**
+Round eleven's critic pointed out that eleven rounds of *consistency* work
+cannot find a formula that is internally coherent, documented as exactly what it
+does, tested against its own output, and wrong. Part of that gap needs a wet-lab
+screen and no file here can stand in for one. But the mathematics is not in that
+category: a regularized incomplete beta has a definition independent of any
+implementation, split conformal has a finite-sample coverage *theorem*, and
+Fréchet bounds are checkable by brute force.
+
+`verify_the_maths_against_a_referent.py` re-derives all four by a different
+method — 77 exact cases for the incomplete beta (closed forms plus the
+binomial-tail identity `I_x(k, n-k+1) = P(Bin(n,x) ≥ k)`), the symmetry relation
+over 35 more, 64 closed-form inverse quantiles, the conformal coverage
+guarantee by simulation at three `(alpha, n)` settings, and the Fréchet bounds
+against enumeration of the joint. Everything agrees to ~1e-15.
+
+Writing it was instructive in a way worth recording. The referent was wrong
+twice before the package was wrong once. A first draft integrated the Beta
+density directly and reported the package off by 0.148 at `Beta(0.5, 0.5, 0.9)`
+— Simpson's rule mishandling the integrable singularity at `t → 0`. A second
+substituted the singularity away and then failed for large `a` instead. What
+settled it needed no integrator at all: `Beta(0.5, 0.5)` is the arcsine
+distribution with closed form `(2/π)·arcsin(√x)`, and the package matched it to
+1e-16 both times. The file is now built only on identities that are exact, and
+says so. Verified to detect a wrong number by scaling the beta by 0.1% and by
+stubbing the quantile; a third injection, moving the continued fraction's
+branch point, turned out to change no value at all — a convergence choice, not
+a correctness one — and it was right not to be flagged.
+
+**The guides that come out are right.** Every other instrument here checks the
+*process* — are the invariants pinned, is every verdict reached, is anything
+computed for nobody, what fraction of lines ran. None asks the question a user
+actually has. `verify_output_against_input.py` runs a design and then
+recomputes each claim from the input in plain Python, without asking the
+package how it got there: `revcomp` is written out again in that file, because
+a check that calls `util.seq.revcomp` proves the exporter and the sequence
+layer agree, not that either is correct.
+
+The load-bearing check is the first. A designed guide is a claim — *this 22-mer
+binds that transcript at position 154* — and the claim is checkable by slicing
+the input at the stated position and reverse-complementing it. Everything else
+is downstream of that. The rest close the same loop: GC and the homopolymer run
+must describe the spacer printed beside them, every survivor must satisfy the
+gate rules that let it through, the CSV and the FASTA must agree guide for
+guide, an off-target planted in the background must be found, and every
+off-target reported must really occur in the background supplied. Currently 237
+guides, every claim reproduced. Verified to detect a wrong answer by shifting
+the reported position by one, by exporting a constant GC, and by skipping the
+reverse-complement — all three caught.
+
+**Nothing is computed for nobody.** `verify_nothing_is_computed_for_nobody.py`
+sweeps every dataclass field and reports any the package constructs and then
+reads nowhere. `GateResult.detail` was the first: eight places in the gate
+compose a numeric explanation for every verdict and nothing read one. Five more
+came out of the sweep, including the three things QC measures about every
+spacer, the limitations that never reached the machine-readable report, and the
+absolute signal figure `--kinetics-constants` was advertised as unlocking.
+
+The rule is stricter than it first looks. An earlier cut excluded each field's
+home module and returned 138 candidates, nearly all read a few lines below
+their own declaration; the rule that describes the defect is that the value is
+read by *nothing, anywhere*. It errs in both directions and the file says how —
+a field consumed through `asdict` reads as unused, and a field exported under
+its own name keeps a matching string constant after its last reader goes. It is
+worth running because five real defects came out of it, not because a clean run
+proves anything.
+
+**`py.typed` means what it says.** The marker has shipped in the wheel since the
+first commit, telling every consumer's type checker to trust these annotations,
+and no checker had ever been run: 21 errors in ten files. Most were imprecision
+— but imprecision is what the marker promises there is none of, and one was a
+real inconsistency in the CIGAR builder that worked only because a `str` Enum
+formats as its value.
+
+**The suite itself can fail.** Nine tests that could not have failed turned up
+across the nine passes — and two of the nine were written *by* the pass hunting
+them. They recur because a green test is indistinguishable from a green test
+until you break the thing it names. `tests/test_the_suite_can_fail.py` now
+checks the three shapes that have actually occurred here: a `__main__` guard
+above a class, so `python tests/x.py` silently runs a subset (`test_blast.py`
+ran 21 of 27 that way); a test with no assertion at all; and `assertTrue` on a
+class attribute, which for a `slots` dataclass is a `member_descriptor` that is
+unconditionally truthy. Nothing static catches every vacuous test — this catches
+the ones that have happened, which is the difference between a lesson and a
+guard.
+
+**The measured figures are recomputed.** Nine stale numbers have been corrected
+across the passes — a value measured once, quoted in a comment, and never
+checked again while the code moved. `tests/test_measured_claims.py` recomputes
+the load-bearing one: the self-folding proxy's recall, which justifies a hard
+FAIL that cannot be bought back and is quoted in four places including a
+limitation a user reads. Recomputing it found the quoted figures rested on a
+sample too small to support them — at 6,000 random 22-mers only ~53 sequences
+genuinely fold, so 28.9% was really 34.9% ± 3.7% at ten times the sample, and
+"roughly half its flags" was 21%. Asserted as intervals, because a test
+demanding three decimals of a Monte Carlo quantity is a flaky test dressed as a
+precise one. Two further figures recomputed clean and are now pinned rather
+than merely believed: the signal-degeneracy ratio that justifies reporting
+`predicted_signal` without ranking on it (0.161% against a stated 0.159%), and
+the DR-interaction verdicts the superseded RfxCas13d direct repeat flipped —
+recovered from the first commit and re-measured at 4.64% against a stated 4.9%,
+well inside sampling noise at that sample size. (That pair later moved together
+to 2.8% when the spacer:DR scan learned G-U wobbles and its threshold was
+re-derived with it. The repeat did not change; the ruler did, and the pinned
+figure moving with it is the guard working rather than failing.)
+
+**The invariants hold on generated input.** `tests/test_properties.py` states 40
+of them for `hypothesis`, which was a declared dev dependency that nothing
+imported and that was not even installed. `revcomp` is its own inverse, a spacer
+against its own target is a perfect duplex, hazard is monotone in every factor,
+a smaller alpha never buys a narrower interval, the FR6.3 point estimate never
+leaves the interval it is printed beside, the scanner and the FM index return
+the same hit set on any generated world, and — the rule seven passes kept
+finding new ways to break — an accepted sequence comes back unchanged.
+
+The last seven are the claims the decision layer rests on, which need a
+generator because each has to hold for *every* weighting a user might supply
+rather than for the handful somebody wrote down: no weighting resurrects a
+failed guide or changes a verdict, hazard is the worst context and never the
+mean, robustness is the lowest coverage and not the reference one, and
+evaluating one more context can only make a guide look worse. Each was checked
+by injecting its own defect into the source and watching the property go red —
+which found two of the properties wanting rather than any defect in the
+package, both since restated.
+
+**Coverage is 94%, and the instrument needs checking before the number does.**
+`measure_coverage.py` runs it, because the recipe is not the obvious one and
+each way of getting it wrong understates precisely the modules the tracing was
+turned on for. Several tests drive the CLI through `subprocess`, which
+`coverage` does not follow unless the child is told to trace itself, so a plain
+run reports `cli.py` at 6%; traced, it is 97%. In parallel mode each process
+writes its data file beside the *working directory*, and several of those tests
+run the CLI inside a temporary directory that is deleted straight after — their
+coverage goes with it, and the total reads 88%. And `source` must be a package
+name: as a relative path it means nothing in a child running elsewhere, and as
+an absolute one it matches no module and collects nothing at all.
+
+`_contrafold_kernel.py` reports 2% because it is `@njit` and numba-compiled
+code is not traced at all. That one is a real artefact, and acting on it would
+mean writing tests for code that is already tested. `demo.py` sat in the same
+list at 20% and was **not** an artefact: nothing ran the demo, only
+`demo --help`. It is 98% now, and the run is checked against the transcript
+this README quotes.
+
+### What nine review passes found
+
+A hundred and fifty-five of them are regression tests from nine review passes
+over the finished code, each written against a defect the original suite did not
+cover, and each failing against the code as it stood. A further sixty came from
+the instruments in the section above — properties, packaging, and the two
+subcommands nothing had run. **61 defects** were fixed, in batches of
+**23, 4, 2, 6, 9, 8, 3, 4, 2** — and the shape of that curve is the useful part.
+
+Passes one to three *read* the code, module by module and then diff by diff, and
+converged at 2. Passes four to six *ran* it — flag combinations rather than one
+flag at a time, input fuzzing, determinism across process boundaries, the three
+output surfaces compared field by field, real HTTP POSTs, the `train` and `demo`
+subcommands nobody had exercised, the `--out`/`--stem` paths — and the count went
+straight back up. Reading a module tells you whether it is self-consistent; only
+running the thing tells you whether two modules agree, and nearly everything left
+was two modules disagreeing. Passes seven to nine turned the instruments on the
+project's own machinery: the docstrings audited claim by claim, a sweep for tests
+that cannot fail, and the biological constants checked against each other.
+
+Each pass re-read the previous pass's diff, and **three caught a regression the
+previous pass had introduced** — which is the argument for doing that, and also
+its limit.
+
+Two later instruments found one more defect each, outside the passes: installing
+the wheel into a clean interpreter (`cas13guide demo` had never worked for anyone
+who did not clone the repo), and the type check above.
+
+**Six instruments found nothing that survived verification**, which is worth as
+much as a finding: differential testing across all four `SearchIndex`
+implementations, property testing of the gate → Pareto → preference order, the
+threaded server under genuine concurrent load, mutation testing, an audit of the
+units and directions every quantity travels in — the error class that produces
+confident, in-range, wrong numbers — and a review of the packaging change itself.
+
+The defects worth naming, because they were live rather than hypothetical:
 
 | What was wrong | Why it mattered | Pinned by |
 |---|---|---|
 | The FM walk branched over a hard-coded `ACGU` | `N` is a legal base, so any window overlapping an assembly gap was unreachable — the index returned a **smaller hit set than the scanner while still reporting `exhaustive=True`**, and a 1-mismatch paralog off-target simply vanished | `test_search.py` |
 | Universe adequacy compared the *declaration* against the assay, never the search | An index built over fewer universes than the spec declares produced a clean off-target report: same spec, same transcriptome, 42 FAIL → 42 PASS with zero off-target rows, purely by narrowing the index | `test_gate.py` |
+| …and then the search reported its *filter* as what it had searched | The fix keyed the gate on "what the index proved", and `ExhaustiveScanIndex` proved it by restating the constructor argument. Every CLI run declared all nine universes and searched the loci it was given, so `(required | declared) - searched` was `ALL - ALL`: on the documented command the report told the user off-targets had been searched over **rrna and mito** — the two highest hazard weights in the package — against a corpus of one sequence, and 223 guides were certified PASS on an off-target table that could not have held a row. `Transcriptome.covered_universes` would have answered it and had been deleted as dead code, correctly: nothing called it | `test_gate.py`, `test_orchestrator.py` |
+| A test that reads the source tree ran **inside the sweep's mutated copy of it** | The anchor-integrity check asserts every mutation's anchor is present; the sweep applies one to a copy and runs the whole suite there, where that anchor is gone by definition. So it failed for every mutation and every one reported *caught* on no behavioural evidence — a full sweep printed **105 of 105, 0 holes** and proved nothing. The same defect this module's docstring opens by describing, reintroduced in the file that describes it. The tell was in the output: "caught by the full suite, not the screening modules" | `test_mutation_holes.py` |
+| The predicted signal could come from the guide's strongest **off-target** | `_intended_prediction` filters evidence to the target's own sites and nothing exercised the filter: every fixture reaching it held only intended evidence, so the `continue` never ran once in 1341 tests and removing it changed no test. With it gone a guide reports the collateral signal of its worst off-target as its own predicted fluorescence — **0.00963 against 0.00203, 4.7×**, about the wrong molecule. Found by branch coverage, discounted when the sweep appeared to refute it, and true: the refutation was the bug above | `test_structure_and_signal.py` |
+| FR7.2's robustness metric was a number and nothing else | `robustness` is the minimum required coverage across every evaluated context, and no gate condition read it. A guide reaching **no site at all** in a variant supplied with `--variants` was certified PASS with "all constraints satisfied with adequate evidence", sat on the Pareto frontier and was selected into the panel. 21 of 279 guides moved PASS → REVIEW, worst robustness 0.481 | `test_gate.py` |
+| The panel was drawn from the Pareto frontier | Non-domination is computed over `metrics.objectives()`, which has no positional axis; the panel's binding constraint is `min_spacing = spacer_length`, which is nothing else. Over 72 designs run twice with only the pool changed, 27 differed — **27 better, 0 worse**. On a 240 nt target the frontier collapsed to one guide and the panel to one member at coverage 0.7647 against 0.9870: a miss probability of 0.2353 against 0.0130, **18.1×** | `test_orchestrator.py` |
+| `--blast-db` scored the guide's own target as a perfect off-target | BLAST subject ids are accessions; `locus_to_target` is keyed on the records the user supplied. A transcript database contains the target's own transcript, so the intended site came back unannotated with zero mismatches. Against a control database without the target: `worst_off_target` median 0.000 → 0.600 for every guide, `cumulative_burden` 0.26 → 0.86, and all fifty explorer rows became the guide's own target — the exact row the validation plan says to sequence | `test_blast.py` |
+| The off-target table said "the 50 … loci found" whether it held 50 of 50 or 50 of 273 | The cap is on what a page can show and every surface reported it as the total. The validation plan printed directly beneath says "Sequence the top off-target loci from the explorer table" | `test_report_html.py` |
+| …and pointed at that table on pages that had none | The explorer renders only when there are rows. With none the plan still said to sequence from it — the same "instructs a reader to consult a table it does not contain" the table was *added* to fix, in the other direction | `test_report_html.py` |
+| A fix that made one path honest desynchronised another | Once the reference world stopped filing every target under `NCRNA`, `variant_contexts` was still passed it outright, so the same molecule had two universes and no variant world held a coding locus. Adding `--variants` to an identical run took 223 PASS to 223 REVIEW, naming `coding` as unsearched. Found by asking what else read the value the previous commit had changed | `test_subcommands_end_to_end.py` |
 | `discrimination_margin` took its `min` over targets that *had* evidence | A required allele missing from a context **raised** the margin (6.00 vs 5.67) instead of zeroing it, and the cross-context `min` then hid the gap | `test_metrics.py` |
 | `validate_coverage` scored the `[0,1]` fallback as coverage | A stratum with no calibration data at all reported **1.000 coverage and passed** — losing calibration made the CI gate greener | `test_calibration.py` |
+| `cas13guide demo` **tracebacked for every installed user** | `_demo` put `<cli.py>/../../examples` on `sys.path` and imported `demo_knockdown`; from site-packages that resolves to `Lib/examples`, which does not exist, because `examples/` is not in the wheel. A subcommand named in `--help` died with `ModuleNotFoundError` and exit 1 for anyone who did not clone the repo | `test_installed_package.py` |
+| The acceptance gate printed `PASS` beside a value below the threshold on the same line | The verdict applied `empirical >= nominal - 0.05` and the line printed `nominal`, so `[PASS] conformal coverage 0.889 (need 0.9)` accepted a dataset — in the one criterion annotated "bounds mean what they claim" | `test_bugfix_regressions_round8.py` |
+| `BenchmarkReport.summary()` printed `1.000` for strata with **no calibration data** | The `[0,1]` fallback covers by construction, so that figure is vacuous rather than perfect. `acceptance.py` already refused to print it and said why — and the summary it *embeds* printed it two lines away | `test_bugfix_regressions_round8.py` |
+| `-` and `*` were stripped from input sequences as if they were whitespace | Deleting a gap **splices**: the base before the run joins the base after it, and the tiler walks a window across a junction in no molecule. On a 400 nt target with a 30-base gap, 21 of 297 exported guides had a site occurring nowhere in the real sequence — while the same alignment's ruler *digits* were refused with a located message | `test_bugfix_regressions_round7.py` |
+| The web upload decoded with `errors="replace"` | So a cp1252 FASTA the CLI refuses as unreadable ran to completion in the browser with its record name silently swapped to U+FFFD — on the one door whose users cannot read a traceback | `test_bugfix_regressions_round7.py` |
+| A target shorter than the spacer vanished without a word | The run said only "no feasible panel covers t1", which reads as "t1 has no usable guides" rather than "nobody looked" — and on a multi-record FASTA shipped 271 scored candidates from the *other* record while saying it | `test_bugfix_regressions_round7.py` |
+| `reference` is a reserved context key **and** a name a user may give a record | A variant record called `reference` shared a key with the reference context, so the variant's evidence overwrote the target's and every number for the REQUIRED target was computed against the variant: renaming one record took a run from PASS=96 to PASS=0 with a shortfall about a target that was never evaluated | `test_bugfix_regressions_round6.py` |
+| The web form folded an upload into the paste field | So the one-source guard could not see it, and a filled textarea silently discarded an uploaded FASTA — the exact behaviour the guard was added to stop, on the door it was added for | `test_bugfix_regressions_round6.py` |
+| Measured kinetic constants killed the run | `StiffKineticsError` is raised from inside stage E, past every input check, so the flag advertised as the way to unlock absolute signal answered real constants with a traceback | `test_bugfix_regressions_round6.py` |
+| `--stem ../escaped` wrote outside `--out` | A stem names a file, not a path; and every other filesystem failure arrived as a pathlib traceback and exit 1 — the same code `design` returns for "no guide cleared the gate" | `test_bugfix_regressions_round6.py` |
+| An `N` in the target attracted the ranking | `classify_pair` calls `N:N` a Watson-Crick pair and RNAplfold reports unpaired probability exactly 1.0 there, so an assembly gap scored a **perfect duplex with inflated accessibility** — ranks 1, 2, 3, 4 and 6 of 101 were N-bearing spacers, exported as orderable oligos | `test_bugfix_regressions_round5.py` |
+| The paste door rejected FASTA the file door read | `parse_sequence_input` sniffed FASTA from the first non-blank line while `parse_fasta` skips `;` comments, so a comment-first file — including **this tool's own exported FASTA** — was refused at character one as a malformed raw sequence | `test_bugfix_regressions_round5.py` |
+| Calibration seed and noise were in no recorded field | They set every conformal interval and therefore every verdict, so two runs disagreeing on fifty verdicts carried byte-identical provenance — the one thing provenance exists to make impossible | `test_bugfix_regressions_round5.py` |
+| The 413 reply was destroyed by the reset it caused | Answering an oversized upload without reading the body closes the socket on a pending body, so the OS sends a TCP RST and the response dies before any browser reads it. The server logged 413; the user saw "Not found." | `test_bugfix_regressions_round5.py` |
+| The validation plan cited an off-target explorer no surface drew | The report told the reader to "sequence the top off-target loci from the explorer table" while rendering no such table, though the 50 hazard-sorted rows were in the report dict all along | `test_bugfix_regressions_round5.py` |
+| A `--background` record sharing a target's name **replaced** it | `Transcriptome.add` overwrites by id, so the run searched the target against a sequence that was not it — PASS 97 → 0, best coverage 0.7647 → 0.0, with nothing said. `variant_contexts` already guarded this, so the two paths disagreed | `test_bugfix_regressions_round4.py` |
+| `distinct_site_ids` grouped by the record a guide was *tiled from* | Not the same question as where it binds: with two target records, guides one nucleotide apart on the REQUIRED target were both marked distinct, under a line that says shifted copies are hidden | `test_bugfix_regressions_round4.py` |
+| The FR8.4 track marked guides from *other* FASTA records | `start` is an offset on the guide's own source target, and records 1+ are DESIRED targets that get tiled too — so marks were drawn at foreign coordinates on the primary's profile, or past its end and silently clipped out of the picture | `test_bugfix_regressions_round3.py` |
+| `--variants` dropped every target record after the first | Records 1+ stayed in the contract and existed in no context, so `desired_utility` — weight 1.0 in the ranking — read 0.0 for every guide, and those loci stopped being searched | `test_bugfix_regressions_round3.py` |
+| `--blast-db` replaced the search instead of adding to it | One index answers both "where does this bind off-target" and "does it bind its target at all", and a BLAST database can only answer the first — it never sees the run's own transcriptome. Every guide came back with no on-target evidence: **39/39 FAIL** against 28 REVIEW for the identical design without the flag | `test_bugfix_regressions_round2.py` |
+| The activity model's domain was a **union** across orthologs | Length and effector were tested as independent axes, so each ortholog's published lengths were admitted for the other. Four of the five miRNA presets returned a certified PASS at a geometry nobody validated, while the note above the table promised the opposite | `test_bugfix_regressions.py` |
+| `--variants` replaced the whole context list | `--background` was parsed and discarded and `--blast-db` was validated and never queried, so adding a variant to an otherwise identical request turned a report with off-target hits into a **clean** one | `test_bugfix_regressions.py` |
+| `fingerprint()` serialised a `frozenset` | Enum hashing is per-process randomised, so the digest that identifies a design — carried in the ledger, the report and every export header — **changed between runs of the same design** | `test_bugfix_regressions.py` |
+| The candidate budget was spent in contract order | The third of three ordinary 3 kb REQUIRED transcripts was never tiled at the shipped default, and the run reported "no feasible panel covers t3" — which reads as "no usable guides" rather than "nobody looked" | `test_bugfix_regressions.py` |
+| A fixed 400 RK4 steps, with clamps | Unstable for an ordinary measured `k_on`; the per-step clamps turned the divergence into a plausible **wrong number** (+19.5%) instead of a NaN, in the one path that unlocks when real constants are supplied | `test_bugfix_regressions.py` |
+| Two variants sharing a FASTA name | `Transcriptome.add` keys by name, so one silently replaced the other and conservation reported "reaches every variant" for a variant it never searched | `test_bugfix_regressions.py` |
+| `RNA.pfl_fold_up` at 3 and 4 nt | A native abort, not an exception: the interpreter died with no traceback, which under `serve` would take every in-flight design with it | `test_bugfix_regressions.py` |
+| `discrimination_margin` returned `inf` before reading the on-target term | The same defect the row above records fixing, surviving in the other branch: a context that had lost a required allele scored the best value the metric can take | `test_bugfix_regressions.py` |
 | `DEFAULT_WEIGHTS` omitted `discrimination_margin` | The one metric an allele task exists for had weight 0, so it could not affect the ranking — while the rationale line still printed it | `test_decision_order.py` |
 | `HazardWeights` replaced its default maps instead of merging | A partial `by_biotype` halved rRNA/mito hazard; a partial `by_class` raised `KeyError` mid-run | `test_context_evidence.py` |
 | Controls were checked against a hand-copied subset of QC | A "matched" control could ship carrying a GC or self-folding violation the gate would FAIL | `test_controls.py` |
@@ -630,6 +1603,150 @@ worth naming, because they were live defects rather than hypotheticals:
 | `record_wetlab_result` dropped the group label | Zero group labels switches the `MIN_STRATUM_GROUPS` check off, so wet-lab feedback from one transcript came back looking certified | `test_benchmark.py` |
 | `run_search` kept the *last* bound, not the weakest | A per-query heuristic bound would be overwritten by a later exhaustive one | `test_search.py` |
 | `profile_duplex("", "")` died in the CIGAR builder | An `IndexError` that named neither the caller nor the cause | `test_duplex.py` |
+
+### A twelfth, over the code eleven rounds barely touched
+
+Round eleven's critic named what its dimensions never reached: the learning half
+behind `train` and `check` — ingest, training, acceptance, benchmark,
+calibration, features, about 1,900 lines — and stages B and F. Eleven verified,
+**three confirmed**, all three high.
+
+Two of them are the class the critic said this method is *structurally unable*
+to find: a defect where every surface agrees and all of them are wrong.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| A duplicate CSV header silently inverted every training label | `csv.DictReader` keeps the **last** column of a repeated name, and the required-column check tested membership only. A screen with two `activity` columns — an ordinary artefact of a join or a merged replicate export — was read from whichever came second. Measured on a 672-row screen whose stray column held the negated value: **every fitted weight flipped sign** (`gc` +0.278 → −0.278) while **all six acceptance numbers stayed identical**, because rank normalisation is invariant under exact inversion. Both runs printed `dataset ACCEPTED`. This is the failure `ingest.py`'s own docstring calls fatal, and no printed surface distinguished the inverted run from the correct one. The same hole on the *grouping* column is worse than an inversion: grouping by a duplicate holding a plate id puts the same transcript on both sides of the split — the leak that column exists to prevent | `test_bugfix_hunt_round12.py` |
+| A stray double-quote crashed `train` with a traceback and exit 1 | `csv` consumes to EOF looking for the closing quote, so any file past the 128 KB field limit raises `_csv.Error` — converted nowhere, while `cli._train` catches `DatasetError` alone. Exit 1 is what `train` uses for "loaded, and rejected by the acceptance gate", so a malformed file and a rejected dataset were indistinguishable to anything reading the status | `test_bugfix_hunt_round12.py` |
+| A WARNING restated a measured fact as a different, false one | `b_qc`'s docstring is right — "only 21% of its flags really do fold, four in five are false", where *fold* means reaching −8 kcal/mol. The user-facing limitation paraphrased that as "four in five of the guides it does reject fold no more tightly than **average**". Not the same claim, and false: re-measured at the sample and seed `b_qc` itself cites, flagged spacers average **−5.564 kcal/mol against a population −1.861**, and only **9.7%** fold no more tightly than that mean. The proxy is over-strict, not arbitrary. This reaches stdout and the HTML report on every run without ViennaRNA, which is the default install | `test_bugfix_hunt_round12.py` |
+
+### An eleventh, aimed at the tenth's own diff
+
+Three of round ten's findings were regressions from round nine, so this round
+pointed a finder straight at round ten's changes and spent the rest on places no
+round had covered: BLAST coordinate handling, the preset tiling path, the
+browser door, the panel posterior, conservation. Fourteen candidates, ten
+refuted, **four confirmed**. The count is falling — 8, then 11 with the critic,
+now 4 — but one of the four is the worst single defect in the project's history,
+and it was in the feature this branch exists to add.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| **FR6.3's headline number was conditioned on the wrong point of the scale** | `for_panel` passed the conformal *lower bound* to `guide_success`, which selects calibration rows by `abs(predicted - x) <= bandwidth` — but `add_observation` stores the model's raw point prediction, so the window landed a full conformal quantile below the rows it was meant to sit among. The module docstring states both halves of why that is wrong in its first paragraph: the rows are the ones "whose prediction sits near this guide's", and "nothing here reads a conformal quantile". On a perfectly calibrated screen with q = 0.30, a guide predicted at 0.60 — a level where **every** calibration row cleared the threshold — came back with posterior mean **0.0012 instead of 0.9988**. The answer inverted, on the number the panel floor and every printed `success_mean` rest on | `test_bugfix_hunt_round11.py` |
+| A single IUPAC code in a BLAST subject aborted the run with a bare `ValueError` | Refusing is right — skipping the row would hide a real off-target behind an ambiguity code. The defect was the exception *type*: blastn exiting non-zero already raises `BlastUnavailable`, which becomes exit 2, while this escaped as a traceback with exit 1. RefSeq, nt and TSA routinely carry R/Y/M/K/S/W/B/D/H/V, and the user cannot edit a third-party database | `test_bugfix_hunt_round11.py` |
+| `serve --port 0` printed and opened an address that cannot work | The URL was built from the *requested* port. `--port 0` is the conventional "pick a free one"; the server bound an ephemeral port and announced `http://127.0.0.1:0/`, with the working address appearing nowhere. This is the door aimed at people who will not use a command line | `test_bugfix_hunt_round11.py` |
+| `--variants` rewrote the recorded genome build and annotation | Every variant world was built as `Transcriptome("variants", record.name)`, and that version is what the ledger files for each context — so a flag about isoforms discarded the user's `--genome-build` and `--annotation`, including for the context named `reference`, and filed a FASTA header in the annotation slot | `test_bugfix_hunt_round11.py` |
+
+Its critic then found a fifth, and said something about the method worth
+recording. Asked whether eleven rounds are converging, it answered yes — falling
+yield and falling severity, with confirmed findings clustering in code written
+in the previous two or three rounds — and then named the limit:
+
+> This is a **consistency** method, not a **ground-truth** method. It is
+> structurally unable to find a defect where every surface agrees and all of
+> them are wrong: a formula that is internally coherent, documented as exactly
+> what it does, tested against its own output, and scientifically incorrect.
+> Nothing in this repo compares a number to an external referent.
+
+That is accurate and worth stating plainly. `verify_output_against_input.py`
+closes part of it — it checks the guides against the input rather than against
+the package's own account of them — but nothing here validates the *science*
+against a measured screen or a published dataset, and mutation coverage
+measures whether the tests pin the code, not whether the code is right.
+
+The critic also named a blind spot the method *creates*: because the standard
+fix for two surfaces disagreeing is to add a caveat, a flag or a probe, the repo
+accumulates **guards that nothing reads**. Then it found one.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| A saturated assay switched the signal axis **on** | `SignalPrediction.saturated` was computed on every prediction and read by nothing in `src/` — while `PROVISIONAL_CONSTANTS`' own comment names it as the check that decides this. The gate that did run measures a ratio spread, which cannot tell an assay bending because its *activation* curve bends (informative) from one bending because the *reporter is exhausted* (no ordering at all). With measured constants that exhaust the reporter: all 323 guides at 499.9999 nM of a 500 nM reporter, a `relative_signal` spread of **2.5e-08** that `_normalize` stretches to fill [0, 1] — so an axis weighted 2.5 contributed up to **22% of an 11-point score out of float noise**, and **309 of 323 guides changed rank** | `test_round11_critic_findings.py` |
+
+The sweep that should have caught it could not: it walked dataclass *fields*,
+and `saturated` is a property — which is exactly the shape a computed-but-unread
+guard takes. It now walks properties too, and found one more the same hour
+(`SearchOutcome.universe_adequate`, a dead alias for a check the gate makes
+directly, now removed).
+
+### A tenth pass, run as eight parallel hunts
+
+Eight finders over eight dimensions, each finding put to two skeptics told to
+refute it by default. Twenty-three candidates, fifteen refuted, **eight
+confirmed** — and three of the eight were regressions introduced by the round
+immediately before it, which is both the argument for adversarial verification
+and its limit: a pass that only re-reads its own diff finds what it already
+expects.
+
+The eight share a shape. Every one is a **disagreement between two descriptions
+of the same run** — a note saying a record was ignored beside a metric computed
+from it, a table omitting the hazard the verdict rested on, a glossary denying a
+figure the CSV carries, a count that moves with a display flag. Not one is a
+wrong formula. The arithmetic here has been checked to death; what had not been
+checked was whether the package's own accounts of itself agree.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| A `--background` record the run said it ignored was searched anyway — but only with `--variants` | The collision guard filtered the reference world and the **unfiltered** list went to the variant contexts, where the name no longer collides. Adding `--variants` to an otherwise identical request took `worst_off_target` from 0.000 to **0.571** while the note kept saying the copy was ignored. A background corpus pulled from the same annotation routinely contains the target's own id | `test_bugfix_hunt_round10.py` |
+| A guide could FAIL for a hazard the report never displayed | `worst_off_target` is a max across contexts; the off-target explorer read the reference alone. A hit living only in a haplotype drove the metric and the verdict and appeared in no row — under a validation plan that says "sequence the top off-target loci from the explorer table". Measured: 18 guides judged on a hazard, **0 rows** | `test_bugfix_hunt_round10.py` |
+| A trained model was asked a question its domain had already refused | `evidence_for_hit` computed `in_domain`, called `predict()` anyway, and discarded the result three lines later. Harmless for the built-in heuristic; a trained model's FeatureSpec is fixed at the screen's spacer length, so fitting at 22 nt and designing at 23 nt — **both canonical for RfxCas13d** — crashed the run on a prediction nothing would read | `test_bugfix_hunt_round10.py` |
+| An unreadable input path escaped as a traceback and exit 1 | `read_fasta` caught only `UnicodeDecodeError`. A tab-completed `--fasta data/` gave a stack trace and the status `design --help` documents as "the run completed and nothing survived the gate" — so a wrapper read a typo as a legitimate empty result | `test_bugfix_hunt_round10.py` |
+| `cas13guide demo` dropped the CRITICAL that qualifies every number it prints | `limitations_for_run` reads `calibration.synthetic`; the design path sets it and the demo's own stand-in never did. The demo printed three of its four CRITICALs, omitting the one saying the calibration is synthetic and every PASS therefore exercisable rather than earned — from the terminal **and** from the `report.json` it writes. The commit that added that section had named this exact caveat as the thing that was missing | `test_bugfix_hunt_round10.py` |
+| `--top 0` reported a count from the display list | It said "N guide(s) ranked … the exports carry them all" while pointing at a CSV holding a different number, and N moved with `--all-sites` — a display flag deciding a stated fact about the run, days after a sibling fix stopped one deciding the exit status | `test_bugfix_hunt_round10.py` |
+| The HTML denied an absolute figure the same run's CSV carried | The Signal glossary was a module constant, so it told every reader "the constants shipped by default are placeholders, so no absolute figure is offered" — including on a run that supplied measured constants, whose CSV carries `predicted_signal_nm` and whose limitations correctly drop the placeholder warning | `test_bugfix_hunt_round10.py` |
+
+Then a ninth agent was asked a different question — not "is there a bug here"
+but "what did those eight dimensions *not* look at". It named six places, went
+and checked the most promising, and three of its leads were real. The first is
+the worst thing this round found.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| A gene name the FASTA reader is built to accept killed the CLI | `read_fasta` decodes `utf-8-sig`, so a UTF-8 header is supported input; the record name becomes a `target_id` the CLI prints to a stream left at the platform default. On Windows that is cp1252 and the print raises — on **NF-κB1, IFN-γ1, TGF-β1, HIF1-α**, which is how those genes are written. And it landed after the design succeeded and before the `--out` block, so a run with **159 PASS and a full panel wrote no files and returned 1**, the status documented as "nothing survived the gate". The browser door rendered the same bytes fine, so the two doors that "cannot drift" did | `test_round10_critic_findings.py` |
+| Non-targeting controls were QC'd by a proxy the run itself did not use | The run QCs real guides with the ViennaRNA fold and records `qc/vienna-mfe/v1` in the ledger; the control probe fell back to the stem-length proxy, which catches about a third as much. Measured over 4,000 shuffles: **226 (5.7%)** pass the control check and are FAILed by the QC that actually ran — the exact divergence the comment above that call says it removed | `test_round10_critic_findings.py` |
+| A duplex fold was run for every off-target hit and discarded | `duplex_dg_per_nt` has one reader and it skips non-intended pairs; the off-target explorer has no ΔG column. The identical waste was removed for `accessibility` in the field beside it and left here. The report is byte-identical without it, and the discarded share grows with the background corpus while the intended folds stay fixed | `test_round10_critic_findings.py` |
+
+### What came after the passes
+
+The nine passes read the code and ran it. A later round asked a different
+question — *what does this package compute, or promise, that nothing ever
+reads?* — and that turned up five more live defects. Each is the same shape:
+the work was done correctly and the result went nowhere.
+
+| What was wrong | Why it mattered | Pinned by |
+|---|---|---|
+| The gate composed a numeric explanation for every verdict and nothing read it | `GateResult.detail` is built in eight places — "forbidden hit UCB(activity) 0.412 > 0.200" — and a grep for a *read* of it across `src/` returned nothing at all. A run reported **`FAIL: 41` and offered no way to learn what was wrong with any of the 41**: `ranked` holds no FAIL rows by design, so that was the only place a reason could have surfaced | `test_rejection_reporting.py` |
+| A threshold the user set could not be applied, and the run did not say so | `--min-accessibility 0.9` without ViennaRNA asks for a gate that cannot fire — the metric is `None`, so the check is skipped, correctly. The run then emitted the **same generic warning it gives a user who never mentioned accessibility**, so the one reader who needed to know their floor went unused got the sentence written for the reader who did not | `test_inert_thresholds_are_reported.py` |
+| No export said where a guide binds | `source_target_id` was added to the report dict when the accessibility track was found drawing guides from one record at another's coordinates — and it reached the track and nothing else. On a multi-record design the CSV, the FASTA and the HTML table each named the guide, its score and its verdict, and **never which target it was for**; two guides at the same coordinate can be on different records | `test_exports_place_the_guide.py` |
+| A display flag decided the exit status | The status came from the list the terminal table prints, after the distinct-site filter and `--top`. So `--top 0` **exited 1 and printed "no guide cleared the gate" beside a CSV holding 322 of them** — and 1 is the code a wrapper script reads as "the run refused everything" | `test_exit_codes_are_a_contract.py` |
+| The advertised kinetics unlock reached no surface a user reads | `absolute_signal()` is a library method and **nothing in `src/` called it**: the pipeline asked `predict()` for a figure, kept the relative score and discarded the nM from the same object. So supplying measured constants — the work the README names as unlocking an absolute figure — changed a warning and produced no number anywhere | `test_kinetics_mass_balance.py` |
+| The caveats reached the reader and not the machine — and not the demo at all | Four CRITICAL limitations apply to an ordinary run, including that the calibration is synthetic so **every PASS is exercisable rather than earned**. `report.json` had no limitations key at all, so a pipeline saw PASS verdicts and calibrated-looking intervals with nothing to qualify either — the one surface where a caveat cannot be inferred from tone. And `cas13guide demo`, the first command anybody runs, printed none of them anywhere: a grep of its whole output for "critical", "warning" or "limitation" returned zero | `test_caveats_reach_every_surface.py` |
+| A multiplex panel could not be stated, and cross-reaction was rewarded | Every door filed record 0 as `REQUIRED` and records 1..n as `DESIRED`. `DESIRED` counts as `is_intended` and `off_target_hazards` filters on `not is_intended`, so **a guide cross-reacting with another panel member was credited to `desired_utility` — a maximised objective — and excluded from the hazard sum entirely**. Measured on a 2 nt-apart pair: utility 0.76 on the *other* biomarker, `worst_off_target` 0.000, burden 0. The machinery for the opposite reading already existed and was unreachable: FORBIDDEN carries hazard weight 5.0 and the gate raises `CREDIBLE_FORBIDDEN_HIT`. `biotype=` was already parsed from a record header for the same kind of reason, so `class=` is the same mechanism — absent it, nothing changes. Measured after: the near-identical member marked `class=forbidden` gives **6 FAIL on `credible_forbidden_hit`**, an unrelated one gives 6 REVIEW and no forbidden hits | `test_panel_members_can_be_forbidden.py` |
+| The browser door could not decline the model that is most of the run | Both doors are thin wrappers over one `run_request`, and the terminal has had `--no-signal` since the flag existed. The web form posted twelve inputs and it was not among them, so a browser user waited out the collateral-signal model — measured **20.4 s against 2.6 s** on a 1 kb target, ranking the identical 746 guides — for a column the same run reports and then says it does not rank on, under a page promising results “in a few seconds”. The capability was always there; only the affordance was missing. No default changed: an unchecked box posts nothing | `test_webapp.py` |
+| Every built-in preset was a dead end that named no way out | The `--preset` flag and the web form’s dropdown are the lowest-friction path in the product, and on the CLI default effector all five presets return **`{'PASS': 0, 'REVIEW': 0, 'FAIL': 1}`** and exit 1. The refusal is correct — a 22–24 nt mature miRNA cannot hold LwaCas13a’s 28 nt spacer, and a length no model was fit at must not be certified. But `RfxCas13d` is fit at 22 and 23 nt and returns **2 REVIEW guides on the same preset**, and nothing said so: the note computed which orthologs publish the *resolved* length, which for a 24 nt target is 24, and ended “No ortholog in this package publishes that length” — a true answer to the wrong question. Both branches now name the ortholog **and** the flag, and a test follows the advice to check it produces candidates | `test_presets.py` |
+| The instrument that catches documentation drift had drifted | `verify_mutation_coverage.py` stated, in the present tense about what the sweep does, that a survivor is re-run “against all 1241 tests”. The suite collected 1,473. `documented_test_counts()` pinned that figure in four places and this sentence was in none of them — which is why it was the one that rotted, exactly as its own docstring records happening before when a fourth statement said 930 while three said 1,247. The sentence **two lines below it** states the mutation count and *is* scraped: one sentence, two numbers, one checked. It is the fifth scraped statement now | `test_documents_agree.py` |
+| The absolute figure reached every surface but the default one | The row further down records `absolute_signal()` reaching no surface a user reads, and its fix reached `report.json`, the CSV and the HTML report — which adds an `nM` column whenever a row carries one. It did not reach the ranking table `cas13guide design` prints by default. So a run with measured constants **dropped the PLACEHOLDER CRITICAL, told the reader the restriction had lifted, and showed the same relative `signal` as before**: 0.0044, where the CSV beside it said 2.2161 nM. The column-selection rule that drops `access` and `dG/nt` when nothing fills them was already there; this figure was simply not among the columns it considered | `test_ranking_table_columns.py` |
+| The training gate asked for six transcripts and needed thirty-eight | `cas13guide train` reports its criteria in order: `transcript groups 12 (need 6)` **PASS**, then `calibration transcripts 2 (need 8)` **FAIL**. Calibration groups are a subset of all groups, so `min_groups=6` admitted screens that `min_calibration_groups=8` could not possibly accept — and the split takes a fifth of the groups, so the real floor is 38. Measured at 720 rows: 6 transcripts give 1 calibration transcript, 12 give 2, 24 give 5, 48 give 10. **The number was already known**: `tests/test_acceptance.screen()` carries the comment "40 transcripts so the calibration split gets >= 8 independent groups", so the fixture was built to the real requirement while the figure printed to whoever ran the command stayed at 6 | `test_acceptance.py` |
+| A Robustness column where nothing had been varied | Found by running `cas13guide serve` and reading the page. Robustness is the minimum required coverage across every evaluated context, so over one context it **is** the coverage — the HTML report showed `0.7647` beside a Coverage of `0.7647` on every row, under a tooltip promising "worst coverage across every evaluated context — variants, isoforms, haplotypes". With a variant supplied the same guide reports 0.7644 and 0.7644, equal again because it is genuinely robust: **the same equality means two different things and only one is a measurement**. The terminal has always dropped the column when `--variants` is absent; this surface did not, and no caveat anywhere said robustness had gone unevaluated | `test_user_facing_surfaces.py` |
+| The advice to use an amplicon named no way to supply one | `design --preset hsa-miR-21-5p` refuses correctly — 24 nt, one window, outside `LwaCas13a`’s published length — and says "An amplicon target restores normal tiling". There is no `--amplicon` flag, deliberately: `amplicon_target` takes the flanking context from the caller because it belongs to the assay and not to the miRNA. So the route is the ordinary one, amplify and pass the product with `--fasta`, and **none of the four messages saying this mentioned it**; the shortest pointed a terminal reader at `amplicon_target`, a Python function. Measured, a 204 nt amplicon around that same miRNA tiles to 177 candidates at the canonical spacer and exits 0, which is what the note promises | `test_presets.py` |
+| The CI coverage gate validated one stratum, and it was misnamed | `cas13guide check` draws sites at 0 to 4 mismatches and filed every one under a hardcoded `...|mm1-2`. Measured, that set is **mm0 73, mm1-2 153, mm3+ 74** — about half the stratum is not the regime it is named for — and the printed `coverage[...|mm1-2:0.920]` reads as a figure for mm1-2 while being marginal coverage over a mixture. The pooling was **not** hiding a failure, which is worth saying because it is the first thing to suspect: split conformal is marginally valid whatever the pool, and pooled and per-regime coverage both hold under noise that widens with mismatch depth (sd `0.04 + 0.09n`) and under a model simply wrong past two mismatches (sd 0.03 then 0.45). What the gate did not do was exercise the three strata the design path routes into, so a change to `mismatch_regime` was invisible to the command that exists to catch calibration changes | `test_subcommands_end_to_end.py` |
+| Two of the three shipped examples printed no caveats at all | The row above records this being fixed for `cas13guide demo`. The same grep of `demo_diagnostic.py` and `demo_trained.py` — for "critical", "warning" or "limitation" — also **returned zero**, and they were never re-run against it. Both print a verdict table and a panel; the diagnostic prints a predicted collateral signal per guide, and its stand-in calibration set neither `synthetic` nor `source`, so the CRITICAL saying every interval rests on generated data **could not have fired had the block been there**. The cause was that `limitations_for_run` takes nine arguments and each surface assembled the call itself: two did, and those two had already drifted — only the design path passed `self_identical_loci`, so the demo could not raise off-target-may-be-the-target whatever the run found. `run_design` attaches them to the report now | `test_caveats_reach_every_surface.py` |
+| A caveat told you to install what you already had | With ViennaRNA 2.7.2 installed, a run with no accessibility said `Install ViennaRNA` — advice that changes nothing, because the demo uses `NullAccessibilityModel` on purpose and `--no-structure` opts out the same way. The limitation keys on `accessibility/none`, which is what a missing engine and a declined one look like from where it stands, and it named only the first cause. Its own neighbour `accessibility-floor-inert` exists because a generic warning "never connected the two" | `test_caveats_reach_every_surface.py` |
+| The demo could not reach a PASS, and the README quoted the shortfall | Its stand-in calibration was a copy of the design path's and had drifted, calling `add_observation` without a `group=` label. A stratum with no group labels has zero independent units, so `groups_ok` is False and **every interval came back out-of-domain** — the guard firing correctly on data that could not satisfy it. PASS 0 / REVIEW 81, no panel, no controls, no plan, on the command `--help` sends a new reader to. The suite ran the demo and checked exit 0, that the headings appeared, and that the counts summed above zero; all three hold for a demo that demonstrates nothing | `test_the_demo_demonstrates_something.py` |
+| QC measured three things about every spacer and reported none of them | Of `QCResult`'s fields only the flags, `manufacturability` and `pfs_preference` were read anywhere. **`gc`, `max_homopolymer` and the self-fold proxy were computed per candidate and dropped** — and GC fraction is the first number anybody ordering an oligo writes down, with the gate FAILing outside [0.30, 0.70], so where a surviving guide sits inside that band was exactly what a reader wanted and could not get | `test_qc_measurements_reach_the_user.py` |
+| The demo was never run, only `demo --help` | `demo.py` sat at 20% *with* subprocess tracing on, so the first command a new user types could have raised on line one with the suite green. The README quotes its transcript, and two of the quoted lines had drifted from what it prints | `test_demo_runs_and_matches_the_readme.py` |
+
+Five more were coverage gaps rather than defects: three gate verdicts and two
+limitations that no test had ever produced, found by the vocabulary check
+described above. All five were correct, which is the usual outcome and the
+reason to run the check anyway.
+
+Four further instruments found nothing, which is worth recording alongside what
+they did not find: the three input doors (`--fasta`, a paste, a browser upload)
+produce byte-identical reports down to the provenance ledger; every design flag
+that changes no exported artefact turned out to have a documented reason;
+sixteen full runs across four `PYTHONHASHSEED` values produced identical files;
+and every report key the HTML and CSV read is one the report produces.
+
 
 The vectorized scanner is held to the original per-character implementation as
 an oracle: randomized differential tests over ambiguity codes, loci shorter than

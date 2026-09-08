@@ -202,6 +202,28 @@ class TestDuplexEnergy(unittest.TestCase):
         self.assertFalse(energy.in_range(None, energy.dg_per_nt - 0.1))
         self.assertIn("weaker", energy.describe(None, energy.dg_per_nt - 0.1))
 
+    def test_range_checking_also_reports_success(self):
+        """Both failure directions were pinned and the passing one was not.
+
+        `describe` has three answers and only two had ever been produced: every
+        call in the suite passed bounds that excluded the duplex. The third is
+        what a reader sees when nothing is wrong, and a message nothing
+        generates is a message nothing checks -- it is not in the limitation
+        vocabulary either, so `verify_vocabulary_coverage` does not reach it.
+        """
+        from cas13guide.util.seq import revcomp
+
+        energy = self.dg(SPACER, revcomp(SPACER))
+        wide = energy.describe(energy.dg_per_nt - 0.5, energy.dg_per_nt + 0.5)
+        self.assertIn("within range", wide)
+        self.assertNotIn("over-stable", wide)
+        self.assertNotIn("weaker", wide)
+        # An open range is in range too, and says so.
+        self.assertIn("within range", energy.describe(None, None))
+        # The number it reports is the duplex's own, in both units.
+        self.assertIn(f"{energy.dg:.1f}", wide)
+        self.assertIn(f"{energy.dg_per_nt:.2f}", wide)
+
     def test_summarize_derives_a_range_from_data(self):
         from cas13guide.services.thermodynamics import summarize
         from cas13guide.util.seq import revcomp, windows
@@ -364,6 +386,100 @@ class TestSignalOnlyCountsWhereCollateralIsTheReadout(unittest.TestCase):
         self.assertIsNotNone(value)
         self.assertGreater(value, 0.0)
 
+    def test_the_signal_comes_from_the_intended_site_not_the_strongest_hit(self):
+        """`_intended_prediction` skips evidence that is not the target.
+
+        Nothing exercised that filter. Every fixture reaching this code had
+        only intended evidence in it, so the `continue` never ran once in the
+        whole suite and removing the filter changed no test -- a hole, found
+        by branch coverage and confirmed by the sweep once the sweep could
+        report one again.
+
+        It matters because the filter is the only thing making this number
+        mean what its docstring says. A guide with a strong off-target would
+        otherwise report the collateral signal of the *off-target* as its own
+        predicted fluorescence, which is a number about the wrong molecule.
+        """
+        spec = self._spec(AssayType.IN_VITRO_DETECTION)
+        model = CollateralKineticsModel()
+        intended = make_evidence(
+            0.20, 0.30, target_id="t1", target_class=TargetClass.REQUIRED
+        )
+        # Unannotated, and far stronger than the intended site.
+        off_target = make_evidence(0.95, 0.99, locus_id="L_OFF")
+
+        self.assertFalse(off_target.is_intended, "fixture sanity")
+        self.assertGreater(
+            off_target.activity.lower, intended.activity.lower,
+            "fixture does not discriminate: the off-target must be the one a "
+            "max would pick",
+        )
+
+        alone = predicted_signal((intended,), spec, model)
+        beside = predicted_signal((intended, off_target), spec, model)
+        self.assertIsNotNone(alone)
+        self.assertEqual(
+            beside, alone,
+            "an off-target changed the predicted signal, so the number "
+            "describes the wrong site",
+        )
+
+    def test_the_absolute_figure_is_refused_on_placeholder_constants(self):
+        """`predicted_signal_nm` had no caller and no test at all.
+
+        Its sibling `predicted_signal` is public and tested; this one was
+        reachable from nothing -- src, tests or examples -- because
+        `build_metric_vector` inlines both readings to avoid running the
+        collateral ODE twice. The dead-value sweep could not see it either:
+        that walks fields, properties and methods, and a module-level function
+        is none of those.
+
+        The behaviour is worth having pinned here as well as through the
+        report rows, because it is the one that refuses to fabricate: a
+        fluorescence figure in real units derived from placeholder rate
+        constants is a made-up measurement wearing a unit label, and nothing
+        downstream can tell it from a measured one.
+        """
+        from cas13guide.metrics.aggregate import predicted_signal_nm
+        from cas13guide.services.kinetics import KineticConstants
+
+        spec = self._spec(AssayType.IN_VITRO_DETECTION)
+        evidence = self._evidence()
+
+        # The shipped default is provisional, and refuses.
+        self.assertIsNone(
+            predicted_signal_nm(evidence, spec, CollateralKineticsModel())
+        )
+        self.assertIsNone(predicted_signal_nm(evidence, spec, None))
+
+        measured = KineticConstants(
+            k_on=1.0, k_off=1e-4, k_cat=4e-3, k_m=200.0, complex_nm=50.0,
+            target_nm=1.0, reporter_nm=500.0, assay_seconds=1800.0,
+            source="measured", provisional=False,
+        )
+        value = predicted_signal_nm(
+            evidence, spec, CollateralKineticsModel(measured)
+        )
+        self.assertIsNotNone(value, "measured constants must unlock the figure")
+        self.assertGreater(value, 0.0)
+
+    def test_the_absolute_figure_is_refused_where_collateral_is_a_hazard(self):
+        """Same rule as the relative one: a knockdown assay gets neither."""
+        from cas13guide.metrics.aggregate import predicted_signal_nm
+        from cas13guide.services.kinetics import KineticConstants
+
+        measured = KineticConstants(
+            k_on=1.0, k_off=1e-4, k_cat=4e-3, k_m=200.0, complex_nm=50.0,
+            target_nm=1.0, reporter_nm=500.0, assay_seconds=1800.0,
+            source="measured", provisional=False,
+        )
+        spec = self._spec(AssayType.CELL_CULTURE_KNOCKDOWN)
+        self.assertIsNone(
+            predicted_signal_nm(
+                self._evidence(), spec, CollateralKineticsModel(measured)
+            )
+        )
+
     def test_knockdown_assays_do_not(self):
         spec = self._spec(AssayType.CELL_CULTURE_KNOCKDOWN)
         self.assertTrue(spec.profile.collateral_is_hazard)
@@ -381,6 +497,128 @@ class TestSignalOnlyCountsWhereCollateralIsTheReadout(unittest.TestCase):
         spec = self._spec(AssayType.IN_VITRO_DETECTION)
         self.assertIsNone(predicted_signal(self._evidence(), spec, None))
         self.assertIsNone(predicted_signal(self._evidence(), spec, NullKineticsModel()))
+
+
+class TestAComputedFoldDoesNotVouchForTheModel(unittest.TestCase):
+    """FR3.3's independence rule, tested at the call rather than the score.
+
+    ``d_pair_evidence`` computes an accessibility for every intended hit and
+    then passes it to ``predict()`` only when the source says it is
+    independent evidence. A thermodynamic fold is not: it is a prediction
+    from the same sequence the activity model already sees, so letting it in
+    would have one computation vouch for another. The module says so in a
+    comment beside the line that enforces it, and nothing enforced the
+    comment.
+
+    Deleting the guard -- ``model_accessibility = accessibility_value``,
+    unconditionally -- left the whole suite green while changing every score
+    in a run with ``--structure`` and reordering the ranking: rank 1 moved
+    from one guide to another on a 400 nt target. ``[structure]`` is the
+    install the README leads with, so that is the ordinary path.
+
+    Tested by asking the model what it was handed, rather than by comparing
+    scores. A score comparison would pass for the wrong reason the moment
+    accessibility stopped ranking, and the claim here is about what reaches
+    the prediction, not about what the number comes out as.
+    """
+
+    class _RecordingModel:
+        """An activity model that remembers the accessibility it was given."""
+
+        version = "recording/v1"
+
+        def __init__(self):
+            from cas13guide.services.registry import HeuristicCas13Model
+
+            self._real = HeuristicCas13Model()
+            self.domain = self._real.domain
+            self.seen = []
+
+        def predict(self, spacer, duplex, accessibility):
+            self.seen.append(accessibility)
+            return self._real.predict(spacer, duplex, accessibility)
+
+    class _FoldSource:
+        """A thermodynamic fold: a real number, and not independent."""
+
+        version = "accessibility/fake-fold/v1"
+        is_independent_evidence = False
+
+        def accessibility(self, sequence, start, length):
+            return 0.9
+
+    class _ProbingSource(_FoldSource):
+        """A probing experiment: the same number, independently obtained."""
+
+        version = "accessibility/fake-probe/v1"
+        is_independent_evidence = True
+
+    class _NoExpression:
+        def expression_tpm(self, locus_id):
+            return None
+
+    def _evidence_with(self, source, target_class=None):
+        from cas13guide.contract.enums import Universe
+        from cas13guide.pipeline.d_pair_evidence import evidence_for_hit
+        from cas13guide.services.calibration import CalibrationService
+        from cas13guide.services.registry import ModelRegistry
+        from cas13guide.services.transcriptome import Locus, Transcriptome
+
+        spacer = "GCAUUGCUGUGGAGCUGAAGUC"
+        # REQUIRED, or the accessibility is never computed for this hit.
+        hit = make_hit("g1", "L1", target_id="t1",
+                       target_class=target_class or TargetClass.REQUIRED)
+        world = Transcriptome("GRCh38", "v44")
+        world.add(Locus("L1", hit.target_site, Universe.CODING, expression=10.0))
+        model = self._RecordingModel()
+        evidence = evidence_for_hit(
+            hit, spacer, make_spec(), ModelRegistry(model, source),
+            CalibrationService(), world, self._NoExpression(),
+        )
+        return model, evidence
+
+    def test_a_fold_is_computed_and_withheld(self):
+        model, evidence = self._evidence_with(self._FoldSource())
+        self.assertTrue(model.seen, "the model was never asked")
+        self.assertEqual(
+            set(model.seen), {None},
+            "a non-independent accessibility reached predict(): one "
+            "computation is vouching for another",
+        )
+        self.assertIsNotNone(
+            evidence.accessibility,
+            "and it should still be recorded -- withheld from the "
+            "prediction, not thrown away",
+        )
+
+    def test_a_desired_target_is_aimed_at_too(self):
+        """The accessibility is computed for sites the design aims at.
+
+        REQUIRED and DESIRED are both aimed at; only the rest are skipped, and
+        skipping them is the 8.7x saving the comment above the branch
+        describes. Narrowing it to REQUIRED alone leaves a DESIRED target with
+        no accessibility at all -- not a slower run, a different one -- and
+        the whole suite stayed green.
+        """
+        from cas13guide.contract.enums import TargetClass
+
+        for target_class in (TargetClass.REQUIRED, TargetClass.DESIRED):
+            with self.subTest(target_class=target_class.value):
+                _model, evidence = self._evidence_with(
+                    self._ProbingSource(), target_class=target_class)
+                self.assertIsNotNone(
+                    evidence.accessibility,
+                    f"a {target_class.value} site is one the design aims at",
+                )
+
+    def test_a_probing_experiment_is_passed_through(self):
+        """Or the test above would pass with accessibility disabled entirely."""
+        model, _evidence = self._evidence_with(self._ProbingSource())
+        self.assertTrue(model.seen, "the model was never asked")
+        self.assertEqual(
+            set(model.seen), {0.9},
+            "independent evidence is exactly what predict() is for",
+        )
 
 
 if __name__ == "__main__":

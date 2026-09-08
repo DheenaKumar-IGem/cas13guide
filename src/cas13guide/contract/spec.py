@@ -12,7 +12,7 @@ import hashlib
 import json
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from ..util.seq import normalize
 from .effectors import EFFECTORS, EffectorParams
@@ -207,12 +207,18 @@ class EffectorAssayProfile(_Frozen):
         """True when the chosen length is one the ortholog is published at.
 
         A non-canonical length is legal but unvalidated: the activity model's
-        domain is derived from the canonical set, so such a design is reported
-        out-of-domain, the calibration widens, and the gate raises an R3
-        REVIEW. That is the honest handling -- the alternative was refusing the
-        design outright, which made the window length un-configurable and, for
-        a 21-23 nt mature miRNA against 28 nt LwaCas13a spacers, made the
-        target undesignable rather than merely unusual.
+        domain is derived from the canonical set **per ortholog**, so such a
+        design is reported out-of-domain, and out-of-domain refuses to narrow
+        the interval at all rather than merely widening it. Benefit is read at
+        its lower bound, so the coverage gate cannot be cleared and the guide
+        is refused rather than certified. (R3 REVIEW is what an *in-domain*
+        pair with a weak calibration stratum earns; a length no model was fit
+        at is the stronger statement.)
+
+        Expressible and refused is still the right handling, and different from
+        rejecting it at the contract: the design can be *stated*, so a caller
+        can see what it would take -- an ortholog published at that length, or
+        an amplicon target -- instead of the length being un-configurable.
         """
         assert self.spacer_length is not None
         return self.params.is_canonical_length(self.spacer_length)
@@ -243,12 +249,34 @@ class ContextScope(_Frozen):
     #: Universes the search will actually cover. Adequacy is gated (fix #3).
     declared_universes: frozenset[Universe] = frozenset({Universe.CODING})
 
-    def missing_universes(self, assay: AssayType) -> frozenset[Universe]:
-        return frozenset(ASSAY_REQUIRED_UNIVERSES[assay] - self.declared_universes)
+    @field_serializer("declared_universes")
+    def _canonical_universes(self, universes: frozenset[Universe]) -> list[str]:
+        """Sorted, so the serialisation is a function of the value alone.
+
+        ``fingerprint()`` promises "two identical designs share a fingerprint",
+        and ``json.dumps(sort_keys=True)`` orders dict *keys* -- a frozenset
+        serialises as a list in iteration order. ``Universe`` is a str Enum
+        whose hash is a per-process-randomised string hash, so the order, and
+        therefore the SHA-256, changed between runs of the same design. Every
+        real run declares all nine universes, so the fingerprint that the
+        provenance ledger, the report field and every export header carry was
+        unstable exactly where it is load-bearing. Sorting at serialisation
+        fixes the dumped document too, not only the digest.
+        """
+        return sorted(u.value for u in universes)
 
 
 class ResolvedDesignSpec(_Frozen):
-    """The design contract. Immutable, hashable, and carried in provenance."""
+    """The design contract. Immutable, and carried in provenance.
+
+    Not hashable, though every other model here is. ``_Frozen`` sets
+    ``frozen=True``, so pydantic *does* generate a ``__hash__`` -- and
+    :class:`HazardWeights` holds ``by_class`` and ``by_biotype`` as plain
+    ``dict``s, so hashing recurses into them and raises ``TypeError:
+    unhashable type: 'dict'``. The ``contract`` tuple tree hashes fine; the two
+    maps are the whole reason. Identity across runs is :meth:`fingerprint`,
+    which is what provenance records and what a caller should compare.
+    """
 
     spec_version: str = "cas13guide/spec/v2"
     contract: TargetContract
@@ -265,8 +293,25 @@ class ResolvedDesignSpec(_Frozen):
 
     @property
     def requires_discrimination(self) -> bool:
-        """Allele/SNV tasks need the ratio constraint, not two thresholds."""
-        return self.contract.task is Task.ALLELE
+        """Allele/SNV tasks need the ratio constraint, not two thresholds.
+
+        So does any contract that declares a FORBIDDEN target, whatever its
+        task. A multiplex diagnostic panel is that case: ``class=forbidden`` on
+        the other biomarkers states this guide must not detect them, and they
+        differ from the intended one by a base or two -- so thresholding
+        ``LCB(on)`` and ``UCB(off)`` independently fails every guide for
+        exactly the reason it does on an allele. The ratio is the question in
+        both, and keying only on the task label left it computable and
+        uncomputed for the panel.
+
+        Read off the contract's shape rather than its label alone, so a
+        contract with no FORBIDDEN target is untouched: ``discrimination_margin``
+        stays ``None`` and no threshold applies, as before.
+        """
+        return (
+            self.contract.task is Task.ALLELE
+            or bool(self.contract.by_class(TargetClass.FORBIDDEN))
+        )
 
     def fingerprint(self) -> str:
         """Stable content hash. Two identical designs share a fingerprint."""

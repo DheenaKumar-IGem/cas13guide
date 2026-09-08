@@ -126,6 +126,17 @@ class BlastOffTargetIndex:
     #: Biotype assigned to hits. A single value because a BLAST database has no
     #: universe column; split databases and separate indexes if that matters.
     biotype: Universe = Universe.CODING
+    #: Subject ids the caller asserts are the run's own target, not
+    #: off-targets. A transcript database contains the target's transcript, and
+    #: its accession cannot be matched to the record the user supplied -- so
+    #: the intended site comes back as a perfect off-target and nothing here
+    #: can tell it from a paralog identical across the whole site. Which
+    #: accession is theirs is the one thing the user knows and this does not.
+    #:
+    #: Dropped rather than annotated as the target: the local scan already
+    #: supplies the on-target evidence, and counting it twice would inflate
+    #: coverage.
+    self_ids: frozenset[str] = frozenset()
     executable: str = "blastn"
     #: Short queries need a small word size and a permissive E-value, or almost
     #: nothing is reported: a 22-mer simply cannot reach a conventional E-value.
@@ -230,12 +241,40 @@ class BlastOffTargetIndex:
                 # A partial alignment is not a binding site for a fixed-length
                 # spacer, and padding one out would be inventing sequence.
                 continue
-            site = normalize(row.subject_sequence)
+            try:
+                site = normalize(row.subject_sequence)
+            except ValueError as exc:
+                # Still raises. Skipping the row would reintroduce the defect
+                # pinned by test_search.TestAmbiguityBasesAreNotADeadZone,
+                # where a real off-target hides behind an ambiguity code.
+                #
+                # But as ``BlastUnavailable``, not a bare ``ValueError``. The
+                # sibling failure of this same subsystem -- blastn exiting
+                # non-zero -- already raises it, and ``workflow`` converts that
+                # to a ``DesignRequestError`` and exit 2. A ValueError matched
+                # no handler, so it escaped as a traceback and exit 1: the
+                # status this CLI documents as "the run completed and nothing
+                # survived the gate", which is what a wrapper reads it as. The
+                # sequence comes from a third-party database (RefSeq, nt, TSA)
+                # that routinely carries R/Y/M/K/S/W/B/D/H/V and that the user
+                # cannot edit, so this is reachable on the module's intended
+                # use, and the message has to name the flag to act on.
+                raise BlastUnavailable(
+                    f"--blast-db: blastn subject {row.subject!r} at "
+                    f"sstart={row.subject_start} carries characters outside "
+                    f"AUGCN: {exc}. An ambiguity code cannot be searched "
+                    f"wobble-aware, and skipping the row would hide a real "
+                    f"off-target behind it."
+                ) from exc
             if len(site) != len(spacer):
                 continue
             duplex = profile_duplex(spacer, site)
             # Re-derived under the wobble rule, never BLAST's own count.
             if duplex.n_mismatch > max_mismatches:
+                continue
+            if row.subject in self.self_ids:
+                # Asserted by the caller as this run's own target. See
+                # `self_ids`: the hit is real, and it is not an off-target.
                 continue
             hits.append(
                 SearchHit(

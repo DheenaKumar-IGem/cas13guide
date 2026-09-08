@@ -31,6 +31,14 @@ from ..metrics.bounds import Interval
 #: Below this many calibration points a stratum is not trusted on its own.
 MIN_STRATUM_N = 20
 
+#: Finite-sample slack on the coverage gate. Grouped splitting breaks
+#: exchangeability, so empirical coverage runs slightly under nominal even when
+#: the calibration is sound -- see the README's "Grouped calibration weakens the
+#: conformal guarantee". Named rather than buried as a literal, because the
+#: acceptance report prints a threshold next to its verdict and the two have to
+#: be the same number: it printed "(need 0.9)" beside a PASS at 0.889.
+COVERAGE_SLACK = 0.05
+
 #: Below this many *independent groups* (transcripts) a stratum's quantile is
 #: too variable to certify, however many rows it holds -- see the effective
 #: sample size note in :class:`CalibrationStratum`. Chosen where the spread of
@@ -176,14 +184,27 @@ class CoverageReport:
         """
         if self.uncalibrated:
             return False
-        # Small tolerance for finite-sample slack.
-        return self.empirical >= self.nominal - 0.05
+        return self.empirical >= self.nominal - COVERAGE_SLACK
 
 
 class CalibrationService:
     """Stratified conformal bounds with an explicit fallback chain."""
 
     version = "calibration/split-conformal/v1"
+
+    #: True when this set was generated rather than measured.
+    #: ``services/limitations.py`` reads it to raise the CRITICAL
+    #: synthetic-calibration warning, and ``services/workflow.py`` sets it when
+    #: it seeds a stand-in. Declared here rather than attached to the instance
+    #: from outside: an attribute a module conjures onto an object it does not
+    #: own is one typo away from being silently ignored by the reader, and the
+    #: reader is a ``getattr`` with a default that would not notice.
+    synthetic: bool = False
+
+    #: What produced this set -- for a synthetic one, the seed, size and noise.
+    #: The orchestrator records it in the provenance ledger and the exports
+    #: carry it, so two runs differing only in seed are distinguishable.
+    source: dict | None = None
 
     def __init__(
         self,
@@ -276,6 +297,18 @@ class CalibrationService:
             if stratum is not None and stratum.n >= self.min_stratum_n:
                 return stratum
         return None
+
+    def resolve(self, key: str) -> CalibrationStratum | None:
+        """The stratum a bound for ``key`` would actually be built from.
+
+        Public because a bound is not the only thing a caller can want from a
+        calibration set. ``services/panel_confidence.py`` needs the underlying
+        ``(predicted, observed)`` pairs, not a quantile over their residuals:
+        it is asking how often a prediction at a given level came true, which
+        is a count, and deriving a count from a conformal quantile would be
+        exactly the category error that module exists to avoid.
+        """
+        return self._resolve(key)
 
     def _groups_adequate(self, stratum: CalibrationStratum) -> bool:
         """False when too few independent units back this stratum.

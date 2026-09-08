@@ -39,6 +39,31 @@ TERMINAL_WEIGHT = 0.25
 #: derives its ``gc_seed`` window from the same span -- retuning the seed in
 #: one place while the other kept its own literal would leave the model's
 #: features describing a different seed than its penalty.
+#:
+#: The value is a shape, not a measurement. No source is given for
+#: ``(0.35, 0.75)``, and unlike the per-ortholog constants in
+#: ``contract/effectors.py`` -- where the direct repeats and PFS policies each
+#: carry an argument for the number -- it is one span shared across every
+#: effector. Published Cas13 seed effects are reported per ortholog and in
+#: nucleotide positions, so a cited window would be both narrower and
+#: effector-specific. Until one is supplied, the honest thing available is to
+#: make the assumption movable: ``seed_weight`` and ``duplex_penalty`` both
+#: take ``seed_span``, so how much a ranking depends on it can be measured
+#: rather than assumed.
+#:
+#: There is now a candidate. Feng, Hu, Zhang and Le map the LwaCas13a seed
+#: kinetically to "between the 10th nt and the 18th nt from the 5' end of
+#: the spacer" on a 28 nt spacer (Nucleic Acids Research 54(8) gkag413,
+#: 2026) -- the first report of that window for this ortholog. In the
+#: convention here, where position p maps to (p - 0.5) / length, that is
+#: (0.339, 0.625). The value below starts in almost the right place and
+#: runs about 3.5 nt too far 3': 0.35 is position 10.3, and 0.75 is
+#: position 21.5. Adopting it is a scientific call, not a mechanical one --
+#: it moves the ranking for a shipped ortholog, the mapping is kinetic and
+#: graded rather than a sharp boundary, and it is measured at one length
+#: while this span is applied at every length the contract admits. Left
+#: unapplied deliberately; the arithmetic is here so the decision has the
+#: numbers in front of it.
 SEED_SPAN: tuple[float, float] = (0.35, 0.75)
 
 #: expected_base -> observed_base substitutions that still pair (G-U wobble).
@@ -124,12 +149,12 @@ def profile_duplex(spacer: str, target_site: str) -> DuplexProfile:
     ordered = list(reversed(cigar_parts))
     cigar: list[str] = []
     run_kind, run_len = ordered[0], 1
-    for kind in ordered[1:]:
-        if kind == run_kind:
+    for symbol in ordered[1:]:
+        if symbol == run_kind:
             run_len += 1
         else:
             cigar.append(f"{run_len}{run_kind}")
-            run_kind, run_len = kind, 1
+            run_kind, run_len = symbol, 1
     cigar.append(f"{run_len}{run_kind}")
 
     return DuplexProfile(
@@ -140,6 +165,36 @@ def profile_duplex(spacer: str, target_site: str) -> DuplexProfile:
     )
 
 
+def checked_span(seed_span: tuple[float, float]) -> tuple[float, float]:
+    """Refuse a seed window that cannot mean what it says.
+
+    ``seed_weight`` reads ``lo <= frac <= hi`` and otherwise tapers from
+    whichever side ``frac`` fell on. An inverted window makes that test
+    unsatisfiable, so every position lands in a flank and the taper is
+    computed from bounds that contain nothing: the window is discarded, and
+    the number that comes back is indistinguishable from a run under a
+    different seed. Nothing said so.
+
+    That is the failure this package objects to elsewhere -- a control the
+    caller is invited to move, doing nothing, in silence. ``lo == hi`` is
+    allowed: a window of zero width is a meaningful thing to ask for ("what
+    if there is no seed?") and it degrades continuously. Inverted is not.
+
+    The span is a *fraction* of spacer length, so it also has to lie in
+    [0, 1]; a caller passing nucleotide positions gets told, rather than
+    getting a taper computed against 9.0 and 15.0.
+    """
+    lo, hi = seed_span
+    if not 0.0 <= lo <= 1.0 or not 0.0 <= hi <= 1.0:
+        raise ValueError(
+            f"seed span {seed_span} is a fraction of spacer length "
+            "and must lie in [0, 1]"
+        )
+    if lo > hi:
+        raise ValueError(f"inverted seed span: {seed_span}")
+    return lo, hi
+
+
 def seed_weight(spacer_pos: int, length: int, seed_span: tuple[float, float] = SEED_SPAN) -> float:
     """Positional disruption weight for a mismatch at ``spacer_pos``.
 
@@ -147,15 +202,24 @@ def seed_weight(spacer_pos: int, length: int, seed_span: tuple[float, float] = S
     central region of the spacer behaves as a seed. ``seed_span`` gives the
     seed as a fraction of spacer length; inside it a mismatch carries full
     weight, outside it the weight tapers toward the termini.
+
+    A span that cannot bracket anything raises; see :func:`checked_span`.
     """
     frac = (spacer_pos - 0.5) / length
-    lo, hi = seed_span
+    lo, hi = checked_span(seed_span)
     if lo <= frac <= hi:
         return 1.0
     # Linear taper to TERMINAL_WEIGHT at each terminus. Each flank is
-    # normalized by *its own* width, so a mismatch at the last spacer position
-    # is penalized exactly as much as one at the first; normalizing both by
-    # the wider flank would make the taper asymmetric for no stated reason.
+    # normalized by *its own* width, so both bottom out at TERMINAL_WEIGHT at
+    # their own end of the spacer; normalizing both by the wider flank would
+    # leave the narrower one short of it for no stated reason.
+    #
+    # That is symmetry in the *endpoints*, not in the positions. This comment
+    # used to claim a mismatch at the last spacer position is penalized
+    # exactly as much as one at the first, which is false: SEED_SPAN is not
+    # centred, so the flanks are 0.35 and 0.25 wide, and the first and last
+    # positions sit the same distance in from each end but are divided by
+    # different widths. On a 28-mer they weigh 0.2883 and 0.3036.
     if frac < lo:
         travelled = (lo - frac) / lo if lo > 0 else 1.0
     else:
@@ -164,15 +228,29 @@ def seed_weight(spacer_pos: int, length: int, seed_span: tuple[float, float] = S
     return 1.0 - (1.0 - TERMINAL_WEIGHT) * travelled
 
 
-def duplex_penalty(profile: DuplexProfile, wobble_cost: float = 0.35) -> float:
+def duplex_penalty(
+    profile: DuplexProfile,
+    wobble_cost: float = 0.35,
+    seed_span: tuple[float, float] = SEED_SPAN,
+) -> float:
     """Total position-weighted disruption. 0.0 == perfect duplex.
 
     Used only as a *feature* for the activity model and as a cheap ordering
     key during search. It is never itself a specificity score.
+
+    ``seed_span`` is threaded through rather than dropped. It used to be
+    absent here, so the only parameter :func:`seed_weight` exposes could not
+    be reached through the function every caller actually uses: the penalty
+    was pinned to :data:`SEED_SPAN` no matter what was asked for, and there
+    was no way to ask what the ranking would look like under a different
+    seed. The span is validated once here as well as inside
+    :func:`seed_weight`, so a perfect duplex -- which weighs no positions at
+    all -- still refuses a window that cannot mean anything.
     """
+    span = checked_span(seed_span)
     total = 0.0
     for pos in profile.mismatch_positions:
-        total += seed_weight(pos, profile.length)
+        total += seed_weight(pos, profile.length, span)
     for pos in profile.wobble_positions:
-        total += wobble_cost * seed_weight(pos, profile.length)
+        total += wobble_cost * seed_weight(pos, profile.length, span)
     return total

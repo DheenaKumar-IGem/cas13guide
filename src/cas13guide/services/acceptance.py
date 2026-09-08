@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .calibration import COVERAGE_SLACK
 from .training import (
     TrainingExample,
     TrainingResult,
     compare_splitting,
+    groups_needed_for_calibration,
     train_and_calibrate,
 )
 
@@ -60,7 +62,7 @@ def evaluate_dataset(
     alpha: float = 1.0,
     seed: int = 0,
     min_rows: int = 300,
-    min_groups: int = 6,
+    min_groups: int | None = None,
     min_calibration_groups: int = 8,
     min_cv_spearman: float = 0.20,
     min_holdout_spearman: float = 0.15,
@@ -77,6 +79,16 @@ def evaluate_dataset(
     """
     report = AcceptanceReport()
     groups = {e.group for e in examples}
+    if min_groups is None:
+        # Not 6. Calibration groups are a subset of all groups and the split
+        # takes a fifth of them, so a screen needs 38 transcripts before it can
+        # hold `min_calibration_groups` of them -- measured at 720 rows: 6
+        # groups gives 1 calibration transcript, 12 gives 2, 24 gives 5, 48
+        # gives 10. The old default admitted screens that the criterion five
+        # rows below could not accept, and told their author the number was 6.
+        #
+        # Derived from the splitter's own fraction so the two cannot drift.
+        min_groups = groups_needed_for_calibration(min_calibration_groups)
 
     report.criteria.append(
         Criterion("rows", len(examples) >= min_rows, float(len(examples)), float(min_rows))
@@ -87,7 +99,9 @@ def evaluate_dataset(
             len(groups) >= min_groups,
             float(len(groups)),
             float(min_groups),
-            note="grouped splitting needs several transcripts",
+            note=("conformal calibration is measured on a held-out fifth of "
+                  f"the transcripts, and needs {min_calibration_groups} of "
+                  "them"),
         )
     )
     if not all(c.passed for c in report.criteria):
@@ -151,13 +165,24 @@ def evaluate_dataset(
         )
     else:
         worst_coverage = min((c.empirical for c in result.benchmark.coverage), default=0.0)
+        # The floor the gate applies, not the nominal level it aims at. Every
+        # other criterion here is an exact `>=` against the number it prints,
+        # so a reader had no reason to suspect a hidden 0.05 slack on this one
+        # -- and the line rendered "[PASS] conformal coverage 0.889 (need 0.9)",
+        # self-contradictory on its face, in the criterion annotated "bounds
+        # mean what they claim". Reproduced on a shipped-default `train` run.
+        floor = nominal - COVERAGE_SLACK
         report.criteria.append(
             Criterion(
                 "conformal coverage",
                 result.benchmark.coverage_ok,
                 worst_coverage,
-                nominal,
-                note="bounds mean what they claim",
+                floor,
+                note=(
+                    f"bounds mean what they claim; floor is nominal {nominal:.2f} "
+                    f"less {COVERAGE_SLACK:.2f} for finite-sample slack under "
+                    "grouped splitting"
+                ),
             )
         )
 

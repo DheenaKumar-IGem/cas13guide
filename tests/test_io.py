@@ -48,8 +48,31 @@ class TestRawSequenceInput(unittest.TestCase):
         [record] = parse_sequence_input("AUGCNAUGC")
         self.assertEqual(record.sequence, "AUGCNAUGC")
 
-    def test_alignment_gap_characters_are_stripped(self):
-        [record] = parse_sequence_input("AUG--CAU*GC")
+    def test_alignment_gap_characters_are_refused_not_stripped(self):
+        """Deleting a gap is not formatting -- it splices.
+
+        This asserted that "AUG--CAU*GC" became "AUGCAUGC", which reads as
+        harmless and is not: dropping a run of gapped or masked bases joins the
+        base before it to the base after it, and the tiler then walks a window
+        across a junction that exists in no molecule. Measured on a 400 nt
+        target with a 30-base gapped run, 21 of 297 exported guides had a
+        target site occurring nowhere in the real sequence.
+
+        It also contradicted the module's own headline rule -- a pasted
+        alignment's ruler *digits* were refused with a located message while
+        the same alignment's *gaps* were removed in silence.
+        """
+        for text in ("AUG--CAUGC", "AUGCAU*GC"):
+            with self.subTest(text=text):
+                with self.assertRaises(SequenceInputError) as caught:
+                    parse_sequence_input(text)
+                message = str(caught.exception)
+                self.assertIn("alignment gap", message)
+                self.assertIn("position", message)
+
+    def test_whitespace_and_wrapping_are_still_formatting(self):
+        """The rule narrowed to whitespace; it did not disappear."""
+        [record] = parse_sequence_input("  aug c\n\tAUGC  \n")
         self.assertEqual(record.sequence, "AUGCAUGC")
 
 
@@ -158,8 +181,8 @@ class TestExport(unittest.TestCase):
                 "accessibility": 0.48, "duplex_dg_per_nt": -1.9,
                 "predicted_signal": 0.13,
                 "reasons": ["expression_unknown"], "qc_warnings": ["pfs_disfavoured"],
-                "metrics": {"required_coverage": 0.67, "worst_off_target": 0.0,
-                            "cumulative_burden": 0.0},
+                "metrics": {"required_coverage": 0.67, "robustness": 0.12,
+                            "worst_off_target": 0.0, "cumulative_burden": 0.0},
             }
         ],
         "controls": [
@@ -176,6 +199,22 @@ class TestExport(unittest.TestCase):
         for column in RANKED_COLUMNS:
             self.assertIn(column, header)
         self.assertIn("required_coverage", header)
+
+    def test_csv_carries_the_across_context_coverage(self):
+        """The CSV is the file oligos are ordered from, and it carried the
+        reference coverage while omitting the minimum across contexts.
+
+        A guide that reaches no site in a variant the user supplied was
+        indistinguishable in this file from one that reaches every site: the
+        verdict said PASS, `required_coverage` said 0.76, and `robustness`
+        -- the number that knew better -- was in the JSON report and nowhere
+        a person ordering oligos would look.
+        """
+        text = ranked_to_csv(self.REPORT)
+        header = data_lines(text)[0].split(",")
+        self.assertIn("robustness", header)
+        row = data_lines(text)[1].split(",")
+        self.assertEqual(row[header.index("robustness")], "0.12")
 
     def test_csv_carries_the_verdict_and_tier(self):
         """A REVIEW row must be identifiable as one in the exported file."""
@@ -199,6 +238,55 @@ class TestExport(unittest.TestCase):
     def test_controls_export_skips_the_ones_that_could_not_be_built(self):
         records = parse_fasta(controls_to_fasta(self.REPORT))
         self.assertEqual([r.name for r in records], ["ctrl_g_abc"])
+
+    def test_controls_export_carries_provenance_like_every_other_export(self):
+        """A control spacer is a negative result that looks like a guide.
+
+        Six months on, nothing distinguishes it from a real candidate except a
+        record of which run and which panel it came from -- so the file that
+        carries it has to carry that too.
+        """
+        text = controls_to_fasta(self.REPORT, "sub", ["WARNING: something"])
+        self.assertIn("; cas13guide", text)
+        self.assertIn("; spec fingerprint: abc123", text)
+        self.assertIn("; limitation: WARNING: something", text)
+        # And it still parses back, header and all.
+        self.assertEqual(
+            [r.name for r in parse_fasta(text)], ["ctrl_g_abc"]
+        )
+
+    def test_controls_export_states_its_own_count(self):
+        self.assertIn("; non-targeting controls: 1", controls_to_fasta(self.REPORT))
+
+    def test_no_controls_produces_a_file_that_says_why_not_an_empty_one(self):
+        """A zero-byte file announced beside the CSV reads as 'none needed'.
+
+        The truth is the opposite: there is no panel for them to be matched
+        to. Those are opposite facts and the file has to distinguish them.
+        """
+        report = dict(self.REPORT, controls=[], shortfalls=["no feasible panel"])
+        text = controls_to_fasta(report)
+        self.assertGreater(len(text), 0)
+        self.assertIn("; non-targeting controls: 0", text)
+        self.assertIn("the panel they are matched to is empty", text)
+        self.assertIn("; shortfall: no feasible panel", text)
+        # Comments only -- no record lines to mistake for a control. Not
+        # asserted via parse_fasta: an input with no records is a genuine user
+        # error there, and weakening that check to read this file back would
+        # trade a real guard for a convenience.
+        self.assertEqual([l for l in text.splitlines() if l.startswith(">")], [])
+
+    def test_the_shared_header_counts_the_run_not_the_file(self):
+        """``exported=`` was false in the controls file, which exports none of
+        the ranked rows. The count that is true everywhere is the run's."""
+        for text in (
+            ranked_to_csv(self.REPORT),
+            ranked_to_fasta(self.REPORT),
+            controls_to_fasta(self.REPORT),
+        ):
+            with self.subTest(text=text[:20]):
+                self.assertIn("ranked=1", text)
+                self.assertNotIn("exported=", text)
 
     def test_write_exports_produces_all_three_files(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -344,6 +432,65 @@ class TestReviewGuidesReachTheRanking(unittest.TestCase):
         }
         for guide in report.panel.guides:
             self.assertIn(guide.guide_id, passing)
+
+
+class TestTheCsvDoesNotClaimSixteenDigits(unittest.TestCase):
+    """The metric columns are rounded like every other number in the file.
+
+    They arrived straight from the metrics dict while `score`,
+    `accessibility` and the rest were rounded upstream, so a row read
+    "score 9.7221 ... required_coverage 0.7643548423917778" -- sixteen
+    significant figures for a conformal bound calibrated on two hundred
+    synthetic points, in the file somebody orders oligos from.
+
+    Not a false number, but a number wearing more precision than it has, in a
+    package whose whole manner is refusing to do that. The report dict keeps
+    the full value for anything that wants it.
+    """
+
+    @staticmethod
+    def _rows(metrics):
+        from cas13guide.services.fasta import ranked_rows
+
+        return ranked_rows({
+            "ranked": [{
+                "rank": 1, "guide_id": "g_abc",
+                "spacer": "AUGCAUGCAUGCAUGCAUGCAU", "score": 7.0,
+                "verdict": "REVIEW", "review_tier": "R2",
+                "spans_junction": False, "pfs_3prime": "A",
+                "pfs_preferred": True, "accessibility": 0.48,
+                "duplex_dg_per_nt": -1.9, "predicted_signal": 0.13,
+                "reasons": [], "qc_warnings": [], "metrics": metrics,
+            }],
+        })
+
+    def _row(self):
+        return self._rows({
+            "required_coverage": 0.7643548423917778,
+            "robustness": 0.7643548423917778,
+            "worst_off_target": 0.4164970462485115,
+            "cumulative_burden": 0.4164970462485115,
+        })[0]
+
+    def test_every_metric_column_is_rounded(self):
+        row = self._row()
+        for column in ("required_coverage", "robustness", "worst_off_target",
+                       "cumulative_burden"):
+            with self.subTest(column=column):
+                self.assertEqual(row[column], round(row[column], 4))
+                self.assertLessEqual(len(str(row[column]).split(".")[-1]), 4)
+
+    def test_the_value_is_still_the_right_one(self):
+        """Rounded, not replaced."""
+        row = self._row()
+        self.assertAlmostEqual(row["required_coverage"], 0.7644, places=4)
+        self.assertAlmostEqual(row["worst_off_target"], 0.4165, places=4)
+
+    def test_a_missing_metric_stays_missing(self):
+        """`None` must not become 0.0: absent and zero are different answers,
+        and this package spends a great deal of effort keeping them apart."""
+        row = self._rows({"required_coverage": None})[0]
+        self.assertIsNone(row["required_coverage"])
 
 
 if __name__ == "__main__":

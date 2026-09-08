@@ -81,6 +81,66 @@ class ConservedWindow:
         return worst is not None and worst <= max_mismatches
 
 
+def _refuse_duplicate_names(records: Sequence[SequenceRecord]) -> None:
+    """Two variants under one name cannot be told apart, so refuse them.
+
+    Every world here keys loci by name (``Transcriptome.add`` overwrites), and
+    ``mismatches_by_variant`` keys results by name too, so a repeated name
+    silently drops one sequence *and* reports the survivor's result under the
+    shared name -- i.e. "reaches every variant" for a variant never searched.
+    That is a false negative in the unsafe direction, and it arrives by an
+    ordinary route: ``services/fasta.py`` deliberately does not deduplicate
+    names, because a repeat usually means someone concatenated two files, and
+    ``run_request`` feeds the parsed records straight here.
+    """
+    seen: dict[str, int] = {}
+    for record in records:
+        seen[record.name] = seen.get(record.name, 0) + 1
+    repeated = sorted(name for name, n in seen.items() if n > 1)
+    if repeated:
+        raise ValueError(
+            "conserved-region analysis keys variants by name, so records "
+            f"sharing one cannot be told apart: {', '.join(repeated)}. This is "
+            "usually a concatenated FASTA -- rename the records so each "
+            "variant has its own id."
+        )
+
+
+#: The first variant context is keyed by this literal, and two readers look it
+#: up by name: ``orchestrator`` files per-guide evidence under ``ctx.name``, and
+#: ``e_aggregate`` fetches the intended target's evidence back with
+#: ``by_context.get("reference")``.
+RESERVED_CONTEXT_NAME = "reference"
+
+
+def _refuse_reserved_names(records: Sequence[SequenceRecord]) -> None:
+    """No variant may be called what the reference context is called.
+
+    Context names are a namespace mixing one reserved literal with
+    user-supplied FASTA record names, and nothing separated them. A variant
+    record literally named ``reference`` produced two contexts under one key:
+    the variant's evidence overwrote the target's, the target's own evidence
+    was discarded, and every downstream number for the REQUIRED target was
+    computed against the variant instead. Measured on one 140 nt target,
+    renaming a single variant record and changing nothing else took the run
+    from PASS=96 / coverage 0.7647 to PASS=0 / coverage 0.0, with a shortfall
+    claiming no feasible panel covers a target that was never evaluated.
+
+    ``_refuse_duplicate_names`` cannot see this: the record names really are
+    distinct, and the collision is with a literal that is not a record at all.
+    """
+    offenders = sorted(
+        {record.name for record in records[1:] if record.name == RESERVED_CONTEXT_NAME}
+    )
+    if offenders:
+        raise ValueError(
+            f"{RESERVED_CONTEXT_NAME!r} is the name of the reference context, so "
+            "a variant record cannot also be called that -- the two would share "
+            "one key and the variant would silently replace the target. Rename "
+            "the variant record."
+        )
+
+
 def find_conserved_windows(
     records: Sequence[SequenceRecord],
     spacer_length: int,
@@ -100,6 +160,7 @@ def find_conserved_windows(
             "conserved-region analysis needs at least two sequences; "
             f"got {len(records)}"
         )
+    _refuse_duplicate_names(records)
     by_name = {record.name: record for record in records}
     if reference is not None and reference not in by_name:
         raise KeyError(
@@ -238,6 +299,11 @@ def variant_contexts(
     biotype: Universe = Universe.NCRNA,
     expression: float | None = None,
     expected_queries: int = 1000,
+    background: Sequence[Locus] = (),
+    extra_targets: Sequence[SequenceRecord] = (),
+    index_for=None,
+    genome_build: str = "variants",
+    annotation: str = "v1",
 ):
     """One :class:`DesignContext` per variant, for FR7.2.
 
@@ -247,23 +313,68 @@ def variant_contexts(
     that already exists. Every context maps its locus to the *same* target id,
     which is what makes them alternative realisations of one target rather than
     several different targets.
+
+    ``background``, ``extra_targets`` and ``index_for`` exist because a variant
+    world used to hold the variant and *nothing else*. Everything else the
+    caller had loaded was built, paid for, and discarded the moment
+    ``--variants`` was supplied:
+
+    * ``background`` -- the off-target corpus, so a report with off-target hits
+      did not become a clean one merely because a variant was added;
+    * ``extra_targets`` -- the caller's *other* target records. A multi-record
+      FASTA makes records 1+ DESIRED targets, and they vanished from every
+      context while the contract still listed them, so ``desired_utility``
+      read 0.0 for every guide (it weighs 1.0 in the ranking) and those loci
+      stopped being searched at all. They go in as targets, mapped to their own
+      ids -- *not* through ``background``, which is deliberately absent from
+      ``locus_to_target`` and would turn a DESIRED target into an off-target
+      hazard, wrong in the other direction;
+    * ``index_for`` -- the index the caller asked for, instead of always letting
+      :meth:`DesignContext.auto` choose a local scanner.
     """
     from ..pipeline.orchestrator import DesignContext
 
+    records = list(records)
+    _refuse_duplicate_names(records)
+    _refuse_reserved_names(records)
     contexts = []
     for index, record in enumerate(records):
-        world = Transcriptome("variants", record.name)
+        # The run's own build and annotation, not the literals this used to
+        # pass. `Transcriptome.version` is what `run_design` files in the
+        # provenance ledger for every context, so building each world as
+        # `Transcriptome("variants", record.name)` meant adding --variants
+        # silently replaced the user's --genome-build and --annotation with
+        # "variants/<a FASTA header>" -- including for the context named
+        # "reference", whose loci are identical to the non-variant run's. A
+        # flag about isoforms rewrote the one line saying which annotation was
+        # searched, and filed a record name in the annotation slot.
+        world = Transcriptome(genome_build, annotation)
         world.add(
             Locus(record.name, record.sequence, biotype, gene=record.name,
                   expression=expression)
         )
-        contexts.append(
-            DesignContext.auto(
-                "reference" if index == 0 else record.name,
-                world,
-                universes,
-                {record.name: target_id},
-                expected_queries=expected_queries,
+        mapping = {record.name: target_id}
+        for extra in extra_targets:
+            if extra.name in (record.name, target_id):
+                continue
+            world.add(
+                Locus(extra.name, extra.sequence, biotype, gene=extra.name,
+                      expression=expression)
             )
-        )
+            mapping[extra.name] = extra.name
+        for locus in background:
+            if locus.locus_id not in world.loci:
+                world.add(locus)
+        name = RESERVED_CONTEXT_NAME if index == 0 else record.name
+        if index_for is None:
+            contexts.append(
+                DesignContext.auto(
+                    name, world, universes, mapping,
+                    expected_queries=expected_queries,
+                )
+            )
+        else:
+            contexts.append(
+                DesignContext(name, world, index_for(world), mapping)
+            )
     return contexts

@@ -106,6 +106,13 @@ class TestCostModel(unittest.TestCase):
         self.assertAlmostEqual(b, 2 * a, delta=1e-6)
 
     def test_fm_query_cost_does_not_grow_with_corpus_size(self):
+        """A property of the *model*, not of the FM index.
+
+        The real per-query cost is flat only above ~1.5 Mb; below that it
+        tracks the corpus by two orders of magnitude. Reading this test as a
+        statement about the index is the confusion that let plan_index print
+        "FM ~2800s" for a 2 kb corpus. See FM_FLAT_ABOVE_BASES.
+        """
         _, small = estimate_seconds(1_000_000, 100)
         _, large = estimate_seconds(2_000_000, 100)
         # Only the build term differs; the per-query term is flat.
@@ -153,6 +160,109 @@ class TestChoiceCannotChangeResults(unittest.TestCase):
         self.assertTrue(fm_result.bound.exhaustive)
         sig = lambda r: {(h.locus_id, h.start, h.duplex.n_mismatch) for h in r.hits}
         self.assertEqual(sig(scan_result), sig(fm_result))
+
+
+class TestTheRationaleDoesNotQuoteAnUnmodelledNumber(unittest.TestCase):
+    """The printed counterfactual was wrong by about a hundredfold.
+
+    ``FM_SECONDS_PER_QUERY`` is documented as "effectively flat in corpus
+    size", which is true above roughly a megabyte and a half and false below
+    it -- this module's own docstring table says so, with 0.742 s/query at
+    600 kb against 2.758 at 3 Mb. Measured on the same machine further down:
+    0.027 s/query at 2 kb, 0.163 at 20 kb, 0.858 at 200 kb.
+
+    ``plan_index`` printed that flat constant extrapolated down anyway. At the
+    shipped demo's 2,391 bases it said "FM ~2800s" where the real cost is about
+    27 seconds. The string is provenance -- stdout, the HTML report, and the
+    ledger's ``index_choice`` -- so it was a measured-sounding claim about a
+    counterfactual nobody had measured.
+
+    The decision was never wrong, and these tests pin that too: the crossover
+    is near 87 Mb, deep in the flat regime, and below it the scanner wins under
+    either figure. Only the report is fixed.
+    """
+
+    def test_a_small_corpus_gets_no_fm_seconds_figure(self):
+        plan = plan_index(2_391, expected_queries=1000)
+        self.assertEqual(plan.kind, SCANNER)
+        self.assertNotIn("FM ~", plan.rationale)
+
+    def test_it_says_why_instead(self):
+        """A refusal to quote a number is only useful if it says what it means."""
+        rationale = plan_index(2_391, expected_queries=1000).rationale
+        self.assertIn("suffix-array build does not pay back", rationale)
+        self.assertIn("only modelled above", rationale)
+        self.assertIn("1.5 Mb", rationale)
+
+    def test_a_large_corpus_still_reports_both_numbers(self):
+        """Above the calibration floor the estimate is a measurement, and the
+        comparison is the whole point of the model."""
+        plan = plan_index(3_000_000, expected_queries=1000)
+        self.assertEqual(plan.kind, SCANNER)
+        self.assertIn("FM ~", plan.rationale)
+        self.assertIn("beats FM", plan.rationale)
+
+    def test_the_choice_itself_is_unchanged_on_both_sides(self):
+        """This was a reporting fix. If it moved a decision it was the wrong
+        fix, and that is worth a test rather than an assurance."""
+        for bases in (0, 1, 2_391, 100_000, 1_499_999, 1_500_000, 3_000_000,
+                      50_000_000):
+            with self.subTest(bases=bases):
+                scanner_seconds, fm_seconds = estimate_seconds(bases, 1000)
+                expected = FM if fm_seconds < scanner_seconds else SCANNER
+                if bases <= 0:
+                    expected = SCANNER
+                self.assertEqual(plan_index(bases, 1000).kind, expected)
+
+    def test_the_crossover_is_far_above_the_calibration_floor(self):
+        """Why leaving the flat constant in the decision is safe: the only
+        place the two costs are close is deep inside the regime where the
+        constant was measured."""
+        from cas13guide.services.index_selection import FM_FLAT_ABOVE_BASES
+
+        self.assertGreater(CROSSOVER_BASES, 10 * FM_FLAT_ABOVE_BASES)
+
+    def test_the_model_records_where_it_is_valid(self):
+        """The constant drifted because its validity range lived in prose that
+        described a different regime from the one the code applied it to. The
+        measurements that bound it belong beside the model."""
+        import inspect
+
+        from cas13guide.services import index_selection
+
+        self.assertTrue(hasattr(index_selection, "FM_FLAT_ABOVE_BASES"))
+        doc = inspect.getdoc(index_selection) or ""
+        self.assertIn("above about 1.5 Mb", doc)
+        # the small-corpus rows that show it is not flat down there
+        for row in ("2 kb", "20 kb", "200 kb"):
+            with self.subTest(row=row):
+                self.assertIn(row, doc)
+
+
+class TestTheDecisionBoundarySitsWhereTheMeasurementsPutIt(unittest.TestCase):
+    """Where scan stops winning, in bases, rather than as an identity.
+
+    ``test_derived_crossover_matches_the_per_query_costs`` says outright that
+    CROSSOVER_BASES is derived from the constants rather than independent, so
+    it stays true whatever those constants become -- and nothing else pinned
+    them. Doubling SCAN_SECONDS_PER_MB_PER_QUERY, which reads exactly like an
+    ordinary re-measurement on a different machine, moved the real boundary
+    from 100.7 Mb to 46.8 Mb with the whole suite still green. Every corpus in
+    between changed which index it builds, and which one it tells the ledger
+    it built.
+
+    Bracketing the boundary pins all three constants at once, because the
+    boundary is where ``BUILD * mb + q * FM_Q`` overtakes ``q * SCAN * mb``.
+    A genuine re-measurement should fail here: that is the point at which
+    somebody confirms the module docstring's table still describes the
+    machine.
+    """
+
+    def test_the_scanner_still_wins_just_below_it(self):
+        self.assertEqual(plan_index(100_000_000, 1000).kind, SCANNER)
+
+    def test_and_the_fm_index_wins_just_above_it(self):
+        self.assertEqual(plan_index(101_000_000, 1000).kind, FM)
 
 
 if __name__ == "__main__":

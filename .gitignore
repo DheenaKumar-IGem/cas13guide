@@ -5,3 +5,28 @@ __pycache__/
 report.json
 .venv/
 demo_report/
+build/
+dist/
+
+# coverage data: a binary database rewritten by every run
+.coverage
+.coverage.*
+# subprocess tracing needs this on sys.path while measuring, and never after
+sitecustomize.py
+# the vocabulary probe writes these beside the tree while it runs
+_vocabulary_coverage_plugin.py
+.vocabulary_coverage.json
+
+# stray logs from tooling
+*.log
+
+# scratch data a review agent leaves in the tree while reproducing a
+# defect. Three 6,000-row CSVs reached a commit this way.
+/stray_*.csv
+/repro_*.csv
+/*.tmp.csv
+
+# probe scripts a review agent writes beside the tree to reproduce a finding.
+# Same class as the stray CSVs above: useful for one hunt, noise afterwards.
+/_probe*/
+/scratch_hunt/

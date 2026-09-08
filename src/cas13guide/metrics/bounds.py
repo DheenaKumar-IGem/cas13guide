@@ -3,6 +3,14 @@
 The asymmetry is the whole point: benefit is read at its *lower* confidence
 bound, hazard at its *upper* one. A low point prediction is not evidence of
 safety, so hazards must never be read at their point estimate.
+
+This module imports nothing, deliberately. :class:`Interval` is a primitive --
+``models/evidence.py`` is built out of it, and ``metrics/aggregate.py`` consumes
+both -- so the ``metrics`` package spans two layers: this file sits *below*
+``models`` and its sibling sits above. That reads as an upward dependency if you
+group by package and is acyclic by module, which is what actually matters. Add a
+top-level import of ``models`` here and it stops being: ``tests/test_layering.py``
+fails if anything in this package grows one.
 """
 
 from __future__ import annotations
@@ -32,6 +40,23 @@ class Interval:
     def __post_init__(self) -> None:
         if self.lower > self.upper:
             raise ValueError(f"inverted interval: [{self.lower}, {self.upper}]")
+        # And the estimate has to be inside its own interval.
+        #
+        # The class already refused an inverted one and said nothing about
+        # where `point` sits, which leaves the two halves free to disagree
+        # about the same quantity: `point` is the number the report prints,
+        # `lower`/`upper` are what the gate reads, and a guide could be shown
+        # an activity its own bound excludes.
+        #
+        # A guard rather than a fix: 119,762 intervals built across the whole
+        # suite -- the trained model, kinetics, variant contexts, BLAST --
+        # already satisfy it, so nothing here is currently wrong. What was
+        # missing is anything that would say so if it stopped being true.
+        if not self.lower <= self.point <= self.upper:
+            raise ValueError(
+                f"point {self.point} outside its own bounds "
+                f"[{self.lower}, {self.upper}]"
+            )
 
     @property
     def width(self) -> float:
@@ -65,7 +90,18 @@ def hazard_product(*intervals: Interval, scale: float = 1.0) -> float:
     """
     out = scale
     for iv in intervals:
-        if iv.upper < 0:
+        # ``lower``, not ``upper``. The precondition is that every factor is
+        # non-negative, and an interval straddling zero satisfies `upper >= 0`
+        # while violating it -- so the guard passed exactly the inputs it
+        # exists to reject. Multiplying uppers is an upper bound on the product
+        # only when no factor can be negative: for [-5, 2] and [-4, 3] the
+        # product reaches 20 at the two lower ends, while the old code returned
+        # 2 x 3 = 6 and called it a bound.
+        #
+        # Latent rather than active -- the three real factors (UCB activity,
+        # UCB expression, hazard weight) are non-negative by construction -- but
+        # a guard that cannot fire in the case it names is not a guard.
+        if iv.lower < 0:
             raise ValueError("hazard_product requires non-negative quantities")
         out *= iv.upper
     return out

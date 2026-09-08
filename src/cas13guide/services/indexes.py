@@ -19,9 +19,9 @@ claim ``exhaustive=True`` for its supported envelope.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Sequence, runtime_checkable
 
 import numpy as np
 
@@ -42,6 +42,13 @@ class ExhaustivenessBound:
     exhaustive: bool
     method: str
     note: str = ""
+    #: Universes the corpus behind this index holds a sequence in, or ``None``
+    #: when the index cannot know -- a remote BLAST database, say. It is the
+    #: only thing that separates "the search skipped sequences it had" from
+    #: "there were none": both leave the same hole in the off-target table and
+    #: only one is the run's fault. An index that cannot prove the sequences
+    #: were there does not get to have the run accused of skipping them.
+    corpus_universes: frozenset[Universe] | None = None
 
     def covers(self, required_mismatches: int) -> bool:
         return self.exhaustive and self.max_mismatches >= required_mismatches
@@ -232,14 +239,27 @@ def _scan_locus(expected: str, sequence: str, max_mismatches: int):
 
 
 class ExhaustiveScanIndex:
-    """Full scan over the declared universes. Complete by construction."""
+    """Full scan over every locus admitted by the filter.
+
+    Complete with respect to the corpus, which is not the same as complete
+    with respect to the universes the filter names: a universe the corpus
+    holds no sequence in is reported as absent rather than as searched.
+    """
 
     version = "index/exhaustive-scan/v1"
 
     def __init__(self, transcriptome: Transcriptome, universes: frozenset[Universe]) -> None:
         self.transcriptome = transcriptome
-        self.universes = universes
+        self.requested_universes = universes
         self._loci = transcriptome.in_universes(universes)
+        #: What the bound reports. The filter is what this index was *willing*
+        #: to search; this is what it has. Reporting the filter made the
+        #: ledger's claim and the CRITICAL limitation name every universe the
+        #: caller admitted, for a corpus that held one -- and made
+        #: `universe_gaps` subtract the declaration from itself, so the gate
+        #: whose whole purpose is to catch a suspiciously clean off-target
+        #: report could not fire on the documented command.
+        self.universes = frozenset(locus.biotype for locus in self._loci)
         # Built lazily on the first query. Building it eagerly would cost one
         # byte per base up front and make "the scanner costs nothing to build"
         # -- which the index-selection cost model relies on -- untrue for an
@@ -281,6 +301,12 @@ class ExhaustiveScanIndex:
                 [start + len(locus.sequence) for start, locus in zip(offsets, self._loci)],
                 dtype=np.int64,
             )
+        # Narrowed for the return: all three are filled together above, and a
+        # reader (or a type checker) should not have to prove that from the
+        # branch structure.
+        assert self._corpus is not None
+        assert self._offsets is not None
+        assert self._ends is not None
         return self._corpus, self._offsets, self._ends
 
     def _within_locus(self, starts: np.ndarray, length: int) -> tuple[np.ndarray, np.ndarray]:
@@ -332,6 +358,7 @@ class ExhaustiveScanIndex:
             universes=self.universes,
             exhaustive=True,
             method=self.version,
+            corpus_universes=self.transcriptome.covered_universes(),
         )
         return SearchResult(hits=tuple(hits), bound=bound)
 
@@ -367,9 +394,12 @@ class SeedHeuristicIndex:
         seed_length: int = 11,
     ) -> None:
         self.transcriptome = transcriptome
-        self.universes = universes
+        self.requested_universes = universes
         self.seed_length = seed_length
         self._loci = transcriptome.in_universes(universes)
+        # See ExhaustiveScanIndex: the bound reports what is held, not the
+        # filter that was admitted.
+        self.universes = frozenset(locus.biotype for locus in self._loci)
 
     def search(self, guide_id: str, spacer: str, max_mismatches: int) -> SearchResult:
         expected = revcomp(spacer)
@@ -414,9 +444,106 @@ class SeedHeuristicIndex:
             universes=self.universes,
             exhaustive=False,
             method=self.version,
+            corpus_universes=self.transcriptome.covered_universes(),
             note=(
                 f"requires an exact {k}nt terminal seed; hits with mismatches "
                 "in both seeds are not guaranteed to be found"
             ),
         )
         return SearchResult(hits=tuple(hits), bound=bound)
+
+
+class UnionSearchIndex:
+    """Several indexes searched as one, hits merged, weakest bound reported.
+
+    Why this has to exist. ``--blast-db`` *replaced* the context's index, and
+    the same index answers both questions the pipeline asks: where does this
+    guide bind off-target, and does it bind its intended target at all. A BLAST
+    database answers only the first -- it never sees the ``Transcriptome`` the
+    run was built around, and its subject ids are database accessions that
+    ``annotate_hit`` cannot match to the run's own target ids. So every guide
+    came back with no on-target evidence, ``required_coverage`` fell to
+    ``NO_EVIDENCE``, and a run with ``--blast-db`` failed **every** candidate:
+    measured 39/39 FAIL against 28 REVIEW for the identical design without it.
+    A flag that turns every guide into a FAIL is indistinguishable from a
+    target that has no usable guides.
+
+    So BLAST is *additional*, not alternative: the local exhaustive scan keeps
+    answering the on-target question and BLAST widens the off-target corpus,
+    which is what the README says the flag is for.
+
+    Two invariants:
+
+    * **Deduplicated by identity of the site**, ``(locus_id, start)``. Two
+      indexes over overlapping corpora would otherwise report one off-target
+      twice, and ``cumulative_burden`` is a sum -- double-counting a locus
+      inflates the hazard of the guide that found it twice.
+    * **The bound is the weakest**, via :func:`is_weaker`, and the universes are
+      the union. A heuristic member makes the whole search heuristic, which is
+      the honest reading: the union inherits the doubt of its worst member. The
+      union of universes is likewise right, since a hit anywhere in either
+      corpus is a hit.
+    """
+
+    def __init__(self, indexes: Sequence[SearchIndex]) -> None:
+        if not indexes:
+            raise ValueError("a union of no indexes cannot search anything")
+        self.indexes = tuple(indexes)
+        self.version = (
+            "index/union/v1["
+            + "+".join(getattr(index, "version", "?") for index in self.indexes)
+            + "]"
+        )
+
+    def search(self, guide_id: str, spacer: str, max_mismatches: int) -> SearchResult:
+        hits: list[SearchHit] = []
+        seen: set[tuple[str, int]] = set()
+        bound: ExhaustivenessBound | None = None
+        universes: set[Universe] = set()
+        corpora: list[frozenset[Universe] | None] = []
+        for index in self.indexes:
+            result = index.search(guide_id, spacer, max_mismatches)
+            corpora.append(result.bound.corpus_universes)
+            for hit in result.hits:
+                key = (hit.locus_id, hit.start)
+                if key in seen:
+                    continue
+                seen.add(key)
+                hits.append(hit)
+            universes |= result.bound.universes
+            if bound is None or is_weaker(result.bound, bound):
+                bound = result.bound
+        assert bound is not None  # non-empty by construction
+        hits.sort(key=lambda h: (h.locus_id, h.start))
+        return SearchResult(
+            hits=tuple(hits),
+            bound=replace(
+                bound,
+                universes=frozenset(universes),
+                method=self.version,
+                # None from any member poisons the union: one index that cannot
+                # see its corpus is enough to make the union unable to prove a
+                # sequence was available.
+                corpus_universes=(
+                    None
+                    if any(c is None for c in corpora)
+                    else frozenset(u for c in corpora if c is not None for u in c)
+                ),
+            ),
+        )
+
+    def any_hit(self, spacer: str, max_mismatches: int) -> bool:
+        """Existence-only query, short-circuiting across members.
+
+        Offered because every member offers it; ``g_output`` uses it to verify
+        a non-targeting control, and falling back to full enumeration there
+        would pay the cost the seam exists to avoid.
+        """
+        for index in self.indexes:
+            probe = getattr(index, "any_hit", None)
+            if probe is not None:
+                if probe(spacer, max_mismatches):
+                    return True
+            elif index.search("__any_hit__", spacer, max_mismatches).hits:
+                return True
+        return False

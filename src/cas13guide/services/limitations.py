@@ -74,13 +74,59 @@ def _calibration_is_synthetic(calibration: Any) -> bool:
     return bool(getattr(calibration, "synthetic", False))
 
 
+def _self_fold_is_proxy(provenance: Any) -> bool:
+    """True when QC judged self-folding by stem count rather than by folding.
+
+    Duck-typed over the ledger's serialised form, so a caller can hand in
+    ``report.provenance`` (a dict) or anything else exposing ``records``.
+    """
+    if provenance is None:
+        return False
+    records = (
+        provenance.get("records", ())
+        if isinstance(provenance, dict)
+        else getattr(provenance, "records", ())
+    )
+    for record in records:
+        get = record.get if isinstance(record, dict) else lambda k: getattr(record, k, None)
+        if get("name") == "qc_self_fold":
+            return str(get("version") or "").startswith("qc/stem-proxy")
+    return False
+
+
+def evaluated_contexts(provenance: Any) -> tuple[str, ...]:
+    """Which sequence contexts the run built evidence over.
+
+    The ledger records one ``transcriptome`` entry per context, named for it,
+    so a surface can tell a run that compared a reference against isoforms
+    from one that saw a single sequence. Duck-typed like
+    :func:`_self_fold_is_proxy`, for the same reason.
+    """
+    if provenance is None:
+        return ()
+    records = (
+        provenance.get("records", ())
+        if isinstance(provenance, dict)
+        else getattr(provenance, "records", ())
+    )
+    names = []
+    for record in records:
+        get = record.get if isinstance(record, dict) else lambda k: getattr(record, k, None)
+        if get("kind") == "transcriptome":
+            names.append(str(get("name")))
+    return tuple(names)
+
+
 def limitations_for_run(
     spec: ResolvedDesignSpec,
     registry: Any = None,
     calibration: Any = None,
     bound: ExhaustivenessBound | None = None,
     universe_gaps: frozenset | None = None,
+    self_identical_loci: frozenset | None = None,
     panel_size: int = 0,
+    panel_confidence: Any = None,
+    provenance: Any = None,
 ) -> tuple[Limitation, ...]:
     """Everything this particular run could not establish.
 
@@ -114,9 +160,43 @@ def limitations_for_run(
                 "whose errors are correlated. The spacing constraint only stops "
                 "them sharing a site. Treat the number as a ranking aid -- this "
                 "panel against another -- and not as the probability that the "
-                "panel detects the target, which it overstates.",
+                "panel detects the target, which it overstates. The panel "
+                "confidence interval (FR6.3) is the number that does not make "
+                "that assumption; the noisy-OR is its upper end.",
             )
         )
+
+    # ---- panel confidence (FR6.3) ---------------------------------------
+    if panel_confidence is not None and getattr(panel_confidence, "targets", None):
+        if not getattr(panel_confidence, "has_point_estimates", False):
+            found.append(
+                Limitation(
+                    "panel-dependence-unmeasured",
+                    Severity.WARNING,
+                    "Panel detection probability is reported as an interval "
+                    "because how much of a panel's failure is shared between "
+                    "its members was never measured for this assay. The lower "
+                    "end is what the panel is worth if the members fail "
+                    "together, the upper end if they fail independently; the "
+                    "truth is somewhere between and nothing here can locate "
+                    "it. Measure the common-cause fraction from replicate "
+                    "panel runs and supply it with --panel-dependence to get a "
+                    "single number.",
+                )
+            )
+        if any(getattr(t, "thin", False) for t in panel_confidence.targets):
+            found.append(
+                Limitation(
+                    "panel-confidence-thin-calibration",
+                    Severity.WARNING,
+                    "At least one panel member's success probability was "
+                    "estimated from a thin or unconditional slice of the "
+                    "calibration set, so its credible interval is wide because "
+                    "of how little data backs it rather than because the guide "
+                    "is doubtful. A larger screen narrows it; nothing else "
+                    "does.",
+                )
+            )
 
     # ---- preset provenance --------------------------------------------
     used = sorted(
@@ -145,25 +225,24 @@ def limitations_for_run(
                 )
             )
     if used and not PRESETS_VERIFIED:
-        if used:
-            found.append(
-                Limitation(
-                    "preset-sequence-unverified",
-                    Severity.WARNING,
-                    "The target sequence came from a built-in preset "
-                    f"({', '.join(used)}). Each was checked against its miRBase "
-                    "per-accession page on 2026-08-23 and matched, but this "
-                    "package pins no release and no checksum, so it cannot say "
-                    "WHICH release it agrees with -- and mature 3' ends do get "
-                    "revised between releases. Databases also disagree with each "
-                    "other on where a mature miRNA ends. Run "
-                    "`presets.verify_against_mirbase(path_to_mature_fa)` against "
-                    "the release you intend to cite before ordering anything: a "
-                    "guide designed against the wrong target is wrong in a way "
-                    "no score on this page can show.",
-                    source="miRBase",
-                )
+        found.append(
+            Limitation(
+                "preset-sequence-unverified",
+                Severity.WARNING,
+                "The target sequence came from a built-in preset "
+                f"({', '.join(used)}). Each was checked against its miRBase "
+                "per-accession page on 2026-08-23 and matched, but this "
+                "package pins no release and no checksum, so it cannot say "
+                "WHICH release it agrees with -- and mature 3' ends do get "
+                "revised between releases. Databases also disagree with each "
+                "other on where a mature miRNA ends. Run "
+                "`presets.verify_against_mirbase(path_to_mature_fa)` against "
+                "the release you intend to cite before ordering anything: a "
+                "guide designed against the wrong target is wrong in a way "
+                "no score on this page can show.",
+                source="miRBase",
             )
+        )
 
     # ---- activity model ----------------------------------------------
     activity = getattr(registry, "activity", None)
@@ -182,19 +261,66 @@ def limitations_for_run(
             )
         )
 
+    # ---- QC self-folding -----------------------------------------------
+    # Read off the run's own provenance rather than off the registry: the QC
+    # fold source is chosen in the orchestrator and is NOT
+    # registry.accessibility, which is a different model behind a different
+    # flag. Keying off the wrong one is how a limitation fires on the wrong
+    # runs, which is the failure this module exists to avoid.
+    if _self_fold_is_proxy(provenance):
+        found.append(
+            Limitation(
+                "self-folding-is-a-proxy",
+                Severity.WARNING,
+                "Spacer self-folding was judged by counting the longest "
+                "self-complementary stretch, not by folding the spacer -- "
+                "ViennaRNA was not importable. That proxy recovers about a "
+                "third of the guides a real fold rejects, and four in five of "
+                "the ones it does reject do not fold tightly enough to meet "
+                "the -8 kcal/mol criterion it stands in for -- so some "
+                "self-structured spacers passed QC, and rather more were "
+                "failed for a stem that is real but not disqualifying. A "
+                "self-folding FAIL cannot be bought back, so install ViennaRNA "
+                '(`pip install "cas13guide[structure]"`) before reading these '
+                "verdicts as final.",
+            )
+        )
+
     # ---- structure ----------------------------------------------------
     accessibility = getattr(registry, "accessibility", None)
     access_version = getattr(accessibility, "version", "") or ""
     if access_version.startswith("accessibility/none"):
-        found.append(
-            Limitation(
-                "no-accessibility",
-                Severity.WARNING,
-                "No structural accessibility was computed, so a site buried in a "
-                "stable hairpin is scored the same as an open one. Install "
-                'ViennaRNA (`pip install "cas13guide[structure]"`) to enable it.',
+        # A floor the user set explicitly is a different situation from one
+        # they never asked for. The gate skips TARGET_INACCESSIBLE when the
+        # metric is None -- correctly, since absent evidence is not bad
+        # evidence -- so `--min-accessibility 0.9` with no folding engine
+        # installed asks for a gate that cannot fire, and the generic warning
+        # never connected the two. Say which number went unused.
+        floor = spec.thresholds.min_accessibility
+        if floor > 0.0:
+            found.append(
+                Limitation(
+                    "accessibility-floor-inert",
+                    Severity.CRITICAL,
+                    f"An accessibility floor of {floor:.2f} was requested, and "
+                    "no accessibility was computed, so the floor was NOT "
+                    "applied -- no guide was held back for being buried. "
+                    f"{_structure_remedy()} Either way, do not read this run "
+                    "as having enforced it.",
+                )
             )
-        )
+        else:
+            found.append(
+                Limitation(
+                    "no-accessibility",
+                    Severity.WARNING,
+                    "No structural accessibility was computed, so a site buried in a "
+                    "stable hairpin is scored the same as an open one. The duplex "
+                    "free energy goes with it -- same dependency, same run -- so "
+                    "`duplex_dg_per_nt` is empty in the exports and its column is "
+                    f"absent from the table. {_structure_remedy()}",
+                )
+            )
     elif not getattr(accessibility, "is_independent_evidence", False):
         found.append(
             Limitation(
@@ -205,6 +331,24 @@ def limitations_for_run(
                 "calibrated bound, because it is a prediction from the same "
                 "sequence the activity model already sees. A SHAPE, DMS-seq or "
                 "icSHAPE track is independent evidence and does reach the model.",
+            )
+        )
+
+    energy_version = getattr(getattr(registry, "energy", None), "version", "") or ""
+    window = (spec.thresholds.duplex_dg_per_nt_min, spec.thresholds.duplex_dg_per_nt_max)
+    if energy_version.startswith("thermodynamics/none") and any(
+        bound is not None for bound in window
+    ):
+        low, high = window
+        found.append(
+            Limitation(
+                "duplex-window-inert",
+                Severity.CRITICAL,
+                f"A duplex energy window of [{low}, {high}] kcal/mol/nt was "
+                "requested, and no duplex energy was computed, so the window "
+                "was NOT applied -- no guide was flagged for binding too "
+                "tightly or too weakly. Install ViennaRNA "
+                '(`pip install "cas13guide[structure]"`) or drop the window.',
             )
         )
 
@@ -289,6 +433,29 @@ def limitations_for_run(
                 "invisible: a guide is specific *against what you gave it*.",
             )
         )
+    if self_identical_loci:
+        found.append(
+            Limitation(
+                "off-target-may-be-the-target",
+                Severity.CRITICAL,
+                "The off-target search reached a corpus this run did not "
+                "assemble, and "
+                + ", ".join(sorted(self_identical_loci)[:5])
+                + (" and others" if len(self_identical_loci) > 5 else "")
+                + (" match" if len(self_identical_loci) > 1 else " matches")
+                + " a site in the target exactly. A transcript database "
+                "contains the target's own transcript, and its accession "
+                "cannot be matched to the record you supplied, so the site the "
+                "guide was designed to bind is scored here as a perfect "
+                "off-target. Those rows are either your target or a paralog "
+                "identical to it across the whole site, and nothing in this "
+                "run can tell which -- so the hazard is left counted, which "
+                "overstates it, rather than dropped, which would hide a real "
+                "off-target. worst_off_target and cumulative_burden are "
+                "inflated by an unknown amount for every guide.",
+            )
+        )
+
     if universe_gaps:
         found.append(
             Limitation(
@@ -297,7 +464,11 @@ def limitations_for_run(
                 "The assay exposes the guide to universes the search did not "
                 "cover: " + ", ".join(sorted(u.value for u in universe_gaps))
                 + ". A missing universe does not produce a warning-shaped result, "
-                "it produces a suspiciously clean one.",
+                "it produces a suspiciously clean one. Load sequences from it "
+                "with --background, labelling each record in its FASTA header "
+                "(>id biotype=rrna) or the whole file with --background-biotype; "
+                "a universe with no sequence in the corpus is not searched, "
+                "whatever the run declares.",
             )
         )
 
@@ -324,7 +495,34 @@ def limitations_for_run(
             "a good candidate, not a certainty. Order several and test them.",
         )
     )
+    # ---- robustness ----------------------------------------------------
+    # Robustness is the minimum required coverage across every evaluated
+    # context. Over one context that minimum is the coverage, so a run with no
+    # variants reports a robustness equal to its coverage -- a number that
+    # reads as "this guide survives variation" and was computed over no
+    # variation at all. The terminal drops the column; the HTML report showed
+    # it; and nothing anywhere said the question had not been asked.
+    contexts = evaluated_contexts(provenance)
+    # `== 1`, not `<= 1`. A report carrying no transcriptome records at
+    # all -- a caller who assembled the dict by hand -- tells us nothing
+    # about how many contexts ran, and silence is not evidence of one.
+    if len(contexts) == 1:
+        found.append(
+            Limitation(
+                "robustness-unevaluated",
+                Severity.WARNING,
+                "Robustness was not evaluated: evidence was built over one "
+                f"sequence context{'' if not contexts else ' (' + contexts[0] + ')'}, "
+                "so the worst-case coverage across contexts is just the "
+                "coverage and no guide was tested against a variant. A guide "
+                "that fails on an isoform, a haplotype or a circulating strain "
+                "looks identical here to one that does not. Supply them with "
+                "--variants.",
+            )
+        )
+
     found.sort(key=lambda item: (_SEVERITY_ORDER[item.severity], item.id))
+
     return tuple(found)
 
 
@@ -336,3 +534,21 @@ def worst_severity(limitations: Sequence[Limitation]) -> Severity | None:
     if not limitations:
         return None
     return min(limitations, key=lambda item: _SEVERITY_ORDER[item.severity]).severity
+
+def _structure_remedy() -> str:
+    """What to actually do about a run with no accessibility.
+
+    Two different situations reach the reader as one. If ViennaRNA is missing,
+    install it. If it is present, the run declined to fold -- `--no-structure`,
+    or a caller that supplied `NullAccessibilityModel` -- and installing it
+    again does nothing. This used to say "Install ViennaRNA" in both cases,
+    which on a machine that already had it was advice that could not work.
+    """
+    from .accessibility import folding_engine_available
+
+    if folding_engine_available():
+        return ("ViennaRNA is installed, so this run declined to fold rather "
+                "than being unable to: drop `--no-structure`, or supply an "
+                "accessibility model instead of NullAccessibilityModel.")
+    return ('Install ViennaRNA (`pip install "cas13guide[structure]"`) to '
+            "enable it.")

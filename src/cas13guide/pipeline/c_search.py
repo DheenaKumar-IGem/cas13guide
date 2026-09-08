@@ -26,10 +26,13 @@ class SearchOutcome:
     hits_by_guide: dict[str, tuple[SearchHit, ...]]
     bound: ExhaustivenessBound
     universe_gaps: frozenset[Universe]
-
-    @property
-    def universe_adequate(self) -> bool:
-        return not self.universe_gaps
+    #: Loci whose hit is sequence-identical to a site in one of this run's own
+    #: targets, yet carries no contract identity. Empty for an index built from
+    #: the run's Transcriptome, because `locus_to_target` names those loci.
+    #: Non-empty means a search reached a corpus this run did not assemble --
+    #: `--blast-db` -- where the target's own transcript is present under an
+    #: accession no key can match, and is therefore scored as an off-target.
+    self_identical_loci: frozenset[str] = frozenset()
 
 
 def universe_gaps(
@@ -41,9 +44,11 @@ def universe_gaps(
     what the spec declared. Those are different things, and trusting the
     declaration was a hole straight through the universe-adequacy gate: an
     index built over a narrower universe set than the spec declares returns a
-    perfectly clean off-target report, and because ``missing_universes`` only
-    ever compared ``ASSAY_REQUIRED`` against ``declared_universes`` the gate saw
-    no gap, raised no REVIEW and recorded no shortfall. In a reproduction, the
+    perfectly clean off-target report, and because the gate only ever compared
+    ``ASSAY_REQUIRED`` against ``declared_universes`` it saw no gap, raised no
+    REVIEW and recorded no shortfall. (The method that did that comparison,
+    ``ContextScope.missing_universes``, has since been removed: once this read
+    what the index holds, nothing called it.) In a reproduction, the
     same spec and transcriptome went from 42 FAIL to 42 PASS with zero
     off-target rows purely by narrowing the index -- rRNA hits at 5000 TPM
     simply ceased to exist.
@@ -55,6 +60,37 @@ def universe_gaps(
     """
     required = ASSAY_REQUIRED_UNIVERSES[spec.profile.assay]
     return frozenset((required | spec.context.declared_universes) - bound.universes)
+
+
+def self_identical_loci(
+    hits_by_guide: dict[str, tuple[SearchHit, ...]], spec: ResolvedDesignSpec
+) -> frozenset[str]:
+    """Unannotated hits whose site is a site in one of this run's targets.
+
+    `annotate_hit` names a hit by looking its locus up in ``locus_to_target``,
+    which is keyed on the ids of the loci this run assembled. A BLAST subject
+    id is an accession from someone else's database, so the target's own
+    transcript -- which a transcriptome database contains -- comes back as an
+    unannotated perfect hit and is scored as the strongest off-target evidence
+    there is, for the site the guide was designed from.
+
+    This does not fix it by reclassifying. A site identical to the target's is
+    either the target or a perfect-identity paralog, and nothing here can tell
+    them apart; attributing it to the target would hide a genuine off-target,
+    which is the worse error for a tool whose subject is specificity. The
+    hazard stays counted and the run reports what it could not distinguish.
+    """
+    sites = [t.sequence for t in spec.contract.targets if t.sequence]
+    if not sites:
+        return frozenset()
+    found: set[str] = set()
+    for hits in hits_by_guide.values():
+        for hit in hits:
+            if hit.target_id is not None or hit.duplex.n_mismatch:
+                continue
+            if any(hit.target_site in sequence for sequence in sites):
+                found.add(hit.locus_id)
+    return frozenset(found)
 
 
 def annotate_hit(hit: SearchHit, spec: ResolvedDesignSpec, locus_to_target: dict[str, str]) -> SearchHit:
@@ -112,4 +148,5 @@ def run_search(
         hits_by_guide=hits_by_guide,
         bound=bound,
         universe_gaps=universe_gaps(spec, bound),
+        self_identical_loci=self_identical_loci(hits_by_guide, spec),
     )

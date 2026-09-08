@@ -11,22 +11,66 @@ from __future__ import annotations
 from ..contract.enums import QCFlag
 from ..contract.spec import ResolvedDesignSpec
 from ..models.evidence import Candidate, QCResult
-from ..util.seq import gc_fraction, has_polyu_terminator, max_homopolymer, revcomp
+from ..util.seq import gc_fraction, has_polyu_terminator, max_homopolymer
 
 GC_MIN, GC_MAX = 0.30, 0.70
 MAX_HOMOPOLYMER = 4
 #: Longest self-hairpin stem tolerated, when no real folding engine is
 #: available. This is a fallback and it is not good: measured against ViennaRNA
-#: over 6,000 random 22-mers it flags 1.9% of spacers and catches 28.9% of those
-#: that genuinely fold to -8 kcal/mol or tighter, with roughly half its flags
-#: being sequences that barely fold at all. The wobble fix raised recall from
-#: 5.6%, which is an improvement rather than a solution.
+#: over 60,000 random 22-mers (seed 12345) it flags 1.77% of spacers and catches
+#: 34.9% +/- 3.7% of those that genuinely fold to -8 kcal/mol or tighter, while
+#: only 21% of its flags are sequences that really do fold -- four in five are
+#: false. The wobble fix raised recall from 5.6%, which is an improvement rather
+#: than a solution.
+#:
+#: Those figures were 1.9%, 28.9% and "roughly half its flags" on a 6,000-mer
+#: sample, which puts ~53 genuine folders behind the recall estimate and a 95%
+#: interval about +/-11% wide. The recall number was not wrong so much as noisy;
+#: the precision one was materially optimistic. Re-measured at ten times the
+#: sample, and pinned by ``tests/test_measured_claims.py`` so it cannot drift
+#: again unnoticed.
 #:
 #: A helix length is simply not a good estimator of a free energy, and no
 #: threshold makes it one. Install ViennaRNA and the real fold is used instead;
 #: the run says which one it used.
 MAX_SELF_STEM = 6
-MAX_DR_STEM = 6
+
+#: Longest spacer:DR helix tolerated before :data:`QCFlag.DR_SPACER_INTERACTION`
+#: fires. Nine, not six, and the two numbers describe the same strictness under
+#: two different pairing rules.
+#:
+#: This threshold and :func:`longest_cross_complement` are one calibration, not
+#: two constants. Six was derived when the scan was Watson-Crick only, where it
+#: flagged 2.1-2.3% of random 22-mers against all three shipped repeats -- a
+#: rate low enough that a flag meant something specific about the spacer.
+#: Teaching the scan G-U wobbles (which it had to learn: a real 12 bp helix
+#: containing one wobble was being measured as 6, exactly at the old bar, so it
+#: passed) roughly doubles the helix a random spacer reaches by chance. Left at
+#: six, the same threshold flagged 14.7% of random spacers against the
+#: LwaCas13a repeat and 47.5% against PspCas13b.
+#:
+#: That would have been the worse bug of the two. DR_SPACER_INTERACTION is a
+#: *hard* flag -- the candidate is dropped, not ranked down -- so a rate like
+#: that deletes a third of every candidate set for no reason, and the number
+#: deleted depends mostly on which repeat the ortholog happens to have. It is
+#: the failure ``contract/effectors.py`` describes at length about hard-vs-soft
+#: PFS, arrived at from the other direction.
+#:
+#: Nine restores the original false-positive budget: 2.4% / 0.5% / 3.1% for
+#: RfxCas13d / LwaCas13a / PspCas13b over 20,000 random 22-mers, seed 12345,
+#: against 2.3% / 2.1% / 2.2% for the old rule at six. Detection is strictly
+#: better than before rather than merely preserved -- every constructed spacer
+#: carrying a 12 nt wobble-containing partner of its own repeat is still
+#: flagged (19/19, 21/21, 24/24 across the three), and those are exactly the
+#: ones the Watson-Crick scan could not see at any threshold.
+#:
+#: The spread across effectors is wider than it was (0.5% to 3.1%, against
+#: 2.1% to 2.3%) because a wobble scan is sensitive to the repeat's G/U content
+#: in a way a Watson-Crick scan is not. A per-effector threshold derived from
+#: each repeat's own null would close that; a single number is what is here,
+#: and this is where it is written down that the number is a rate, not a length
+#: anyone measured in a tube.
+MAX_DR_STEM = 9
 
 
 #: Pairs an RNA helix can actually form. G-U is included because this is an
@@ -54,7 +98,7 @@ def longest_self_complement(seq: str, min_len: int = 3) -> int:
     * it applied no loop constraint, so it counted helices closing on zero
       unpaired bases.
 
-    Fixing both raised recall against real folding from 5.6% to 28.9%.
+    Fixing both raised recall against real folding from 5.6% to ~35%.
     """
     s = seq.upper().replace("T", "U")
     n = len(s)
@@ -74,17 +118,40 @@ def longest_self_complement(seq: str, min_len: int = 3) -> int:
 
 
 def longest_cross_complement(a: str, b: str, min_len: int = 3) -> int:
-    """Longest duplex the two sequences can form with each other."""
+    """Longest duplex the two sequences can form with each other.
+
+    Pairs by :data:`HELIX_PAIRS`, for the same reason
+    :func:`longest_self_complement` does. This scan used to test
+    ``revcomp(a[i:i+size]) in b`` -- a literal Watson-Crick substring match --
+    so the two functions in this file disagreed about what a base pair is, and
+    the one feeding the *hard* :data:`QCFlag.DR_SPACER_INTERACTION` flag was
+    the stricter of the two. A single G-U wobble inside a helix split it into
+    two shorter ones, and a spacer that really does sequester the direct repeat
+    was measured as not doing so.
+
+    That is the wrong direction for this particular check: the DR:spacer
+    interaction is a *hazard*, so under-detecting it means shipping a guide
+    whose scaffold is base-paired to its own spacer. The self-folding scan was
+    fixed for exactly this; the fix landed on one of the two callers.
+
+    No loop constraint here, unlike the hairpin scan: these are two separate
+    strands, so nothing has to turn.
+    """
+    x = a.upper().replace("T", "U")
+    y = b.upper().replace("T", "U")
     best = 0
-    for size in range(min_len, min(len(a), len(b)) + 1):
-        found = False
-        for i in range(len(a) - size + 1):
-            if revcomp(a[i : i + size]) in b:
-                best, found = size, True
-                break
-        if not found:
-            break
-    return best
+    # Antiparallel: x[i + k] pairs with y[j - k], so the duplex runs 5'->3'
+    # along x and 3'->5' along y.
+    for i in range(len(x)):
+        for j in range(len(y) - 1, -1, -1):
+            length = 0
+            while (i + length) < len(x) and (j - length) >= 0:
+                if (x[i + length] + y[j - length]) not in HELIX_PAIRS:
+                    break
+                length += 1
+            if length > best:
+                best = length
+    return best if best >= min_len else 0
 
 
 #: Free energy at which a spacer is judged too self-structured to work, when a
@@ -103,13 +170,31 @@ def qc_candidate(
 
     warnings: list[QCFlag] = []
 
+    # An ambiguity code is not a sequence anyone can order, and every number
+    # downstream treats it as known. `classify_pair` calls N:N a Watson-Crick
+    # pair, so an N-bearing spacer scores a *perfect* on-target duplex and
+    # lands in the mm0 calibration stratum; RNAplfold cannot pair an N, so it
+    # reports unpaired probability exactly 1.0 there and accessibility -- which
+    # carries weight 1.5 in the objective -- is inflated across every window
+    # overlapping the gap. The result was that an assembly gap *attracted* the
+    # ranking: measured on a 150 nt target with four Ns, ranks 1, 2, 3, 4 and 6
+    # of 101 were all N-bearing, exported as orderable oligos with no warning.
+    #
+    # `N` stays a legal *input* character -- the target may genuinely be
+    # unknown there -- and this refuses only to hand back a guide made of it.
+    # It is the rule SYNTHESIS_CONSTRAINT was reserved for. Hard, not soft:
+    # the sequence cannot be synthesised, so deprioritising it would still
+    # leave it orderable from the export.
+    if any(base not in "ACGU" for base in spacer):
+        flags.append(QCFlag.SYNTHESIS_CONSTRAINT)
+
     # Length outside what the ortholog can physically accommodate is a hard
     # incompatibility. Length merely outside its *canonical* set is not: it is
     # unvalidated, which the activity model's domain check already reports as
-    # out-of-domain so the bounds widen and the gate raises an R3 REVIEW.
-    # Failing it here as well made the window length un-configurable and, for a
-    # 22-24 nt mature miRNA against 28 nt LwaCas13a spacers, made the target
-    # undesignable rather than merely unusual.
+    # out-of-domain -- refusing to narrow the interval at all, which the gate
+    # then turns into a refusal rather than a certification. Failing it *here*
+    # as well would make the window length un-configurable, which is a
+    # different and worse thing: the design could not even be stated.
     if not params.supports_length(candidate.length):
         flags.append(QCFlag.SPACER_LENGTH_UNSUPPORTED)
     elif not params.is_canonical_length(candidate.length):
@@ -140,7 +225,7 @@ def qc_candidate(
     if has_polyu_terminator(spacer):
         flags.append(QCFlag.POLY_U_TERMINATOR)
 
-    # Prefer a real fold. The proxy below catches 28.9% of genuinely
+    # Prefer a real fold. The proxy below catches ~35% of genuinely
     # self-structured spacers; thermodynamics catches them because it IS the
     # thing being approximated. The docstring on longest_self_complement has
     # promised this swap since the module was written.

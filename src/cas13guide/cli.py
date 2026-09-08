@@ -15,15 +15,27 @@ from pathlib import Path
 
 
 def _demo(args: argparse.Namespace) -> int:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples"))
-    import demo_knockdown  # type: ignore
+    # Imported from the package, not fished out of an ``examples/`` directory
+    # two levels up. That path exists only in a source checkout and does not
+    # ship in the wheel, so for anyone who pip-installed this package the
+    # subcommand advertised in ``--help`` died with ModuleNotFoundError and
+    # exit 1. Found by installing the wheel into a clean interpreter and
+    # running the documented commands from outside the source tree.
+    from .demo import main as run_demo
 
-    demo_knockdown.main()
+    run_demo()
     return 0
 
 
 def _check(args: argparse.Namespace) -> int:
-    """Fail loudly if a model/calibration change broke skill or coverage."""
+    """Fail loudly if a calibration change broke conformal coverage.
+
+    Skill (spearman, mae) is measured and printed, and deliberately not gated
+    here: there is no stored baseline to compare against, and a gate with
+    nothing on the other side of it is a green light rather than a check.
+    ``services/benchmark.assert_no_regression`` is the gate for that, and it
+    needs a baseline the caller supplies.
+    """
     import random
 
     from .services.benchmark import BenchmarkCase, run_benchmark
@@ -33,9 +45,30 @@ def _check(args: argparse.Namespace) -> int:
     from .util.seq import revcomp
 
     spacer = "GCAUUGCUGUGGAGCUGAAGUC"
-    stratum = "RfxCas13d|cell_culture_knockdown|mm1-2"
+    effector, assay = "RfxCas13d", "cell_culture_knockdown"
     model = HeuristicCas13Model()
     rng = random.Random(args.seed)
+
+    def stratum_of(site: str) -> str:
+        """The regime this site is actually in.
+
+        Every case used to be filed under a hardcoded `...|mm1-2` while the
+        generator draws 0 to 4 mismatches: measured, mm0 73, mm1-2 153,
+        mm3+ 74, so about half the stratum was not the regime it was named
+        for, and the printed `coverage[...|mm1-2:0.920]` read as a statement
+        about mm1-2 that was marginal coverage over a mixture.
+
+        The pooling was not hiding a failure -- split conformal is marginally
+        valid whatever the pool, and pooled and per-regime coverage both hold
+        under noise that widens with depth and under a model simply wrong past
+        two mismatches. What it did not do was exercise the three strata the
+        design path uses, so a change to `mismatch_regime` or to stratum
+        routing was invisible here.
+        """
+        return CalibrationService.stratum_key(
+            effector, assay,
+            CalibrationService.mismatch_regime(
+                profile_duplex(spacer, site).n_mismatch))
 
     def make_cases(n: int) -> list[BenchmarkCase]:
         out = []
@@ -51,7 +84,7 @@ def _check(args: argparse.Namespace) -> int:
                     spacer=spacer,
                     target_site=site_str,
                     observed_activity=min(1.0, max(0.0, pred + rng.gauss(0, 0.12))),
-                    stratum=stratum,
+                    stratum=stratum_of(site_str),
                 )
             )
         return out
@@ -59,7 +92,8 @@ def _check(args: argparse.Namespace) -> int:
     calibration = CalibrationService()
     for case in make_cases(300):
         calibration.add_observation(
-            stratum, model.predict(spacer, profile_duplex(spacer, case.target_site), None),
+            case.stratum,
+            model.predict(spacer, profile_duplex(spacer, case.target_site), None),
             case.observed_activity,
         )
 
@@ -69,7 +103,12 @@ def _check(args: argparse.Namespace) -> int:
     if not report.coverage_ok:
         print("FAIL: conformal coverage below nominal", file=sys.stderr)
         return 1
-    print("OK: skill and coverage within tolerance")
+    # Names the gate that actually ran. Spearman and MAE are computed and
+    # printed above, and nothing compares them to a baseline --
+    # `benchmark.assert_no_regression` exists for that and this command does
+    # not call it -- so claiming skill was "within tolerance" certified a check
+    # that never happened.
+    print("OK: conformal coverage within tolerance (skill is reported, not gated)")
     return 0
 
 
@@ -126,6 +165,29 @@ def _design(args: argparse.Namespace) -> int:
             print(f"  {preset_id:18s} {preset.accession:14s} {preset.length:3d} nt")
         return 0
 
+    # Checked before the pipeline runs, so a typo costs no compute -- and
+    # because both failures used to arrive as a pathlib traceback after the
+    # work was already done.
+    if args.out:
+        destination = pathlib.Path(args.out)
+        if destination.exists() and not destination.is_dir():
+            print(
+                f"cannot write the exports: --out must name a directory; "
+                f"{destination} is a file",
+                file=sys.stderr,
+            )
+            return 2
+    # `--stem` names a file, not a path. "../escaped" wrote all four exports
+    # outside the directory the user named, which is not what a stem is for
+    # and not something a user asking for a filename prefix can expect.
+    if pathlib.Path(args.stem).name != args.stem or args.stem in ("", ".", ".."):
+        print(
+            f"cannot write the exports: --stem must be a plain file name, not a "
+            f"path; got {args.stem!r}",
+            file=sys.stderr,
+        )
+        return 2
+
     request = DesignRequest(
         sequence_text=args.sequence,
         fasta_path=args.fasta,
@@ -134,6 +196,8 @@ def _design(args: argparse.Namespace) -> int:
         background_path=args.background,
         effector=args.effector,
         assay=args.assay,
+        target_biotype=args.target_biotype,
+        background_biotype=args.background_biotype,
         task=args.task,
         spacer_length=args.spacer_length,
         max_mismatches=args.max_mismatches,
@@ -150,9 +214,11 @@ def _design(args: argparse.Namespace) -> int:
         calibration_n=args.calibration_n,
         calibration_noise=args.calibration_noise,
         kinetics_json=args.kinetics_constants,
+        panel_dependence_json=args.panel_dependence,
         use_arc=args.arc,
         blast_db=args.blast_db,
         blast_universes=args.blast_universes,
+        blast_self=args.blast_self,
     )
     try:
         outcome = run_request(request)
@@ -182,64 +248,169 @@ def _design(args: argparse.Namespace) -> int:
         )
     if rows:
         robust = "robust" if args.variants else ""
+        # A column every row leaves empty is dropped rather than filled with
+        # `None`. The limitations above the table already say why each one is
+        # absent -- collateral is not predicted for this assay, ViennaRNA was
+        # not installed -- so the word adds nothing but noise, in the one
+        # place this tool otherwise accounts for what it does not know. The
+        # `robust` column has always behaved this way; these now match it.
+        optional = [
+            ("access", "accessibility"),
+            ("dG/nt", "duplex_dg_per_nt"),
+            ("signal", "predicted_signal"),
+            # Cleaved reporter in nM, present only when measured kinetic
+            # constants were supplied -- which is what supplying them is for.
+            # The figure reached `report.json`, the CSV and the HTML report and
+            # not this table, so the surface most people read said the
+            # PLACEHOLDER caveat had lifted and showed the same relative
+            # `signal` as before. The rule above drops it on every other run.
+            ("nM", "predicted_signal_nm"),
+        ]
+        shown_columns = [
+            (label, key) for label, key in optional
+            if any(row.get(key) is not None for row in rows)
+        ]
+
+        def cell(row, key):
+            value = row.get(key)
+            return "-" if value is None else str(value)
+
+        heads = "".join(f"{label:>8}" for label, _key in shown_columns)
         print()
-        print(f"{'rank':>4}  {'spacer':32s} {'score':>6} {'access':>7} "
-              f"{'dG/nt':>7} {'signal':>7} {'PFS':>4} {robust:>7}")
+        print(f"{'rank':>4}  {'spacer':32s} {'score':>6}{heads} "
+              f"{'PFS':>4} {robust:>7}")
         for row in rows:
             worst = (f"{row['metrics']['robustness']:.3f}" if args.variants else "")
-            print(f"{row['rank']:>4}  {row['spacer']:32s} {row['score']:>6.2f} "
-                  f"{str(row['accessibility']):>7} {str(row['duplex_dg_per_nt']):>7} "
-                  f"{str(row['predicted_signal']):>7} {str(row['pfs_3prime']):>4} "
-                  f"{worst:>7}")
+            values = "".join(f"{cell(row, key):>8}" for _label, key in shown_columns)
+            print(f"{row['rank']:>4}  {row['spacer']:32s} {row['score']:>6.2f}"
+                  f"{values} {str(row['pfs_3prime']):>4} {worst:>7}")
+    elif all_rows:
+        # `rows` is the *display* list -- it has been through the distinct-site
+        # filter and `--top`. Reporting "no guide cleared the gate" because a
+        # display limit emptied it says something false about the run, next to
+        # exports that carry every one of those guides.
+        print()
+        # `all_rows`, not `shown`: `shown` has been through the distinct-site
+        # filter, so it counted 7 where the CSV this sentence points at held
+        # 223 -- and the count changed with `--all-sites`, a display flag, in
+        # the one message whose job is to say what the run produced.
+        print(f"{len(all_rows)} guide(s) ranked, none displayed (--top "
+              f"{args.top}). The exports carry them all.")
     else:
         print()
         print("no guide cleared the gate.")
-        for shortfall in data["shortfalls"]:
-            print(f"  ! {shortfall}")
+
+    # Shortfalls print whether or not the table is empty. They used to print
+    # only when nothing ranked, which is the case where a reader already knows
+    # something went wrong. The dangerous case is the other one: 264 ranked
+    # rows, an empty panel, and a terminal that mentions neither -- the run
+    # recommends nothing and looks like a success. The report and the export
+    # headers always carried these; only the terminal did not.
+    panel = data.get("panel") or {}
+    messages = list(panel.get("dropped", ())) + list(data.get("shortfalls", ()))
+    if rows and not panel.get("guides"):
+        messages.insert(
+            0,
+            "no panel: guides ranked but none PASSed the gate, and the panel "
+            "is PASS-only. The rows above are candidates to triage, not a "
+            "recommendation.",
+        )
+    for message in messages:
+        print(f"  ! {message}")
+
+    # FR6.3. Printed after the table because it is a statement about the
+    # panel the run recommends, not about the rows a human is triaging -- and
+    # printed as an interval because that is what it is.
+    confidence = (data.get("panel") or {}).get("confidence")
+    if confidence and confidence["targets"]:
+        print()
+        print("panel detection probability (FR6.3):")
+        for target in confidence["targets"]:
+            point = (
+                "" if target["point"] is None
+                else f"  point={target['point']:.3f}"
+            )
+            thin = "  [thin calibration]" if target["thin"] else ""
+            print(
+                f"  {target['target_id']:<16} "
+                f"[{target['lower']:.3f}, {target['upper']:.3f}]"
+                f"{point}{thin}"
+            )
+        print("  lower = members fail together, upper = members fail "
+              "independently")
 
     if args.out:
-        from .services.report_html import AccessibilityTrack, write_report
+        # Every path problem here used to arrive as a pathlib traceback and
+        # exit 1 -- the same code `design` returns for the legitimate "no
+        # guide cleared the gate" outcome, so a wrapper script could not tell
+        # "nothing ranked" from "could not write the report". The pipeline's
+        # own failures have had a located message and exit 2 all along; the
+        # filesystem's did not.
+        try:
+            from .services.report_html import AccessibilityTrack, track_rows, write_report
 
-        tracks = []
-        if outcome.profile:
-            tracks = [
-                AccessibilityTrack(
-                    name=f"{outcome.records[0].name} "
-                         f"({len(outcome.records[0].sequence)} nt)",
-                    profile=outcome.profile,
-                    guides=[
-                        (r.get("start", 0), outcome.spec.spacer_length,
-                         f"#{r['rank']} {r['guide_id']}")
-                        for r in data["ranked"][: args.track_guides]
-                    ],
-                )
-            ]
-        html_path = write_report(
-            data,
-            pathlib.Path(args.out) / f"{args.stem}.html",
-            title=f"Cas13 guide design - {outcome.records[0].name}",
-            subtitle=(
+            tracks = []
+            if outcome.profile:
+                tracks = [
+                    AccessibilityTrack(
+                        name=f"{outcome.records[0].name} "
+                             f"({len(outcome.records[0].sequence)} nt)",
+                        profile=outcome.profile,
+                        # Only guides tiled from the record this track depicts.
+                        # `start` is an offset on the guide's OWN source target, and
+                        # a multi-record FASTA makes records 1+ DESIRED targets that
+                        # are tiled too -- so an unfiltered top-N drew guides from a
+                        # paralog at their own coordinates on the primary's profile:
+                        # marks shifted by the other record's offset, and marks past
+                        # the end of the transcript silently clipped out of the
+                        # picture. Measured: all five default marks foreign, one of
+                        # them 6 nt beyond a 150 nt track.
+                        guides=[
+                            (r.get("start", 0), outcome.spec.spacer_length,
+                             f"#{r['rank']} {r['guide_id']}")
+                            for r in track_rows(data["ranked"], outcome.records[0].name,
+                                                args.track_guides)
+                        ],
+                    )
+                ]
+            html_path = write_report(
+                data,
+                pathlib.Path(args.out) / f"{args.stem}.html",
+                title=f"Cas13 guide design - {outcome.records[0].name}",
+                subtitle=(
+                    f"{request.effector} / {request.assay} / "
+                    f"{outcome.spec.spacer_length} nt spacer  |  "
+                    f"spec {outcome.spec.fingerprint()}"
+                ),
+                tracks=tracks,
+                notes=outcome.notes,
+            )
+            subtitle = (
                 f"{request.effector} / {request.assay} / "
-                f"{outcome.spec.spacer_length} nt spacer  |  "
-                f"spec {outcome.spec.fingerprint()}"
-            ),
-            tracks=tracks,
-            notes=outcome.notes,
-        )
-        subtitle = (
-            f"{request.effector} / {request.assay} / "
-            f"{outcome.spec.spacer_length} nt spacer"
-        )
-        written = write_exports(
-            data, args.out, stem=args.stem,
-            subtitle=subtitle, limitations=outcome.notes,
-        )
-        written["html"] = html_path
-        print()
-        print("wrote:")
-        for label, path in written.items():
-            print(f"  {label:9s} {path}")
-    return 0 if rows else 1
+                f"{outcome.spec.spacer_length} nt spacer"
+            )
+            written = write_exports(
+                data, args.out, stem=args.stem,
+                subtitle=subtitle, limitations=outcome.notes,
+            )
+            written["html"] = html_path
+            print()
+            print("wrote:")
+            for label, path in written.items():
+                print(f"  {label:9s} {path}")
+        except OSError as exc:
+            target = getattr(exc, "filename", None) or args.out
+            print(
+                f"cannot write the exports: {exc.strerror or exc}: {target} "
+                "(from --out/--stem)",
+                file=sys.stderr,
+            )
+            return 2
+    # The exit status reports what the *run* did, not how much of it was
+    # printed. It used to be `0 if rows else 1`, so `--top 0` exited 1 --
+    # "nothing cleared the gate" -- beside a CSV holding 322 guides. A display
+    # flag must not decide a machine-readable outcome.
+    return 0 if all_rows else 1
 
 
 def _serve(args: argparse.Namespace) -> int:
@@ -249,7 +420,39 @@ def _serve(args: argparse.Namespace) -> int:
     return serve(host=args.host, port=args.port, open_browser=not args.no_browser)
 
 
+def _make_output_printable() -> None:
+    """Let this program print the names its reader is built to accept.
+
+    ``read_fasta`` decodes with ``utf-8-sig``, so a UTF-8 header is a supported
+    input by design -- and the record name becomes a ``target_id`` this module
+    prints. On a console left at the platform default (cp1252 on Windows) that
+    print raises ``UnicodeEncodeError``, and the trigger is ordinary gene
+    nomenclature: NF-kappaB1, IFN-gamma1, TGF-beta1, HIF1-alpha.
+
+    What made it worse than a bad character was where it landed. The crash
+    happens *after* the design succeeds and *before* the ``--out`` block, so a
+    run with 159 PASS and a full panel wrote no files and returned 1 -- the
+    status this command's own epilog defines as "the run completed and nothing
+    survived the gate". A wrapper script read a complete design as an empty
+    one. The browser door rendered the same bytes without complaint, so the two
+    doors ``workflow.py`` says "cannot drift into behaving differently" did.
+
+    ``backslashreplace`` rather than ``replace``: a console that cannot render
+    a character should show ``\\u03ba``, which says what was there, rather than
+    ``?``, which does not.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # a stream someone else wrapped; leave it alone
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (OSError, ValueError):  # pragma: no cover - detached/odd stream
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _make_output_printable()
     parser = argparse.ArgumentParser(prog="cas13guide", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -276,12 +479,33 @@ def main(argv: list[str] | None = None) -> int:
     train.add_argument("--seed", type=int, default=0)
     train.set_defaults(func=_train)
 
+    # The exit codes are a contract, and they were written down only in a
+    # source comment: a wrapper script had no way to learn that 1 means "the
+    # run worked and refused everything" rather than "the run broke". That
+    # distinction is the whole point of having two of them.
     design = sub.add_parser(
-        "design", help="design guides against a sequence, FASTA file or preset"
+        "design", help="design guides against a sequence, FASTA file or preset",
+        epilog=(
+            """exit codes:
+  0  at least one guide survived the gate and was ranked
+  1  the run completed and nothing survived the gate -- a result, not an
+     error, and the shortfalls printed above say why
+  2  the run could not be completed: bad input, an unreadable file, or an
+     output path that could not be written
+"""
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     source = design.add_argument_group("input (FR1.1-FR1.3)")
     source.add_argument("--sequence", help="pasted raw or FASTA sequence text")
-    source.add_argument("--fasta", help="FASTA file to read")
+    source.add_argument(
+        "--fasta",
+        help="FASTA file to read. The first record is the target and the "
+             "rest are additional intended targets, unless a record says "
+             "otherwise: `>id class=forbidden` marks a biomarker this "
+             "design must NOT detect, which is how a multiplex panel is "
+             "stated. Classes: required, desired, tolerated, avoid, "
+             "forbidden")
     source.add_argument("--preset", help="built-in target id, e.g. hsa-miR-21-5p")
     source.add_argument("--list-presets", action="store_true",
                         help="list the built-in targets and exit")
@@ -294,6 +518,17 @@ def main(argv: list[str] | None = None) -> int:
 
     design.add_argument("--effector", default="LwaCas13a",
                         choices=["LwaCas13a", "RfxCas13d", "PspCas13b"])
+    design.add_argument(
+        "--target-biotype", choices=["coding", "ncrna", "pre_mrna", "circrna",
+                 "repeat", "mito", "rrna", "viral", "synthetic"],
+        default=None,
+        help="what the target sequences are (default: implied by --assay)")
+    design.add_argument(
+        "--background-biotype", choices=["coding", "ncrna", "pre_mrna", "circrna",
+                 "repeat", "mito", "rrna", "viral", "synthetic"],
+        default="coding",
+        help="what the --background sequences are; sets their hazard weight "
+             "and whether they cover a universe the assay is exposed to")
     design.add_argument("--assay", default="in_vitro_detection",
                         choices=["in_vitro_detection", "cell_culture_knockdown",
                                  "in_vivo_knockdown", "antiviral"])
@@ -319,6 +554,10 @@ def main(argv: list[str] | None = None) -> int:
              "Without one, --background is scanned exhaustively instead, which "
              "is slower but can report exhaustive=True")
     design.add_argument(
+        "--blast-self", default="", metavar="ACC[,ACC]",
+        help="subject ids in --blast-db that are this run's own target; their "
+             "hits are not counted as off-targets")
+    design.add_argument(
         "--blast-universes", default="coding", metavar="A,B",
         help="what you assert --blast-db covers; the universe-adequacy gate "
              "reads this and cannot verify it (default: coding)")
@@ -330,6 +569,12 @@ def main(argv: list[str] | None = None) -> int:
     design.add_argument("--no-signal", action="store_true",
                         help="skip the collateral-cleavage signal model")
     design.add_argument("--panel-size", type=int, default=3)
+    design.add_argument(
+        "--panel-dependence", metavar="FILE.json",
+        help="measured common-cause fraction for panel members (FR6.3). "
+             "Without one the panel's detection probability is reported as an "
+             "interval and no point estimate is offered",
+    )
     design.add_argument("--top", type=int, default=10)
     design.add_argument("--all-sites", action="store_true",
                         help="include guides that are shifted copies of a "

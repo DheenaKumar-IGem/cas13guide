@@ -140,14 +140,81 @@ def load_screen(
     if delimiter is None:
         delimiter = "\t" if path.suffix.lower() in {".tsv", ".tab", ".txt"} else ","
 
-    with path.open(newline="") as handle:
+    # Opened inside the guard, because `path.exists()` is not "readable as a
+    # UTF-8 text file". A directory, or a screen exported from Excel or a LIMS
+    # as UTF-16 or latin-1, escaped as PermissionError / IsADirectoryError /
+    # UnicodeDecodeError -- and `cli._train` catches only DatasetError, so it
+    # reached the top as a traceback and exited 1, which is the code that
+    # command uses to mean "loaded, and rejected by the acceptance gate". The
+    # FASTA door already converts exactly this class into a located message;
+    # the two input doors disagreed on the same malformed file.
+    try:
+        handle = path.open(newline="", encoding="utf-8-sig")
+    except OSError as exc:
+        raise DatasetError(
+            f"cannot open {path}: {exc.strerror or exc}"
+        ) from exc
+
+    with handle:
         reader = csv.DictReader(handle, delimiter=delimiter)
-        header = reader.fieldnames or []
+        try:
+            header = reader.fieldnames or []
+        except UnicodeDecodeError as exc:
+            raise DatasetError(
+                f"{path.name} is not readable as UTF-8 text -- if it was "
+                "exported from Excel or a LIMS, re-save it as UTF-8 CSV "
+                f"({exc})"
+            ) from exc
+        # target_site is checked too, when the caller named one. Leaving it
+        # out meant a typo in --target-site-column dropped every row and
+        # charged them to `dropped_sequence`, telling the user their spacers
+        # were unusable when the spacers were fine and the column they named
+        # did not exist. That is the same misattribution `dropped_group` was
+        # split out to stop, one column over.
+        required = [columns.spacer, columns.activity, columns.group]
+        if columns.target_site:
+            required.append(columns.target_site)
         missing = [
-            name
-            for name in (columns.spacer, columns.activity, columns.group)
-            if name not in header
+            name for name in dict.fromkeys(required) if name not in header
         ]
+        # Membership is not enough. `csv.DictReader` resolves a repeated header
+        # name to its LAST occurrence, so a screen carrying two columns called
+        # `activity` -- an ordinary artefact of a join or a merged replicate
+        # export -- is read from whichever one happens to come second, with no
+        # warning anywhere.
+        #
+        # That is the failure this module's docstring calls fatal: "activity
+        # reported as log2 fold change, where more negative means better
+        # knockdown -- silently training on that inverts the model". Measured on
+        # a 672-row screen whose stray second `activity` column held the negated
+        # value, every fitted weight flipped sign (gc +0.278 -> -0.278) while
+        # all six acceptance numbers stayed identical, because rank
+        # normalisation is invariant under exact inversion. Both runs printed
+        # "dataset ACCEPTED". Nothing a reader could see distinguished them.
+        #
+        # On the grouping column it is worse than an inversion: grouping by a
+        # duplicate that happens to hold a plate id puts the same transcript on
+        # both sides of the split, which is the leak the docstring says the
+        # column exists to prevent.
+        #
+        # Refusing rather than choosing, for the reason stated a hundred lines
+        # below about a different ambiguity: the wrong resolution inverts every
+        # training label, so there is no safe default. `conservation.py` already
+        # refuses duplicate FASTA record names at the other input door.
+        duplicated = sorted(
+            {name for name in dict.fromkeys(required) if header.count(name) > 1}
+        )
+        if duplicated:
+            for name in duplicated:
+                report.errors.append(
+                    f"column {name!r} appears {header.count(name)} times in "
+                    f"{header}. A CSV reader keeps only the last one, and which "
+                    f"of them you meant decides whether the labels are the right "
+                    f"way up -- so this refuses rather than guessing. Rename or "
+                    f"drop the duplicate."
+                )
+            return [], report
+
         if missing:
             if columns.group in missing:
                 report.errors.append(
@@ -161,7 +228,29 @@ def load_screen(
                     report.errors.append(f"missing required column {name!r} in {header}")
             return [], report
 
-        rows = list(reader)
+        try:
+            rows = list(reader)
+        except csv.Error as exc:
+            # A single unmatched double-quote makes the parser consume to EOF,
+            # so any file past the 128 KB field limit dies here. Only
+            # UnicodeDecodeError was converted, so this escaped `cli._train`
+            # -- which catches DatasetError alone -- as a traceback with exit
+            # 1, the code that command uses for "loaded, and rejected by the
+            # acceptance gate". A malformed file and a rejected dataset were
+            # indistinguishable to anything reading the status.
+            raise DatasetError(
+                f"{path.name} is not valid CSV ({exc}). A stray double-quote "
+                f"makes the parser read to the end of the file looking for its "
+                f"partner, so the position it reports may be far below the "
+                f"line that is actually wrong."
+            ) from exc
+        except UnicodeDecodeError as exc:
+            # The header may decode and a later row may not: a latin-1 accent
+            # halfway down the file is the common shape.
+            raise DatasetError(
+                f"{path.name} is not readable as UTF-8 text -- if it was "
+                f"exported from Excel or a LIMS, re-save it as UTF-8 CSV ({exc})"
+            ) from exc
 
     report.rows_read = len(rows)
 
@@ -171,6 +260,7 @@ def load_screen(
     groups: list[str] = []
     dropped_sequence = 0
     dropped_activity = 0
+    dropped_group = 0
 
     for row in rows:
         spacer = _clean_sequence(row.get(columns.spacer) or "")
@@ -193,12 +283,22 @@ def load_screen(
             dropped_activity += 1
             continue
         if math.isnan(value) or math.isinf(value):
+            # `float("nan")` and `float("inf")` both parse, so these reach here
+            # as numbers. A NaN would poison what it touches quietly --
+            # comparisons against it are all False, so it survives sorting,
+            # quantiles and coverage checks without ever looking wrong -- and
+            # this is the data every conformal bound is calibrated on.
             dropped_activity += 1
             continue
 
         group = (row.get(columns.group) or "").strip()
         if not group:
-            dropped_activity += 1
+            # Its own counter. These rows have a valid spacer and a valid
+            # activity number; what they lack is the transcript label, and
+            # counting them as an activity failure sent the user to fix the
+            # wrong column -- in a module whose whole job is saying precisely
+            # why a screen cannot be used.
+            dropped_group += 1
             continue
 
         spacers.append(spacer)
@@ -213,7 +313,13 @@ def load_screen(
         )
     if dropped_activity:
         report.warnings.append(
-            f"dropped {dropped_activity} row(s) with missing or non-numeric activity"
+            f"dropped {dropped_activity} row(s) whose activity is missing, "
+            "non-numeric, or not a finite number"
+        )
+    if dropped_group:
+        report.warnings.append(
+            f"dropped {dropped_group} row(s) with a blank {columns.group!r} cell; "
+            "a row with no transcript label cannot be placed in a grouped split"
         )
 
     if not spacers:
@@ -312,7 +418,7 @@ def write_screen(
     columns = columns or ColumnMap()
     rows = list(examples)
     path = Path(path)
-    with path.open("w", newline="") as handle:
+    with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow([columns.spacer, columns.activity, columns.group])
         for e in rows:

@@ -21,10 +21,31 @@ SPACER = "GCAUUGCUGUGGAGCUGAAGUC"
 
 
 def guide(guide_id, coverage: dict, start: int = 0, off_loci=()):
-    """A passing assessment with the given per-required-target LCB coverage."""
+    """A passing assessment with the given per-required-target LCB coverage.
+
+    A coverage of ``0.0`` means the guide does not hit that target, so no
+    evidence is built for it -- in the pipeline a `PairEvidence` exists only
+    where the search found a hit, and absence of a hit is absence of a record,
+    not a record with a zero bound.
+
+    The distinction became load-bearing when the panel selector started reading
+    binding sites the same way the ranked report does. Under the old rule a
+    site counted only when its lower bound was strictly positive, so the two
+    spellings were interchangeable; now they are not, and they mean different
+    things. Written as zero-bound hits, three variant-specific guides at
+    105/110/115 all bind all three targets and conflict with each other; the
+    fixture meant them to be specific, which is a guide with one hit.
+
+    Conformal intervals are clamped to [0, 1], so a real weak hit does have a
+    lower bound of exactly 0.0. Such a hit is expressible -- pass a small
+    positive bound, or build the evidence directly -- but it is not what a
+    missing target means here.
+    """
     evidence: list[PairEvidence] = []
 
     for target_id, lcb in coverage.items():
+        if lcb == 0.0:
+            continue
         hit = dataclasses.replace(
             make_hit(guide_id, f"L_{target_id}", target_id, TargetClass.REQUIRED),
             start=start,

@@ -59,6 +59,35 @@ def make_spec(
     return spec
 
 
+def cover_universes(world, universes: frozenset = FULL_UNIVERSES):
+    """Add one inert locus per universe the corpus does not already hold.
+
+    A run is only adequate against the universes its corpus actually contains,
+    so a fixture that declares five and holds one is not testing what it says.
+    The added sequences are deterministic and share no 28-mer with anything a
+    test targets, so they change which universes are *covered* and nothing
+    else: they exist to be present, not to be hit.
+    """
+    from cas13guide.services.transcriptome import Locus
+
+    present = {locus.biotype for locus in world.loci.values()}
+    for index, universe in enumerate(sorted(universes - present, key=lambda u: u.value)):
+        # A distinct repeating unit per universe. Repeats cannot match a real
+        # target within the mismatch envelope and cannot match each other.
+        unit = ("AAGAAC", "AACAAG", "ACAACG", "AGAAGC", "CAACAG",
+                "CAGCAA", "GAAGAC", "GACGAA", "GCAGCA")[index % 9]
+        world.add(
+            Locus(
+                f"COVER_{universe.value.upper()}",
+                unit * 40,
+                universe,
+                gene=f"COVER{index}",
+                expression=1.0,
+            )
+        )
+    return world
+
+
 def make_hit(
     guide_id: str = "g1",
     locus_id: str = "L1",

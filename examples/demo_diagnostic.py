@@ -41,29 +41,34 @@ from cas13guide.contract.spec import (
     Thresholds,
 )
 from cas13guide.pipeline.orchestrator import DesignContext, run_design
+from cas13guide.services.limitations import as_lines
 from cas13guide.services.calibration import CalibrationService
 from cas13guide.services.indexes import ExhaustiveScanIndex
 from cas13guide.services.kinetics import CollateralKineticsModel
 from cas13guide.services.registry import HeuristicCas13Model, ModelRegistry
 from cas13guide.services.transcriptome import Locus, Transcriptome
+from cas13guide.services.workflow import build_synthetic_calibration
 
 RNG = random.Random(5)
 UNIVERSES = frozenset({Universe.SYNTHETIC, Universe.VIRAL, Universe.NCRNA})
 
 
 def seed_calibration(spec: ResolvedDesignSpec) -> CalibrationService:
-    cs = CalibrationService()
-    for regime in ("mm0", "mm1-2", "mm3+"):
-        key = CalibrationService.stratum_key(
-            spec.profile.effector.value, spec.profile.assay.value, regime
-        )
-        for i in range(200):
-            truth = RNG.random()
-            cs.add_observation(
-                key, min(1.0, max(0.0, truth + RNG.gauss(0, 0.1))), truth,
-                group=f"T{i % 12:02d}",
-            )
-    return cs
+    """A stand-in, from the one builder that makes them.
+
+    This was a third hand-rolled copy. It kept the group labels the design
+    path supplies but not the `synthetic` flag or the `source` mapping, so
+    `services/limitations.py` could not raise the CRITICAL saying every
+    interval here rests on generated data, and the provenance ledger recorded
+    this calibration as "unstated". Neither showed, because the script printed
+    no limitations and no ledger.
+
+    It also drew from RNG, the module-level generator this file uses for its
+    sequences, so the seed was not on its own enough to rebuild it.
+    """
+    return build_synthetic_calibration(
+        spec.profile.effector.value, spec.profile.assay.value,
+        seed=5, n_per_stratum=200, noise_sd=0.1)
 
 
 def main() -> None:
@@ -157,6 +162,17 @@ def main() -> None:
     print("\n--- panel ---")
     print(f"  {[g.guide_id for g in report.panel.guides]}")
     print(f"  {report.panel.guarantee}")
+
+    # This script printed a ranking, per-guide collateral signal and a panel,
+    # and not one word about what none of it establishes -- a grep of its
+    # whole output for "critical", "warning" or "limitation" returned zero.
+    # That is the finding the README records as fixed for `cas13guide demo`,
+    # in the sibling nobody re-ran it against. The report carries them, so
+    # this is a read.
+    if report.limitations:
+        print("\n--- what this run does not establish ---")
+        for line in as_lines(report.limitations):
+            print(f"  {line}")
 
 
 if __name__ == "__main__":

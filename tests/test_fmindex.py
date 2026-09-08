@@ -144,10 +144,33 @@ class TestBoundaryDefencesIndividually(unittest.TestCase):
     """
 
     def test_walk_alphabet_excludes_the_separator(self):
-        from cas13guide.services.fmindex import BASES, SEPARATOR
+        """The alphabet the walk actually iterates, not the module constant.
 
-        self.assertNotIn(SEPARATOR, BASES)
-        self.assertEqual(set(BASES), set("ACGU"))
+        This asserted `SEPARATOR not in BASES` and `set(BASES) == set("ACGU")`.
+        `BASES` is used nowhere in src/ outside its own definition -- fmindex
+        itself says "the alphabet actually walked is derived per index by
+        walk_alphabet" -- so the assertion pinned a dead constant, and
+        replacing walk_alphabet with one that returns the separator left this
+        class reporting OK while the walk could build matches straddling two
+        loci.
+        """
+        from cas13guide.services.fmindex import (
+            SEPARATOR,
+            TERMINATOR,
+            FMIndexSearchIndex,
+            walk_alphabet,
+        )
+
+        text = "AUG" + SEPARATOR + "CGN" + TERMINATOR
+        self.assertNotIn(SEPARATOR, walk_alphabet(text))
+        self.assertNotIn(TERMINATOR, walk_alphabet(text))
+
+        world = Transcriptome("GRCh38", "v44")
+        world.add(Locus("A1", "AUGCAUGCAUG", Universe.CODING, expression=1.0))
+        world.add(Locus("A2", "CAUGCAUGCAU", Universe.CODING, expression=1.0))
+        index = FMIndexSearchIndex(world, UNIVERSES)
+        self.assertNotIn(SEPARATOR, index.walk_alphabet)
+        self.assertNotIn(TERMINATOR, index.walk_alphabet)
 
     def test_locate_rejects_a_span_running_off_the_end_of_its_locus(self):
         world = Transcriptome("GRCh38", "v44")
@@ -192,6 +215,40 @@ class TestBoundaries(unittest.TestCase):
         result = fm.search("g", "GCAUUGCUGUGGAGCUGAAGUC", 4)
         self.assertEqual(result.hits, ())
         self.assertTrue(result.bound.exhaustive)
+
+    def test_the_bound_names_the_universes_it_holds_not_the_ones_it_was_offered(self):
+        """A filter is what an index will admit; a bound is what it searched.
+
+        Reporting the filter is how the universe-adequacy gate was defeated for
+        the life of the CLI: the bound named every universe the caller was
+        willing to include, so `(required | declared) - searched` cancelled and
+        a corpus of one biotype certified a search over nine. It is also what
+        a reader is told -- "Off-targets were searched over ..." is this set.
+        """
+        world = Transcriptome("GRCh38", "v44")
+        world.add(Locus("C1", random_rna(200, random.Random(1)), Universe.CODING,
+                        expression=1.0))
+        # The filter admits ncrna as well; the corpus has none.
+        fm = FMIndexSearchIndex(world, UNIVERSES)
+        bound = fm.search("g", "GCAUUGCUGUGGAGCUGAAGUC", 4).bound
+        self.assertEqual(bound.universes, frozenset({Universe.CODING}))
+        self.assertIn("coding", bound.describe())
+        self.assertNotIn("ncrna", bound.describe())
+
+    def test_the_bound_reports_the_corpus_it_could_have_searched(self):
+        """So the gate can tell a skipped universe from an absent one."""
+        world = Transcriptome("GRCh38", "v44")
+        world.add(Locus("C1", random_rna(200, random.Random(2)), Universe.CODING,
+                        expression=1.0))
+        world.add(Locus("R1", random_rna(200, random.Random(3)), Universe.RRNA,
+                        expression=9000.0))
+        # rRNA is in the corpus and outside the filter: skipped, not absent.
+        fm = FMIndexSearchIndex(world, UNIVERSES)
+        bound = fm.search("g", "GCAUUGCUGUGGAGCUGAAGUC", 4).bound
+        self.assertEqual(bound.universes, frozenset({Universe.CODING}))
+        self.assertEqual(
+            bound.corpus_universes, frozenset({Universe.CODING, Universe.RRNA})
+        )
 
     def test_bound_claims_exhaustiveness(self):
         rng = random.Random(7)

@@ -62,7 +62,8 @@ path unlocks itself.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+import math
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -70,6 +71,23 @@ import numpy as np
 
 class ProvisionalConstantsError(RuntimeError):
     """An absolute prediction was requested from placeholder constants."""
+
+
+class StiffKineticsError(RuntimeError):
+    """Constants whose timescale this explicit integrator cannot resolve."""
+
+
+#: Target for ``dt * lambda``, the dimensionless stiffness of one RK4 step.
+#: RK4 goes unstable near 2.78; 2.0 leaves margin without inflating the step
+#: count for constants that do not need it.
+STABILITY_TARGET = 2.0
+
+#: Refuse rather than spend unbounded time. At this cap a single integration is
+#: several seconds; a design run performs one per candidate (the eight
+#: degeneracy probes are memoised on the model, not repeated per guide). The cap
+#: bounds one integration, so a large target with constants near it is still
+#: slow -- what it prevents is unbounded.
+MAX_INTEGRATION_STEPS = 200_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,8 +186,19 @@ class CollateralKineticsModel:
     """Integrates the collateral-cleavage ODE for one candidate at a time."""
 
     constants: KineticConstants = PROVISIONAL_CONSTANTS
-    #: Integration steps across the assay window. 400 keeps the RK4 error well
-    #: below the precision anyone would read off a plate reader.
+    #: Memoised answer for :meth:`adds_information`, keyed by the inputs it
+    #: actually depends on. The probes are fixed and the answer is a property of
+    #: the *constants*, not of any candidate -- but ``build_metric_vector`` calls
+    #: it once per candidate, so it ran eight extra integrations per guide. That
+    #: was invisible at a fixed 400 steps and is not once the step count follows
+    #: the constants: near the stability cap it is the difference between one
+    #: integration and nine.
+    _degeneracy_cache: dict = field(default_factory=dict, repr=False, compare=False)
+
+    #: Minimum integration steps across the assay window. A *floor*, not the
+    #: count: :meth:`integrate` raises it as far as the constants require. 400
+    #: keeps the RK4 error well below plate-reader precision for the shipped
+    #: placeholders, and is nowhere near enough for a fast measured ``k_on``.
     steps: int = 400
 
     @property
@@ -220,27 +249,88 @@ class CollateralKineticsModel:
         returning ``True`` on its own when constants that leave the linear
         regime are supplied.
         """
+        key = (self.constants, self.steps, tolerance)
+        cached = self._degeneracy_cache.get(key)
+        if cached is not None:
+            return cached
+        # Only probes the assay can still tell apart. A saturated well is as
+        # bright as it can get, so the difference between two of them is not a
+        # ranking -- it is the float noise left over at the ceiling.
+        #
+        # This matters because a ratio spread cannot distinguish two
+        # nonlinearities and only one of them is informative. An assay that
+        # bends because the *activation* curve bends carries real ordering; one
+        # that bends because the reporter is exhausted carries none, and both
+        # look non-proportional to the probe below.
+        #
+        # `PROVISIONAL_CONSTANTS` states the rule and names the check: "A
+        # saturating assay reports 1.0 for every candidate, which is not a weak
+        # ranking but no ranking at all ... `SignalPrediction.saturated` says
+        # when they have not been." Nothing in src/ read it. Measured with
+        # k_cat = 4e-2 and target_nm = 400, every one of 323 guides came back at
+        # 499.9999 nM of a 500 nM reporter -- a relative_signal spread of
+        # 2.5e-08 that `_normalize` stretched to fill [0, 1], so an axis
+        # weighted 2.5 contributed up to 22% of an 11-point score out of that
+        # noise, and 309 of the 323 changed rank against the shipped constants.
         ratios = []
         for activity, accessibility in self._PROBES:
             product = activity * accessibility
-            signal = self.predict(activity, accessibility).relative_signal
-            if product <= 0.0:
+            prediction = self.predict(activity, accessibility)
+            if product <= 0.0 or prediction.saturated:
                 continue
-            ratios.append(signal / product)
-        if not ratios:
-            return False
-        largest = max(ratios)
-        if largest <= 0.0:
-            return False
-        return (largest - min(ratios)) / largest > tolerance
+            ratios.append(prediction.relative_signal / product)
+
+        # No explicit floor on how many survive: one ratio gives a spread of
+        # exactly zero and none skips the block below, so both already answer
+        # False. A guard here would be a guard that cannot fire, which is the
+        # very thing this fix was about.
+        answer = False
+        if ratios:
+            largest = max(ratios)
+            if largest > 0.0:
+                answer = (largest - min(ratios)) / largest > tolerance
+        self._degeneracy_cache[key] = answer
+        return answer
 
     def integrate(self, effective_target_nm: float) -> tuple[float, float, float]:
         """RK4 over the two-state system.
 
-        Returns ``(activated_fraction, initial_cleavage_rate, cleaved_nm)``.
+        Returns ``(activated_fraction, peak_cleavage_rate, cleaved_nm)``
+
+        The middle term is the **peak** rate over the assay window, not the
+        t=0 slope. The system starts with no activated complex, so its
+        instantaneous rate at t=0 is identically zero for every candidate and
+        carries no information -- see :class:`SignalPrediction.cleavage_rate`,
+        which makes the same argument at the point of use.
         """
         c = self.constants
-        dt = c.assay_seconds / self.steps
+        # Step count derived from the stiffest timescale, not fixed. A fixed
+        # 400 is fine for the shipped placeholders (k_on = 1e-3 gives a binding
+        # eigenvalue near 0.05/s, so dt*lambda ~ 0.2), and it is *unstable* for
+        # ordinary measured ones: k_on = 1 /nM/s is a diffusion-limited
+        # association rate, giving lambda ~ 50/s and dt*lambda = 225 against
+        # RK4's stability limit of ~2.78. The integration then diverges, and
+        # the physical clamps below turn the divergence into a plausible wrong
+        # number rather than a NaN -- measured +19.5% on cleaved reporter at
+        # k_on = 1, +60% at k_on = 3. Since the whole point of
+        # ``--kinetics-constants`` is that real values unlock
+        # ``absolute_signal``, silently wrong there is the worst possible place
+        # for it.
+        lam = c.k_on * max(c.complex_nm, effective_target_nm) + c.k_off + c.k_cat
+        steps = self.steps
+        if lam > 0.0:
+            steps = max(steps, math.ceil(c.assay_seconds * lam / STABILITY_TARGET))
+        if steps > MAX_INTEGRATION_STEPS:
+            raise StiffKineticsError(
+                f"these constants need {steps:,} RK4 steps for a stable "
+                f"integration of a {c.assay_seconds:g} s window (binding "
+                f"eigenvalue {lam:.3g}/s), above the {MAX_INTEGRATION_STEPS:,} "
+                "cap. Shorten the assay window, or integrate with a stiff "
+                "solver -- what this will not do is return the number a "
+                "diverging explicit method produces, which the physical clamps "
+                "would make look reasonable."
+            )
+        dt = c.assay_seconds / steps
 
         def derivatives(state: np.ndarray) -> np.ndarray:
             activated, reporter, target = state
@@ -253,7 +343,7 @@ class CollateralKineticsModel:
 
         state = np.array([0.0, c.reporter_nm, effective_target_nm], dtype=float)
         peak_rate = 0.0
-        for _step in range(self.steps):
+        for _step in range(steps):
             k1 = derivatives(state)
             peak_rate = max(peak_rate, float(-k1[1]))
             k2 = derivatives(state + 0.5 * dt * k1)
@@ -262,9 +352,17 @@ class CollateralKineticsModel:
             state = state + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
             # clamp to the physically reachable box: activated complex is capped
             # by the effector supplied AND by the target available
+            # Round-off guards, not divergence guards -- the step count above
+            # is what keeps the integration stable. Target is *derived* from
+            # activated complex rather than clamped independently, so
+            # [T] + [C*] = [T]eff holds by construction. Clamping the two
+            # separately let the pair drift apart under a diverging step, which
+            # broke the conservation law this module's docstring makes its
+            # headline claim, in exactly the runs where nothing else would show
+            # it.
             state[0] = min(max(state[0], 0.0), min(c.complex_nm, effective_target_nm))
             state[1] = min(max(state[1], 0.0), c.reporter_nm)
-            state[2] = min(max(state[2], 0.0), effective_target_nm)
+            state[2] = effective_target_nm - state[0]
 
         activated_fraction = float(state[0] / c.complex_nm) if c.complex_nm else 0.0
         cleaved = float(c.reporter_nm - state[1])

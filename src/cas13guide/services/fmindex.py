@@ -202,9 +202,12 @@ class FMIndexSearchIndex:
         checkpoint: int = 512,
     ) -> None:
         self.transcriptome = transcriptome
-        self.universes = universes
+        self.requested_universes = universes
 
         loci = transcriptome.in_universes(universes)
+        # See ExhaustiveScanIndex: the bound reports what is held, not the
+        # filter that was admitted.
+        self.universes = frozenset(locus.biotype for locus in loci)
         # Deterministic order so the index is reproducible across runs.
         loci.sort(key=lambda locus: locus.locus_id)
 
@@ -246,12 +249,18 @@ class FMIndexSearchIndex:
             max_mismatches=max_mismatches,
             wobble_aware=True,
             universes=self.universes,
+            corpus_universes=self.transcriptome.covered_universes(),
             exhaustive=True,
             method=self.version,
             note="BWT backtracking; every string within the budget is enumerated",
         )
         if self.fm is None:
             return SearchResult(hits=(), bound=bound)
+        # Bound once, after the guard. The walk below is a closure, and a
+        # closure re-reading ``self.fm`` is not covered by the narrowing above
+        # -- true for a type checker and true for a future maintainer who moves
+        # the guard.
+        fm = self.fm
 
         pattern = revcomp(spacer)  # the perfect target site
         length = len(pattern)
@@ -261,7 +270,7 @@ class FMIndexSearchIndex:
             if lo >= hi:
                 return
             if pos < 0:
-                starts.extend(self.fm.sa[lo:hi])
+                starts.extend(fm.sa[lo:hi])
                 return
             expected = pattern[pos]
             for c in self.walk_alphabet:
@@ -271,11 +280,11 @@ class FMIndexSearchIndex:
                     delta = 1
                 if cost + delta > max_mismatches:
                     continue
-                next_lo, next_hi = self.fm.extend_backward(c, lo, hi)
+                next_lo, next_hi = fm.extend_backward(c, lo, hi)
                 if next_lo < next_hi:
                     walk(pos - 1, next_lo, next_hi, cost + delta)
 
-        lo, hi = self.fm.full_interval()
+        lo, hi = fm.full_interval()
         walk(length - 1, lo, hi, 0)
 
         hits: list[SearchHit] = []
@@ -310,7 +319,52 @@ class FMIndexSearchIndex:
     def any_hit(self, spacer: str, max_mismatches: int) -> bool:
         """Existence-only query; see ``ExhaustiveScanIndex.any_hit``.
 
-        Still walks the backtracking tree, but stops at the first located hit
-        and skips ``profile_duplex`` and ``SearchHit`` construction entirely.
+        Walks the same backtracking tree as :meth:`search`, but stops at the
+        first hit that survives the locus-boundary filter, and never builds a
+        ``SearchHit`` or calls ``profile_duplex``.
+
+        It said that before it did it: the body delegated to ``search``, which
+        enumerates every hit, profiles every duplex and sorts the result. That
+        is the whole cost the seam exists to avoid, paid on the index chosen
+        precisely because the corpus is big enough for enumeration to hurt --
+        and paid up to ``attempts`` times per control guide. Measured on one
+        1200 nt locus, the old body profiled 295 duplexes to answer a yes/no;
+        this one profiles none.
         """
-        return bool(self.search("__any_hit__", spacer, max_mismatches).hits)
+        if self.fm is None:
+            return False
+        fm = self.fm            # see search(): the walk below is a closure
+
+        pattern = revcomp(spacer)
+        length = len(pattern)
+
+        class _Found(Exception):
+            """Unwinds the recursion the moment the answer is known."""
+
+        def walk(pos: int, lo: int, hi: int, cost: int) -> None:
+            if lo >= hi:
+                return
+            if pos < 0:
+                for global_start in fm.sa[lo:hi]:
+                    if self._locate(global_start, length) is not None:
+                        raise _Found
+                return
+            expected = pattern[pos]
+            for c in self.walk_alphabet:
+                delta = (
+                    0
+                    if c == expected or (expected, c) in WOBBLE_SUBSTITUTIONS
+                    else 1
+                )
+                if cost + delta > max_mismatches:
+                    continue
+                next_lo, next_hi = fm.extend_backward(c, lo, hi)
+                if next_lo < next_hi:
+                    walk(pos - 1, next_lo, next_hi, cost + delta)
+
+        lo, hi = fm.full_interval()
+        try:
+            walk(length - 1, lo, hi, 0)
+        except _Found:
+            return True
+        return False
