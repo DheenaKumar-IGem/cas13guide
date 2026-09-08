@@ -22,8 +22,8 @@ Two things make the result trustworthy rather than flattering:
   waves through;
 * **a survivor is confirmed against the FULL suite.** Each mutation is screened
   against the handful of modules that should catch it, and anything that
-  survives is re-run against all 1508 tests before being called a hole. So a
-  "hole" is never an artefact of which modules were chosen. None of the 151 are
+  survives is re-run against all 1516 tests before being called a hole. So a
+  "hole" is never an artefact of which modules were chosen. None of the 153 are
   caught *only* by the full suite today -- each hint names the module measured
   to catch it -- but the stage stays, because that is what makes a survivor a
   statement about the suite rather than about a chosen subset.
@@ -38,7 +38,7 @@ repository is never modified. About five minutes as it stands; a surviving
 mutation costs a whole extra suite run, so a hole is expensive and a hint that
 names the wrong module is expensive too.
 
-Last measured: **151 mutations, 151 caught, 0 holes.**
+Last measured: **153 mutations, 153 caught, 0 holes.**
 """
 
 from __future__ import annotations
@@ -245,6 +245,24 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
      "src/cas13guide/metrics/bounds.py",
      "        if iv.lower < 0:", "        if iv.upper < 0:",
      ["test_bound_asymmetry.py"]),
+    # The seed window is the one tunable in the duplex model, and the penalty
+    # -- the function features.py and registry.py both call -- dropped it, so
+    # the span could only ever be SEED_SPAN however it was called. Reverting
+    # this restores an argument that goes nowhere: the caller asks for a
+    # different seed, is not refused, and gets the default back.
+    ("seed-span-dropped-by-the-penalty",
+     "src/cas13guide/util/duplex.py",
+     "        total += seed_weight(pos, profile.length, span)",
+     "        total += seed_weight(pos, profile.length)",
+     ["test_duplex.py"]),
+    # `lo <= frac <= hi` is unsatisfiable once the bounds are inverted, so every
+    # position falls into a flank and the taper is computed against bounds that
+    # bracket nothing. Loosening the guard puts back a window that is discarded
+    # in silence while the result is reported as though it had been applied.
+    ("seed-span-inversion-guard-loosened",
+     "src/cas13guide/util/duplex.py",
+     "    if lo > hi:", "    if lo > hi + 1.0:",
+     ["test_duplex.py"]),
     # ---- metrics/aggregate.py: the six named metrics ----
     ("aggregate-coverage-takes-max", "src/cas13guide/metrics/aggregate.py",
      "    return min(best.get(t.target_id, NO_EVIDENCE) for t in required)",
