@@ -910,7 +910,7 @@ thermodynamic fold the model already used as a feature.
 ## Verification
 
 1518 tests, run under `unittest` or `pytest` — both discover the same set —
-and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
+and 94% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
 reproduce from this page.
@@ -924,7 +924,7 @@ worth.
 pytest                                                   # 1518 tests
 python examples/verify_mutation_coverage.py              # 153 mutations, 153 caught
 python examples/verify_vocabulary_coverage.py            # 56 of 56 things it can say
-python examples/measure_coverage.py                      # 92% lines, subprocess-traced
+python examples/measure_coverage.py                      # 94% lines, subprocess-traced
 python examples/verify_nothing_is_computed_for_nobody.py # no value computed for nobody
 python examples/verify_output_against_input.py           # the guides are right
 python examples/verify_the_maths_against_a_referent.py   # and so is the arithmetic
@@ -1497,12 +1497,12 @@ by injecting its own defect into the source and watching the property go red —
 which found two of the properties wanting rather than any defect in the
 package, both since restated.
 
-**Coverage is 92%, and the instrument needs checking before the number does.**
+**Coverage is 94%, and the instrument needs checking before the number does.**
 `measure_coverage.py` runs it, because the recipe is not the obvious one and
 each way of getting it wrong understates precisely the modules the tracing was
 turned on for. Several tests drive the CLI through `subprocess`, which
 `coverage` does not follow unless the child is told to trace itself, so a plain
-run reports `cli.py` at 6%; traced, it is 94%. In parallel mode each process
+run reports `cli.py` at 6%; traced, it is 97%. In parallel mode each process
 writes its data file beside the *working directory*, and several of those tests
 run the CLI inside a temporary directory that is deleted straight after — their
 coverage goes with it, and the total reads 88%. And `source` must be a package
