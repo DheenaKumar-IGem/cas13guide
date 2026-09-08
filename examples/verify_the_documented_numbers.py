@@ -137,6 +137,22 @@ FLIP_RATE_SOURCES = (
     "README.md",
 )
 
+#: Where the line-coverage figure is written down, and how many times. All
+#: three statements live in one file, so this is keyed by position rather than
+#: by file: keyed by file, two of them could disagree and still look like a
+#: single entry. Unlike the mutation set there is no cheap authoritative source
+#: to check them against -- reproducing the value means running
+#: examples/measure_coverage.py through a subprocess-traced suite -- so what is
+#: pinned here is that the three agree, and the instrument stays the thing that
+#: says whether they are right. Same division of labour as the flip rate.
+COVERAGE_SOURCES = ("README.md",)
+EXPECTED_COVERAGE_FIGURES = 3
+COVERAGE_PATTERN = re.compile(
+    r"(?:[Cc]overage is\s+\**(\d{1,3})%"
+    r"|(\d{1,3})%\s*line coverage"
+    r"|(\d{1,3})%\s*lines\b)"
+)
+
 FLIP_RATE_PATTERN = re.compile(
     r"(?:changed|flipped)\s+(?:that|the DR-interaction)\s+verdict\s+for\s+[*]*"
     r"(\d+\.?\d*)%"
@@ -233,6 +249,16 @@ def stated_flip_rates() -> dict[str, float]:
             # to look like agreement.
             found[f"{rel} (states {len(values)} different figures)"] = min(values)
             found[f"{rel} (and)"] = max(values)
+    return found
+
+
+def stated_coverage_figures() -> dict[str, int]:
+    """Every place that states the line-coverage figure."""
+    found: dict[str, int] = {}
+    for rel in COVERAGE_SOURCES:
+        raw = " ".join((ROOT / rel).read_text(encoding="utf-8").split())
+        for i, match in enumerate(COVERAGE_PATTERN.finditer(raw), start=1):
+            found[f"{rel} #{i}"] = int(next(g for g in match.groups() if g))
     return found
 
 
@@ -789,6 +815,23 @@ def main() -> int:
                      abs(measured - claimed) < 0.5,
                      f"documents say {claimed}%, re-measured {measured:.2f}%"):
             failures.append("the stated flip rate is stale")
+
+    # ---- 7b. the one figure in that section nothing was comparing --------
+    print()
+    print("the line-coverage figure, stated three times in one file")
+    coverage = stated_coverage_figures()
+    for where, value in sorted(coverage.items()):
+        print(f"          {where}: {value}%")
+    if not check(f"all {EXPECTED_COVERAGE_FIGURES} statements are still there",
+                 len(coverage) == EXPECTED_COVERAGE_FIGURES,
+                 f"found {sorted(coverage.items())}"):
+        failures.append("a statement of the coverage figure went missing")
+    elif not check("they agree with each other",
+                   len(set(coverage.values())) == 1,
+                   "; ".join(f"{k}={v}" for k, v in sorted(coverage.items()))):
+        failures.append("the stated coverage figures disagree")
+    print("          (the value itself is reproduced by examples/measure_coverage.py,")
+    print("           which traces subprocesses and costs a full suite run)")
 
     # ---- 8. the defect count is a count of something -------------------
     print()

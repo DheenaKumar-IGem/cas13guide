@@ -106,7 +106,7 @@ python examples/demo_knockdown.py   # full pipeline on a small world
 python -m cas13guide.cli check      # benchmark + conformal-coverage CI gate
 python examples/demo_trained.py     # train a model, then design with it
 python -m cas13guide.cli train screen.csv   # ingest a real screen + acceptance gate
-python -m unittest discover -s tests -t tests    # 1516 tests
+python -m unittest discover -s tests -t tests    # 1518 tests
 pytest                              # same suite under pytest
 ```
 
@@ -909,7 +909,7 @@ thermodynamic fold the model already used as a feature.
 
 ## Verification
 
-1516 tests, run under `unittest` or `pytest` — both discover the same set —
+1518 tests, run under `unittest` or `pytest` — both discover the same set —
 and 92% line coverage. Three of them need a miRBase `mature.fa` and skip
 without it, so *collected* is the figure quoted here: the passing count moves
 with an environment variable, which makes it a number nobody else can
@@ -921,7 +921,7 @@ reason to exist. A claim is worth what the procedure that reproduces it is
 worth.
 
 ```bash
-pytest                                                   # 1516 tests
+pytest                                                   # 1518 tests
 python examples/verify_mutation_coverage.py              # 153 mutations, 153 caught
 python examples/verify_vocabulary_coverage.py            # 56 of 56 things it can say
 python examples/measure_coverage.py                      # 92% lines, subprocess-traced

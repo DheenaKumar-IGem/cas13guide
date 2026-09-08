@@ -94,6 +94,27 @@ class TestTheFlipRateIsStatedConsistently(unittest.TestCase):
                          "; ".join(f"{k}={v}" for k, v in sorted(stated.items())))
 
 
+class TestTheCoverageFigureIsStatedConsistently(unittest.TestCase):
+    """Three statements of one number, in one file, and nothing compared them.
+
+    That is the shape the test count was in when it drifted across three places,
+    and the shape the flip rate was in when five files agreed on a stale figure.
+    Only agreement is checked here: whether they agree on the *right* number
+    needs ``examples/measure_coverage.py``, which traces subprocesses through a
+    full suite run. Same division of labour as the flip rate.
+    """
+
+    def test_every_statement_is_still_there(self):
+        stated = documents.stated_coverage_figures()
+        self.assertEqual(len(stated), documents.EXPECTED_COVERAGE_FIGURES,
+                         f"found {sorted(stated.items())}")
+
+    def test_they_agree_with_each_other(self):
+        stated = documents.stated_coverage_figures()
+        self.assertEqual(len(set(stated.values())), 1,
+                         "; ".join(f"{k}={v}" for k, v in sorted(stated.items())))
+
+
 class TestTheMutationCountIsStatedConsistently(unittest.TestCase):
     """Three figures describe the size of the mutation sweep, and one of them
     is a denominator rather than a headline -- "10 of the 32 are caught only by
