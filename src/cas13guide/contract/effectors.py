@@ -167,6 +167,25 @@ EFFECTORS: dict[Effector, EffectorParams] = {
     # LwaCas13a prefers a non-G 3' PFS ("H"). A *preference*, not a
     # requirement: the original hard constraint failed roughly a quarter of all
     # candidates outright, which is not what the reported bias supports.
+    #
+    # A note on the length below, not a change to it. Molina Vargas et al.
+    # report that Cas13a's ability to tell a single mismatch apart falls off
+    # as the spacer lengthens: "28-nt spacers yield no single mismatch
+    # discriminatory capacity at the target-RNA concentrations tested", where
+    # their shorter spacers did discriminate (Nucleic Acids Research 52(2)
+    # 921-939, 2024). 28 is what this ortholog publishes and what any bundled
+    # model was validated on, so it stays preferred -- but the range admits 20,
+    # and a contract that leans on discrimination (an allele task, or a
+    # FORBIDDEN panel member) is asking this geometry for the thing it is
+    # measured to be worst at. Nothing in this package predicts activation, so
+    # an off-target score is sequence distance and not a claim that the assay
+    # can act on it.
+    #
+    # Left as a note rather than a Limitation on purpose: at the preferred
+    # length it would fire on almost every default run, and a warning that is
+    # always on is one nobody reads -- which is the failure services/
+    # limitations.py exists to avoid. If it ever becomes a limitation it
+    # should key on the resolved spacer length, so a shorter one silences it.
     Effector.LWA_CAS13A: EffectorParams(
         effector=Effector.LWA_CAS13A,
         direct_repeat="GAUUUAGACUACCCCAAAAACGAAGGGGACUAAAAC",
