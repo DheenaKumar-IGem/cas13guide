@@ -50,7 +50,8 @@ class TestTheTestCountIsStatedOnce(unittest.TestCase):
 
     def test_every_document_states_it(self):
         counts = documents.documented_test_counts()
-        self.assertEqual(len(counts), 5, f"found {sorted(counts)}")
+        self.assertEqual(len(counts), documents.EXPECTED_TEST_SOURCES,
+                         f"found {sorted(counts)}")
 
     def test_they_agree_with_each_other(self):
         counts = documents.documented_test_counts()

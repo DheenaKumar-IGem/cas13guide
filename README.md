@@ -599,7 +599,8 @@ package makes the trade-off explicit instead of hiding it:
 ```python
 designability(get_preset("hsa-miR-21-5p"), Effector.LWA_CAS13A).note
 # "24 nt target cannot hold a 28 nt spacer. LwaCas13a tolerates 20-28 nt;
-#  try a shorter spacer, or design against an amplicon (see amplicon_target)."
+#  try a shorter spacer, or design against an amplicon -- amplify the target
+#  and pass the product with --fasta, or build one with amplicon_target()."
 ```
 
 For a real assay the answer is to detect an **amplicon** — an RT-RPA product or

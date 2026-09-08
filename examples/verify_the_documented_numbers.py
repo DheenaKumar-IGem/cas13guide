@@ -151,6 +151,14 @@ SUPERSEDED_REPEAT = "CAACUAAACCCUAUAAGAAACGAAAUGAGAACCCAAUUCAUCGCU"
 #: cannot drop out of the comparison by being reworded past its regex.
 EXPECTED_MUTATION_SOURCES = 8
 
+#: The same, for the test count. A named constant rather than a literal in
+#: each place because that is how the two got out of step: this script said
+#: four and ``tests/test_documents_agree.py`` said five, so the fifth source
+#: -- the mutation sweep's own header -- made the script fail on every run
+#: while the suite stayed green. A check that is always failing is read as
+#: noise, which is the one thing this file cannot afford to be.
+EXPECTED_TEST_SOURCES = 5
+
 
 def mutation_set_size() -> int:
     """How many mutations the sweep actually carries, from the sweep itself."""
@@ -662,7 +670,8 @@ def main() -> int:
     counts = documented_test_counts()
     for where, value in sorted(counts.items()):
         print(f"          {where}: {value}")
-    if not check("every document states a count", len(counts) == 4,
+    if not check(f"all {EXPECTED_TEST_SOURCES} documents state a count",
+                 len(counts) == EXPECTED_TEST_SOURCES,
                  f"found {sorted(counts)}"):
         failures.append("a document stopped stating the count")
     elif not check("they agree with each other", len(set(counts.values())) == 1,
